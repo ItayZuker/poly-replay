@@ -29,7 +29,11 @@ Field reference: [Setups & phases](doc:setups-phases).
 ## Quotes, positions, log
 
 - Up/Down quotes; click to place manual orders when trading is armed
-- Live and Demo position cards
+- Live and Demo position cards (buy times in UTC)
 - Log of bot / order activity
+
+**Header Market P/L** is the sum of settled trade results for the selected series (fees included). The wallet balance is your current USDC cash — it only matches Market P/L after accounting for deposits/withdrawals, and only once losing tokens are resolved and winning tokens are redeemed into USDC. Polymarket usually auto-redeems wins; worthless losing tokens may still show as “redeemable” dust (~$0).
+
+Fees: when Polymarket’s trade feed includes the USDC notional, the app uses that for an exact fee; otherwise it estimates from the market’s taker fee curve.
 
 Wallet credentials: [Settings & wallet](doc:settings).

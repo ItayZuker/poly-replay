@@ -24,6 +24,7 @@ import {
   fetchClosedPositions,
   fetchUserPositions,
   fetchUserTrades,
+  feeFromTradeUsdc,
   findClosedPosition,
   findPosition,
   findResolvedPosition,
@@ -33,6 +34,7 @@ import {
   isValidShareSize,
   type PolymarketClosedPosition,
   type PolymarketPosition,
+  type PolymarketTrade,
 } from "./polymarket-portfolio.js";
 import {
   DEFAULT_CRYPTO_TAKER_FEE_PARAMS,
@@ -242,6 +244,7 @@ function resolveHeldSettlement(
 
   let won: boolean;
   if (cur != null) {
+    // Token mark is authoritative once the market has resolved (~0 or ~1).
     won = cur >= 0.5;
   } else if (gross != null) {
     won = gross >= 0;
@@ -249,23 +252,25 @@ function resolveHeldSettlement(
     won = false;
   }
 
-  // Prefer local held P/L when token price clearly resolved — avoids mismatched
-  // closed-position realizedPnl being applied to the wrong / duplicate card.
-  let pl =
-    cur != null
-      ? feeAwarePlHeld(card, won)
-      : gross != null
-        ? feeAwarePlFromGross(gross, card)
-        : feeAwarePlHeld(card, won);
-
-  if (gross != null && cur != null) {
-    const plFromGross = feeAwarePlFromGross(gross, card);
-    if ((plFromGross >= 0) === won) pl = plFromGross;
+  const clearlyResolved = cur != null && (cur <= 0.02 || cur >= 0.98);
+  let pl: number;
+  if (clearlyResolved) {
+    // Never blend closed-position realizedPnl over a dead/winning token mark —
+    // a mismatched gross previously flipped real losses into false wins.
+    pl = feeAwarePlHeld(card, won);
+  } else if (cur != null) {
+    pl = feeAwarePlHeld(card, won);
+    if (gross != null) {
+      const plFromGross = feeAwarePlFromGross(gross, card);
+      if ((plFromGross >= 0) === won) pl = plFromGross;
+    }
+  } else if (gross != null) {
+    pl = feeAwarePlFromGross(gross, card);
+    if (pl > 1e-9) won = true;
+    else if (pl < -1e-9) won = false;
+  } else {
+    pl = feeAwarePlHeld(card, won);
   }
-
-  // Final consistency: P/L sign owns the outcome color.
-  if (pl > 1e-9) won = true;
-  else if (pl < -1e-9) won = false;
 
   return {
     won,
@@ -390,6 +395,20 @@ async function estimateLiveTakerFee(
       ? await resolveTakerFeeParams(client, tokenId)
       : DEFAULT_CRYPTO_TAKER_FEE_PARAMS;
   return estimateTakerFeeUsd(shares, price, params);
+}
+
+/** Prefer exact fee from trade usdcSize; otherwise estimate from CLOB fee curve. */
+async function resolveTradeFeeUsd(
+  userId: string,
+  side: "BUY" | "SELL",
+  tokenId: string | undefined,
+  shares: number,
+  price: number,
+  trade?: Pick<PolymarketTrade, "usdcSize"> | null,
+): Promise<number> {
+  const exact = feeFromTradeUsdc(side, shares, price, trade?.usdcSize);
+  if (exact != null) return exact;
+  return estimateLiveTakerFee(userId, tokenId, shares, price);
 }
 
 let loggedNonExecutorSkip = false;
@@ -646,6 +665,8 @@ export class LiveTradingService {
   private readonly listeners = new Set<UpdateListener>();
   private confirmLoopTimer: ReturnType<typeof setInterval> | null = null;
   private confirmInFlight = false;
+  /** Confirmed win/loss cards already re-checked against Polymarket this process. */
+  private settlementRecheckedIds = new Set<string>();
   /** Market this engine's config/schedule/resting orders are bound to. */
   private boundSeries: string = DEFAULT_MARKET_SERIES;
 
@@ -3366,6 +3387,7 @@ export class LiveTradingService {
     const currentKey = this.sessionKey;
     return this.positionCards.some((card) => {
       if (this.isCorruptConfirmedCard(card)) return true;
+      if (this.needsSettlementRecheck(card)) return true;
       if (!card.confirmed) return true;
       // Prior-window holds need Polymarket settlement even if the buy was confirmed.
       if (card.status === "open" && currentKey && card.windowKey !== currentKey) return true;
@@ -3382,6 +3404,13 @@ export class LiveTradingService {
       return true;
     }
     return false;
+  }
+
+  /** Once per process, re-settle confirmed win/loss against Polymarket (catches false wins). */
+  private needsSettlementRecheck(card: TradingPositionCard): boolean {
+    if (card.status !== "win" && card.status !== "loss") return false;
+    if (!card.confirmed) return true;
+    return !this.settlementRecheckedIds.has(card.id);
   }
 
   private invalidateCorruptConfirmedCards(): void {
@@ -3413,6 +3442,7 @@ export class LiveTradingService {
     const currentKey = this.sessionKey;
     const pending = this.positionCards.filter((card) => {
       if (this.isCorruptConfirmedCard(card)) return true;
+      if (this.needsSettlementRecheck(card)) return true;
       if (!card.confirmed) return true;
       if (card.status === "open" && currentKey && card.windowKey !== currentKey) return true;
       return false;
@@ -3436,6 +3466,9 @@ export class LiveTradingService {
           status: card.status,
         };
         await this.tryConfirmCard(card);
+        if (card.status === "win" || card.status === "loss") {
+          this.settlementRecheckedIds.add(card.id);
+        }
         if (
           card.confirmed !== before.confirmed ||
           card.buyPrice !== before.buyPrice ||
@@ -3463,7 +3496,8 @@ export class LiveTradingService {
       return;
     }
     if (card.status === "win" || card.status === "loss") {
-      if (card.confirmed) return;
+      // Always allow one Polymarket re-settle pass — confirmed false wins used to stick forever.
+      if (card.confirmed && this.settlementRecheckedIds.has(card.id)) return;
       await this.tryConfirmSettledCard(card);
       return;
     }
@@ -3504,7 +3538,14 @@ export class LiveTradingService {
         card.shares = size;
         card.buyPrice = price;
         card.buyCost = size * price;
-        card.buyFees = await estimateLiveTakerFee(this.userId, card.asset ?? trade.asset, size, price);
+        card.buyFees = await resolveTradeFeeUsd(
+          this.userId,
+          "BUY",
+          card.asset ?? trade.asset,
+          size,
+          price,
+          trade,
+        );
         card.asset = card.asset ?? trade.asset;
         card.conditionId = card.conditionId ?? trade.conditionId;
         card.slug = card.slug ?? trade.slug;
@@ -3589,23 +3630,35 @@ export class LiveTradingService {
       if (trade && isValidShareSize(trade.size) && isValidSharePrice(trade.price)) {
         const size = Number(trade.size);
         const price = Number(trade.price);
-        if (!isValidSharePrice(card.buyPrice)) {
-          const buyTrade = findTrade(trades, {
-            side: "BUY",
-            asset: card.asset ?? trade.asset,
-            conditionId: card.conditionId ?? trade.conditionId,
-            afterTs: card.buyAt - 120,
-          });
-          if (buyTrade && isValidSharePrice(buyTrade.price)) {
-            card.buyPrice = Number(buyTrade.price);
-          }
+        const buyTrade = findTrade(trades, {
+          side: "BUY",
+          asset: card.asset ?? trade.asset,
+          conditionId: card.conditionId ?? trade.conditionId,
+          afterTs: card.buyAt - 120,
+        });
+        if (!isValidSharePrice(card.buyPrice) && buyTrade && isValidSharePrice(buyTrade.price)) {
+          card.buyPrice = Number(buyTrade.price);
         }
         card.shares = size;
         card.sellPrice = price;
         card.sellProceeds = size * price;
         card.buyCost = size * card.buyPrice;
-        card.buyFees = await estimateLiveTakerFee(this.userId, card.asset, card.shares, card.buyPrice);
-        card.sellFees = await estimateLiveTakerFee(this.userId, card.asset ?? trade.asset, size, price);
+        card.buyFees = await resolveTradeFeeUsd(
+          this.userId,
+          "BUY",
+          card.asset,
+          card.shares,
+          card.buyPrice,
+          buyTrade,
+        );
+        card.sellFees = await resolveTradeFeeUsd(
+          this.userId,
+          "SELL",
+          card.asset ?? trade.asset,
+          size,
+          price,
+          trade,
+        );
         card.asset = card.asset ?? trade.asset;
         card.conditionId = card.conditionId ?? trade.conditionId;
         card.slug = card.slug ?? trade.slug;

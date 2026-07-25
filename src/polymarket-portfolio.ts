@@ -10,10 +10,36 @@ export interface PolymarketTrade {
   conditionId?: string;
   size?: number;
   price?: number;
+  /** USDC notional actually exchanged (includes taker fee when present). */
+  usdcSize?: number;
   timestamp?: number;
   slug?: string;
   outcome?: string;
   transactionHash?: string;
+}
+
+/**
+ * Exact fee from Data API trade row when `usdcSize` is present.
+ * BUY: fee ≈ usdc paid − shares×price; SELL: fee ≈ shares×price − usdc received.
+ * Falls back to null when the API omitted usdcSize or the residual is noise.
+ */
+export function feeFromTradeUsdc(
+  side: "BUY" | "SELL",
+  shares: number,
+  price: number,
+  usdcSize: number | undefined | null,
+): number | null {
+  if (!Number.isFinite(shares) || shares <= 0 || !Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+  if (usdcSize == null || !Number.isFinite(Number(usdcSize))) return null;
+  const usdc = Number(usdcSize);
+  const notional = shares * price;
+  const raw = side === "BUY" ? usdc - notional : notional - usdc;
+  if (!Number.isFinite(raw) || raw < 0) return null;
+  // Sub-cent noise / rounding — treat as zero fee, not "unknown".
+  if (raw < 1e-6) return 0;
+  return Math.round(raw * 1e5) / 1e5;
 }
 
 export interface PolymarketPosition {
