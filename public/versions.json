@@ -1,6 +1,11 @@
 {
-  "current": "1.5.3",
+  "current": "1.5.4",
   "releases": [
+    {
+      "version": "1.5.4",
+      "releasedAt": "2026-07-25T04:32:00.000Z",
+      "notes": "Fix: Market P/L no longer keeps false wins after a market resolves to a loss; confirmed win/loss is re-checked against Polymarket; fees use trade USDC notional when available; market docs clarify P/L vs wallet cash."
+    },
     {
       "version": "1.5.3",
       "releasedAt": "2026-07-24T14:37:00.000Z",

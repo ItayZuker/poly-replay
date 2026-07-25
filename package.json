@@ -1,6 +1,6 @@
 {
   "name": "poly-simulator",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Passive Polymarket up/down market data recorder",
   "type": "module",
   "engines": {
