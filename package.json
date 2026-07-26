@@ -1,7 +1,7 @@
 {
   "name": "poly-simulator",
-  "version": "1.5.5",
-  "description": "Passive Polymarket up/down market data recorder",
+  "version": "1.6.0",
+  "description": "Schedule-driven Polymarket up/down trading with optional recording and Replay",
   "type": "module",
   "engines": {
     "node": ">=20.10"

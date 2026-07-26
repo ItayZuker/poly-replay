@@ -1,6 +1,11 @@
 {
-  "current": "1.5.5",
+  "current": "1.6.0",
   "releases": [
+    {
+      "version": "1.6.0",
+      "releasedAt": "2026-07-26T13:54:17.901Z",
+      "notes": "Unify recording and Replay in one app: per-market Recording toggle on Market → Trade; ticks/windows under DATA_DIR; schedule Replay runs in-process or via SCHEDULE_REPLAY_SERVICE_URL worker; drop zip archives (delete data older than 7 days); docs updated for live vs recorder roles."
+    },
     {
       "version": "1.5.5",
       "releasedAt": "2026-07-26T12:17:01.143Z",
