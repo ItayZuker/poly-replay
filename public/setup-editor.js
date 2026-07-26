@@ -253,6 +253,19 @@
       if (window.onTradingSetupUpdated) {
         void window.onTradingSetupUpdated(body);
       }
+      // Editing a placed Replay setup invalidates an in-flight backtest.
+      if (
+        window.isReplayWorkspace?.() &&
+        window.SchedulePlacements?.isReplayRunning?.() &&
+        setupPlacementCount(editingId) > 0
+      ) {
+        window.SchedulePlacements.stopReplay?.("schedule changed");
+        window.appendLogEntry?.({
+          level: "info",
+          source: "client",
+          message: "Replay stopped — setup changed",
+        });
+      }
       return true;
     } catch (err) {
       console.error(err);
@@ -475,7 +488,12 @@
     createMode = false;
     colorTouched = false;
     editingId = setup._id;
-    phasesReadOnly = setupPlacementCount(setup._id) > 0;
+    // Live only: lock phases while the setup is placed. Replay/Simulator stays editable.
+    const onLiveSchedule =
+      typeof window.isReplayWorkspace === "function"
+        ? !window.isReplayWorkspace()
+        : true;
+    phasesReadOnly = onLiveSchedule && setupPlacementCount(setup._id) > 0;
     draft = {
       title: setup.title,
       description: setup.description ?? "",

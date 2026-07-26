@@ -100,7 +100,7 @@ function initScheduleWorkspaceMode() {
     });
   });
   $("schedule-replay-run-btn")?.addEventListener("click", () => {
-    void window.SchedulePlacements?.runReplay?.();
+    window.SchedulePlacements?.toggleReplay?.();
   });
 }
 

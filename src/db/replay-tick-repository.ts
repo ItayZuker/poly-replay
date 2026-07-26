@@ -101,7 +101,14 @@ export function mergeReplayTicks(
       noAsks: bookState.noAsks,
       assetPrice: assetState.assetPrice,
       prevCloseAsset: assetState.prevCloseAsset,
-      assetGap: assetState.assetGap,
+      assetGap:
+        assetState.assetGap ??
+        (assetState.assetPrice != null &&
+        assetState.prevCloseAsset != null &&
+        Number.isFinite(assetState.assetPrice) &&
+        Number.isFinite(assetState.prevCloseAsset)
+          ? assetState.assetPrice - assetState.prevCloseAsset
+          : undefined),
       ptbCrossings: assetState.ptbCrossings,
       minAssetPrice: assetState.minAssetPrice,
       maxAssetPrice: assetState.maxAssetPrice,

@@ -448,16 +448,35 @@ const SCHEDULE_REPLAY_SERVICE_URL = String(process.env.SCHEDULE_REPLAY_SERVICE_U
 /** Optional shared secret for `/api/internal/schedule-replay` and outbound proxy. */
 const SCHEDULE_REPLAY_WORKER_SECRET = String(process.env.SCHEDULE_REPLAY_WORKER_SECRET ?? "").trim();
 
+function sseJsonStringify(data: unknown): string {
+  return JSON.stringify(data, (_key, value) => {
+    if (typeof value === "number" && !Number.isFinite(value)) return 0;
+    return value;
+  });
+}
+
 function writeSseEvent(
   res: express.Response,
   closed: { value: boolean },
   event: string,
   data: unknown,
+  options: { force?: boolean } = {},
 ): void {
-  if (closed.value) return;
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  if (closed.value && !options.force) return;
+  if (res.writableEnded || res.destroyed) return;
+  try {
+    res.write(`event: ${event}\ndata: ${sseJsonStringify(data)}\n\n`);
+  } catch {
+    closed.value = true;
+    return;
+  }
   const flush = (res as express.Response & { flush?: () => void }).flush;
   if (typeof flush === "function") flush.call(res);
+  // Encourage Node to push SSE chunks promptly (no compression middleware flush).
+  const socket = res.socket;
+  if (socket && typeof socket.uncork === "function" && socket.writable) {
+    socket.uncork();
+  }
 }
 
 function assertReplayWorkerAuth(req: express.Request): boolean {
@@ -473,7 +492,10 @@ function setupsByIdFromBody(setups: unknown): Map<string, TradingPhaseSetup | nu
     const id = String((item as { _id?: unknown })?._id ?? "").trim();
     if (!id) continue;
     const rawSetup = (item as { setup?: TradingPhaseSetup })?.setup;
-    map.set(id, rawSetup ? normalizePhaseSetup(rawSetup) : null);
+    if (!rawSetup) continue;
+    const normalized = normalizePhaseSetup(rawSetup);
+    // Only pin body setups that normalize cleanly — otherwise fall back to Mongo.
+    if (normalized) map.set(id, normalized);
   }
   return map;
 }
@@ -507,7 +529,13 @@ async function runScheduleReplaySse(
     indeterminate: true,
   });
 
+  logService.info(
+    "replay",
+    `Schedule replay started for ${input.series} (${input.placements.length} placement(s)) — loads ticks + applies setups`,
+  );
+
   let lastProgress = { completed: 0, total: Math.max(1, input.placements.length) };
+  let lastProgressWriteMs = 0;
   const stats = await backtestSchedulePlacements(
     input.userId,
     market,
@@ -515,13 +543,24 @@ async function runScheduleReplaySse(
     latencyMs,
     {
       setupsById: setupsByIdFromBody(input.setups),
+      // Always re-sim on interactive Replay so stats match current setups + recordings.
+      forceResimulate: true,
       shouldAbort: () => closed.value,
       onProgress: (progress) => {
         lastProgress = {
           completed: progress.completed,
           total: Math.max(1, progress.total),
         };
-        writeSseEvent(res, closed, "progress", progress);
+        // Throttle progress SSE — per-window events can flood the browser.
+        const now = Date.now();
+        if (
+          progress.indeterminate ||
+          progress.completed >= progress.total ||
+          now - lastProgressWriteMs >= 250
+        ) {
+          lastProgressWriteMs = now;
+          writeSseEvent(res, closed, "progress", progress);
+        }
       },
       onPlacementComplete: (placementStats: PlacementBacktestStats) => {
         writeSseEvent(res, closed, "placement", {
@@ -532,10 +571,28 @@ async function runScheduleReplaySse(
     },
   );
 
+  const withData = stats.filter((s) => s.hasData).length;
   if (!closed.value) {
-    writeSseEvent(res, closed, "done", { stats });
-    res.end();
+    logService.info(
+      "replay",
+      `Schedule replay finished for ${input.series} (${withData}/${stats.length} cards with data)`,
+    );
+  } else {
+    logService.info(
+      "replay",
+      `Schedule replay aborted for ${input.series} after ${withData}/${stats.length} card(s) with data`,
+    );
   }
+  // Keep done small — per-card stats already streamed via "placement" events.
+  // A huge final JSON payload was brittle over long Dropbox/local runs.
+  writeSseEvent(
+    res,
+    closed,
+    "done",
+    { ok: true, count: stats.length, withData },
+    { force: true },
+  );
+  if (!res.writableEnded) res.end();
 }
 
 app.get("/api/account", async (req, res) => {
@@ -1406,12 +1463,19 @@ app.post("/api/schedule-replay", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
   const closed = { value: false };
-  req.on("close", () => {
-    closed.value = true;
-  });
+  let responseFinished = false;
+  // Abort when the TCP socket drops (Stop / navigate). Do NOT use req "close" —
+  // for POST that fires when the body is consumed and would abort immediately.
+  // Prefer the socket over res "close", which can race with normal completion.
+  const abortSocket = req.socket;
+  const onSocketClose = () => {
+    if (!responseFinished && !res.writableEnded) closed.value = true;
+  };
+  abortSocket?.once("close", onSocketClose);
 
   try {
     const userId = requireUserId(req);
@@ -1441,6 +1505,8 @@ app.post("/api/schedule-replay", async (req, res) => {
         setups,
         latencyMs: req.body?.latencyMs,
       });
+      responseFinished = true;
+      abortSocket?.off("close", onSocketClose);
       return;
     }
 
@@ -1513,12 +1579,16 @@ app.post("/api/internal/schedule-replay", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
   const closed = { value: false };
-  req.on("close", () => {
-    closed.value = true;
-  });
+  let responseFinished = false;
+  const abortSocket = req.socket;
+  const onSocketClose = () => {
+    if (!responseFinished && !res.writableEnded) closed.value = true;
+  };
+  abortSocket?.once("close", onSocketClose);
 
   try {
     const userId = String(req.body?.userId ?? "").trim();
@@ -1536,9 +1606,12 @@ app.post("/api/internal/schedule-replay", async (req, res) => {
       setups: req.body?.setups,
       latencyMs: req.body?.latencyMs,
     });
+    responseFinished = true;
   } catch (err) {
     writeSseEvent(res, closed, "failure", { error: String(err) });
     res.end();
+  } finally {
+    abortSocket?.off("close", onSocketClose);
   }
 });
 

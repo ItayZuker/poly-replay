@@ -1445,6 +1445,23 @@ body {
   cursor: wait;
 }
 
+.schedule-replay-run-btn.is-stop {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--down) 70%, var(--border));
+  background: color-mix(in srgb, var(--down) 22%, var(--bg));
+}
+
+.schedule-replay-run-btn.is-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--down) 40%, var(--bg));
+  border-color: var(--down);
+  color: #fff;
+}
+
+.schedule-replay-run-btn.is-stop:active:not(:disabled) {
+  background: var(--down);
+  color: #fff;
+}
+
 .schedule-workspace-switcher {
   position: relative;
   display: grid;

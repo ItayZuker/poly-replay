@@ -13,6 +13,11 @@ import {
   windowTicksDir,
 } from "./data-dir.js";
 import { appendJsonlLines, readJsonlFile } from "./file-store.js";
+import {
+  fromStoredBookTick,
+  fromStoredChainlinkTick,
+  type StoredTickDocument,
+} from "../tick-compact.js";
 import fs from "fs/promises";
 import path from "path";
 
@@ -87,11 +92,14 @@ export async function listClobBookTicks(
   windowStart: number,
   limit = 10_000,
 ): Promise<ClobBookTickDocument[]> {
-  const ticks = await readJsonlFile<ClobBookTickDocument>(
+  const ticks = await readJsonlFile<StoredTickDocument>(
     clobBookTicksPath(market._id, windowStart),
     limit,
   );
-  return ticks.sort((a, b) => a.tMs - b.tMs);
+  // Expand compact / top-of-book storage into full book docs for the sim engine.
+  return ticks
+    .map((doc) => fromStoredBookTick(doc))
+    .sort((a, b) => a.tMs - b.tMs);
 }
 
 export async function listChainlinkTicks(
@@ -99,11 +107,15 @@ export async function listChainlinkTicks(
   windowStart: number,
   limit = 10_000,
 ): Promise<ChainlinkTickDocument[]> {
-  const ticks = await readJsonlFile<ChainlinkTickDocument>(
+  const ticks = await readJsonlFile<StoredTickDocument>(
     chainlinkTicksPath(market._id, windowStart),
     limit,
   );
-  return ticks.sort((a, b) => a.tMs - b.tMs);
+  // Critical: disk ticks omit derived fields (assetGap, range*). Without expand,
+  // Replay gap filters see no gap and never buy → all-zero schedule stats.
+  return ticks
+    .map((doc) => fromStoredChainlinkTick(doc))
+    .sort((a, b) => a.tMs - b.tMs);
 }
 
 export async function countClobRawTicksForWindow(

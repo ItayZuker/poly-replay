@@ -2,6 +2,8 @@
 
 A **setup** is a template with **3 time phases** inside each market window. Manage setups on [Schedule](doc:schedule) — separately for **Live** and **Replay** workspaces. On [Market](doc:market), edit phases on the chart when **Auto Trade** is on and **Use Schedule** is off (Live trading only).
 
+On **Live**, if a setup is placed on the schedule, its phases are locked in the setup editor until you remove those cards. On **Replay** (Simulator), placed setups stay editable.
+
 ## Setup editor
 
 | Field | Meaning |

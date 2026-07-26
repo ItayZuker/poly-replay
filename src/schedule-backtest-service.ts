@@ -1,8 +1,5 @@
-import {
-  getWindowDataVersion,
-  listRecordedWindows,
-} from "./db/recorded-window-repository.js";
-import type { MarketDocument } from "./types.js";
+import { getWindowDataVersion } from "./db/recorded-window-repository.js";
+import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
 import { getTradingSetupById } from "./db/trading-setup-repository.js";
 import type { SchedulePlacementListItem } from "./db/schedule-placement-repository.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
@@ -16,9 +13,10 @@ import {
   rollingCutoffDayUtc,
   flushPlacementStatsCache,
 } from "./schedule-backtest-cache.js";
-import os from "os";
+import { logService } from "./log-service.js";
 import type {
   LiveWindowState,
+  MarketDocument,
   RecordedWindowDocument,
   ReplayTickDocument,
   ScheduleDayId,
@@ -30,11 +28,37 @@ import type {
 
 const UTC_DAY_TO_ID: ScheduleDayId[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-/** Parallel window sims — capped to limit concurrent disk reads (e.g. Dropbox). */
-const WINDOW_SIM_CONCURRENCY = Math.min(
-  4,
-  Math.max(1, (os.cpus().length || 4) - 1),
-);
+/** Schedule columns left → right (Mon … Sun). */
+const SCHEDULE_DAY_ORDER: Record<ScheduleDayId, number> = {
+  mon: 0,
+  tue: 1,
+  wed: 2,
+  thu: 3,
+  fri: 4,
+  sat: 5,
+  sun: 6,
+};
+
+/**
+ * Parallel window sims. Keep low: Dropbox + large jsonl reads stall badly when
+ * several multi‑MB tick files are opened at once (Sat/Sun never finish).
+ */
+const WINDOW_SIM_CONCURRENCY = 1;
+
+/** Top-left first: Monday→Sunday columns, then earlier start hour. */
+export function sortPlacementsTopLeft(
+  placements: SchedulePlacementListItem[],
+): SchedulePlacementListItem[] {
+  return [...placements].sort((a, b) => {
+    const dayDiff =
+      (SCHEDULE_DAY_ORDER[a.day as ScheduleDayId] ?? 99) -
+      (SCHEDULE_DAY_ORDER[b.day as ScheduleDayId] ?? 99);
+    if (dayDiff !== 0) return dayDiff;
+    if (a.startHour !== b.startHour) return a.startHour - b.startHour;
+    if (a.durationHours !== b.durationHours) return a.durationHours - b.durationHours;
+    return String(a._id).localeCompare(String(b._id));
+  });
+}
 
 export interface PlacementBacktestStats {
   placementId: string;
@@ -59,6 +83,11 @@ export interface BacktestScheduleOptions {
   shouldAbort?: () => boolean;
   /** When set, only placements using this setup are simulated; others are read from cache. */
   recomputeSetupId?: string;
+  /**
+   * When true, skip disk/memory placement-stats cache and always re-simulate.
+   * Used for interactive Replay so UI always applies current setups to recordings.
+   */
+  forceResimulate?: boolean;
   tickCache?: Map<number, ReplayTickDocument[]>;
   /**
    * Prefer these phase setups (from the Replay request body) over Mongo.
@@ -126,34 +155,19 @@ function releaseWindowTicks(
   tickUseRemaining.set(windowStart, left);
 }
 
-function latestWeekdayStartUtc(day: ScheduleDayId, cutoffUtc: number, now = new Date()): number | null {
-  const targetDow = UTC_DAY_TO_ID.indexOf(day);
-  if (targetDow < 0) return null;
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const d = now.getUTCDate();
-  for (let offset = 0; offset < 7; offset += 1) {
-    const date = new Date(Date.UTC(y, m, d - offset));
-    if (date.getUTCDay() !== targetDow) continue;
-    const dayStart = Math.floor(date.getTime() / 1000);
-    if (dayStart + 86400 > cutoffUtc) return dayStart;
-  }
-  return null;
-}
-
-function utcDayStart(windowStart: number): number {
-  const date = new Date(windowStart * 1000);
-  return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / 1000);
-}
-
-function windowStartFallsInSlot(
+/**
+ * True when a recorded window belongs on this schedule card:
+ * same UTC weekday as the column, and start time inside the card’s hour span.
+ * Uses every matching day in the rolling cutoff (not only the latest weekday).
+ */
+function windowMatchesPlacementSlot(
   windowStart: number,
-  dayStartUtc: number,
+  day: ScheduleDayId,
   startHour: number,
   durationHours: number,
 ): boolean {
-  if (utcDayStart(windowStart) !== dayStartUtc) return false;
   const date = new Date(windowStart * 1000);
+  if (UTC_DAY_TO_ID[date.getUTCDay()] !== day) return false;
   const windowMinutes = date.getUTCHours() * 60 + date.getUTCMinutes() + date.getUTCSeconds() / 60;
   const slotStartMinutes = startHour * 60;
   const slotEndMinutes = (startHour + durationHours) * 60;
@@ -167,6 +181,17 @@ function replayTickToState(
   windowEnd: number,
   priceHistory: Array<{ t: number; price: number }>,
 ): LiveWindowState {
+  // Prefer stored gap; otherwise derive like live Chainlink ingest.
+  let assetGap = tick.assetGap;
+  if (
+    (assetGap == null || !Number.isFinite(assetGap)) &&
+    tick.assetPrice != null &&
+    tick.prevCloseAsset != null &&
+    Number.isFinite(tick.assetPrice) &&
+    Number.isFinite(tick.prevCloseAsset)
+  ) {
+    assetGap = tick.assetPrice - tick.prevCloseAsset;
+  }
   return {
     series,
     windowStart,
@@ -186,7 +211,7 @@ function replayTickToState(
     noAsks: tick.noAsks,
     assetPrice: tick.assetPrice,
     prevCloseAsset: tick.prevCloseAsset,
-    assetGap: tick.assetGap,
+    assetGap,
     ptbCrossings: tick.ptbCrossings,
     minAssetPrice: tick.minAssetPrice,
     maxAssetPrice: tick.maxAssetPrice,
@@ -206,6 +231,8 @@ export interface RecordedWindowSimulation {
   markers: SimMarker[];
   windowStart: number;
   windowEnd: number;
+  /** False when window metadata exists but tick files are missing/empty on disk. */
+  hadTicks: boolean;
 }
 
 export async function simulateRecordedWindow(
@@ -224,6 +251,8 @@ export async function simulateRecordedWindow(
       markers: [],
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
+      // Cached entries were only stored after a tickful sim.
+      hadTicks: cached != null,
     };
   }
 
@@ -236,21 +265,13 @@ export async function simulateRecordedWindow(
   const windowStart = window.windowStart;
 
   if (ticks.length === 0) {
-    const emptyResult: SimLastWindow = {
-      windowKey: `${series}:${windowStart}`,
-      windowStart,
-      windowEnd,
-      sold: false,
-      positionWon: null,
-      pl: 0,
-      plLabel: "No trade",
-    };
-    simResultCache?.set(simCacheKey!, emptyResult);
+    // Do not cache empties as sim results — missing files must stay distinguishable.
     return {
-      result: emptyResult,
+      result: null,
       markers: [],
       windowStart,
       windowEnd,
+      hadTicks: false,
     };
   }
 
@@ -303,6 +324,7 @@ export async function simulateRecordedWindow(
     markers: engine.getMarkers(),
     windowStart,
     windowEnd,
+    hadTicks: true,
   };
 }
 
@@ -340,7 +362,7 @@ function aggregateResult(
     green,
     red,
     blue,
-    pnl,
+    pnl: Number.isFinite(pnl) ? pnl : 0,
   };
 }
 
@@ -404,13 +426,13 @@ async function buildPlacementPlan(
     return { placement, cacheKey, kind: "empty" };
   }
 
-  const dayStartUtc = latestWeekdayStartUtc(placement.day, cutoffUtc);
-  if (dayStartUtc == null) {
-    return { placement, cacheKey, kind: "empty" };
-  }
-
   const slotWindows = allWindows.filter((w) =>
-    windowStartFallsInSlot(w.windowStart, dayStartUtc, placement.startHour, placement.durationHours),
+    windowMatchesPlacementSlot(
+      w.windowStart,
+      placement.day,
+      placement.startHour,
+      placement.durationHours,
+    ),
   );
 
   if (slotWindows.length === 0) {
@@ -434,18 +456,44 @@ export async function backtestSchedulePlacements(
 ): Promise<PlacementBacktestStats[]> {
   if (placements.length === 0) return [];
 
+  // Always process Mon/top → Sun/bottom so the board fills left-to-right.
+  placements = sortPlacementsTopLeft(placements);
+
   options.onProgress?.({ completed: 0, total: 0, indeterminate: true });
 
   const series = market._id;
   const cutoffUtc = getRollingCutoffUtcSec();
   const cutoffDay = rollingCutoffDayUtc();
-  const allWindows = (await listRecordedWindows(market)).filter(
-    (w) => w.windowStart >= cutoffUtc,
-  );
+  // Same Mongo window index as the heatmap — local windows/*.json may be gone
+  // after Dropbox/retention while summaries remain in recorded_windows.
+  const allWindows: RecordedWindowDocument[] = (
+    await listRecordedWindowsSince(cutoffUtc, series)
+  ).map((w) => ({
+    _id: String(w.windowStart),
+    windowStart: w.windowStart,
+    windowEnd: w.windowEnd,
+    savedAt: w.savedAt,
+    updatedAt: w.savedAt,
+    windowOutcome: w.windowOutcome,
+    ptbCrossings: w.ptbCrossings,
+    rangeTop: w.rangeTop,
+    rangeBottom: w.rangeBottom,
+    uniqueTraders: w.uniqueTraders,
+    newWallets: w.newWallets,
+    tickCount: 0,
+  }));
   const heatmapVersion = await getWindowDataVersion(market, allWindows);
   const livePlacementIds = placements.map((p) => p._id);
   const tickCache = options.tickCache ?? new Map<number, ReplayTickDocument[]>();
   const recomputeSetupId = options.recomputeSetupId;
+  const forceResimulate = options.forceResimulate === true;
+  // Interactive Replay must re-run recordings + setups; cache is only for background recompute.
+  const allowCached = !forceResimulate && !recomputeSetupId;
+
+  logService.info(
+    "replay",
+    `Replay dataset: ${allWindows.length} recorded window(s) since cutoff; ${placements.length} card(s); cache=${allowCached ? "on" : "off"}`,
+  );
 
   const setupCache = new Map<string, TradingPhaseSetup | null>();
   const providedSetups =
@@ -470,7 +518,7 @@ export async function backtestSchedulePlacements(
   const statsById = new Map<string, PlacementBacktestStats>();
   const simulateTargets: SchedulePlacementListItem[] = [];
 
-  if (recomputeSetupId) {
+  if (recomputeSetupId && !forceResimulate) {
     for (const placement of placements) {
       if (placement.setupId === recomputeSetupId) {
         simulateTargets.push(placement);
@@ -503,7 +551,7 @@ export async function backtestSchedulePlacements(
     cutoffDay,
     cutoffUtc,
     allWindows,
-    allowCached: !recomputeSetupId,
+    allowCached,
   };
 
   const plans: PlacementPlan[] = [];
@@ -541,8 +589,11 @@ export async function backtestSchedulePlacements(
     stats: PlacementBacktestStats;
   }> = [];
 
+  let cardIndex = 0;
   for (const plan of plans) {
     if (options.shouldAbort?.()) break;
+    cardIndex += 1;
+    const label = `${plan.placement.day} @ ${plan.placement.startHour}h`;
 
     if (plan.kind === "cached") {
       statsById.set(plan.placement._id, plan.stats);
@@ -555,48 +606,117 @@ export async function backtestSchedulePlacements(
     if (plan.kind === "empty") {
       const computed = emptyStats(plan.placement._id);
       statsById.set(plan.placement._id, computed);
-      cacheUpdates.push({ placementId: plan.placement._id, cacheKey: plan.cacheKey, stats: computed });
+      if (allowCached) {
+        cacheUpdates.push({ placementId: plan.placement._id, cacheKey: plan.cacheKey, stats: computed });
+      }
       completedUnits += 1;
       reportProgress(false);
+      const setupMissing = !(setupCache.get(plan.placement.setupId) ?? null);
+      logService.info(
+        "replay",
+        `Card ${cardIndex}/${plans.length} ${label} — ${
+          setupMissing ? "missing setup (skipped)" : "no recorded windows in slot"
+        }`,
+      );
       options.onPlacementComplete?.(computed);
       continue;
     }
+
+    logService.info(
+      "replay",
+      `Card ${cardIndex}/${plans.length} ${label} — simulating ${plan.slotWindows.length} window(s) from recordings + setup`,
+    );
 
     const windowResults = await mapWithConcurrency(
       plan.slotWindows,
       WINDOW_SIM_CONCURRENCY,
       async (window) => {
         if (options.shouldAbort?.()) return null;
-        const { result } = await simulateRecordedWindow(
-          market,
-          market._id,
-          window,
-          plan.simSetup,
-          tickCache,
-          simResultCache,
-        );
-        releaseWindowTicks(window.windowStart, tickCache, tickUseRemaining);
-        completedUnits += 1;
-        reportProgress(false);
-        return result;
+        try {
+          const sim = await simulateRecordedWindow(
+            market,
+            market._id,
+            window,
+            plan.simSetup,
+            tickCache,
+            simResultCache,
+          );
+          releaseWindowTicks(window.windowStart, tickCache, tickUseRemaining);
+          completedUnits += 1;
+          reportProgress(false);
+          return sim;
+        } catch (err) {
+          logService.warn(
+            "replay",
+            `Card ${cardIndex}/${plans.length} ${label} — window ${window.windowStart} failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          releaseWindowTicks(window.windowStart, tickCache, tickUseRemaining);
+          completedUnits += 1;
+          reportProgress(false);
+          return {
+            result: null,
+            markers: [],
+            windowStart: window.windowStart,
+            windowEnd: window.windowEnd,
+            hadTicks: false,
+          } satisfies RecordedWindowSimulation;
+        }
       },
     );
 
-    if (options.shouldAbort?.()) break;
+    const finished = windowResults.filter(
+      (sim): sim is RecordedWindowSimulation => sim != null,
+    );
+    const withTicks = finished.filter((sim) => sim.hadTicks);
+    const results = withTicks
+      .map((sim) => sim.result)
+      .filter((result): result is SimLastWindow => result != null);
 
-    const results = windowResults.filter((result): result is SimLastWindow => result != null);
-    const computed = aggregateResult(plan.placement._id, results);
-    statsById.set(plan.placement._id, computed);
-    cacheUpdates.push({ placementId: plan.placement._id, cacheKey: plan.cacheKey, stats: computed });
-    options.onPlacementComplete?.(computed);
+    // Window metadata without tick files must not look like “ran, no trades”.
+    if (withTicks.length === 0) {
+      const computed = emptyStats(plan.placement._id);
+      statsById.set(plan.placement._id, computed);
+      if (allowCached) {
+        cacheUpdates.push({
+          placementId: plan.placement._id,
+          cacheKey: plan.cacheKey,
+          stats: computed,
+        });
+      }
+      logService.info(
+        "replay",
+        `Card ${cardIndex}/${plans.length} ${label} — ${plan.slotWindows.length} window(s) in slot but tick files missing on disk`,
+      );
+      options.onPlacementComplete?.(computed);
+    } else {
+      const computed = aggregateResult(plan.placement._id, results);
+      statsById.set(plan.placement._id, computed);
+      if (allowCached) {
+        cacheUpdates.push({
+          placementId: plan.placement._id,
+          cacheKey: plan.cacheKey,
+          stats: computed,
+        });
+      }
+      logService.info(
+        "replay",
+        `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue} pnl ${computed.pnl.toFixed(2)}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
+      );
+      options.onPlacementComplete?.(computed);
+    }
+
+    if (options.shouldAbort?.()) break;
   }
 
   if (cacheUpdates.length > 0) {
     await flushPlacementStatsCache(series, cacheUpdates, livePlacementIds);
   }
 
-  return placements.map((placement) => {
-    const stats = statsById.get(placement._id);
-    return stats ?? emptyStats(placement._id);
-  });
+  // Only return cards that were actually processed. Filling the rest with emptyStats
+  // made aborted runs look like Sat/Sun finished with zeros.
+  return placements
+    .map((placement) => statsById.get(placement._id))
+    .filter((stats): stats is PlacementBacktestStats => stats != null);
 }

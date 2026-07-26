@@ -177,15 +177,17 @@ export async function deleteRecordedWindowsBefore(
  */
 export async function listRecordedWindowsSince(
   cutoffUtc: number,
+  series?: string,
 ): Promise<HeatmapRecordedWindow[]> {
   const mongo = await getMongoClient();
+  const filter: { windowStart: { $gte: number }; series?: string } = {
+    windowStart: { $gte: cutoffUtc },
+  };
+  if (series) filter.series = series;
   const docs = await mongo
     .db(getMongoDbName())
     .collection<MongoRecordedWindowDoc>(COLLECTION)
-    .find(
-      { windowStart: { $gte: cutoffUtc } },
-      { projection: HEATMAP_PROJECTION },
-    )
+    .find(filter, { projection: HEATMAP_PROJECTION })
     .sort({ windowStart: 1 })
     .batchSize(5_000)
     .toArray();
@@ -193,7 +195,10 @@ export async function listRecordedWindowsSince(
   const out: HeatmapRecordedWindow[] = [];
   for (const doc of docs) {
     const normalized = normalizeDoc(doc);
-    if (normalized) out.push(normalized);
+    if (!normalized) continue;
+    // Legacy docs may lack `series` on the filter field — keep heatmap-wide scans intact.
+    if (series && normalized.series !== series) continue;
+    out.push(normalized);
   }
   return out;
 }
