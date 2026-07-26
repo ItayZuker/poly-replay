@@ -38,6 +38,11 @@ function withScheduleWorkspaceMode(url) {
 function syncScheduleWorkspaceUi() {
   const page = $("page-schedule-heatmap");
   page?.classList.toggle("is-replay-workspace", isReplayWorkspace());
+  const switcher = $("schedule-workspace-switcher");
+  switcher?.classList.toggle("is-replay", isReplayWorkspace());
+  if (switcher) {
+    switcher.setAttribute("aria-checked", isReplayWorkspace() ? "true" : "false");
+  }
   document.querySelectorAll("[data-schedule-workspace]").forEach((btn) => {
     btn.classList.toggle("is-active", btn.dataset.scheduleWorkspace === scheduleWorkspaceMode);
   });

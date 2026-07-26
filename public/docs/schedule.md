@@ -35,7 +35,7 @@ With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** set
 | Card stats | Live trade outcomes | Filled when you press **Replay** |
 | Header total | Same summary chrome (**Market** = series all-time, **Live** = since reset, **Schedule** = sum of cards) | Same — totals update as replay results arrive |
 
-In **Replay**, a **Replay** button appears above the Live/Replay switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
+In **Replay**, a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Replay switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
 
 The external replay worker URL is not configured yet — the UI and storage are ready; pressing **Replay** reports that the service is not configured until it is wired.
 

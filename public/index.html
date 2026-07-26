@@ -65,7 +65,8 @@
       display: flex !important;
       flex-direction: column;
     }
-    html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] #schedule-setups-list {
+    html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] #schedule-setups-list,
+    html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] .schedule-add-setup-wrap {
       display: none !important;
     }
     html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] #schedule-heatmap-panel {
@@ -773,21 +774,8 @@
             <div class="schedule-add-setup-wrap">
               <button type="button" id="schedule-add-setup-btn" class="schedule-add-setup-btn" title="Save current trading setup">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M9 3h6M10 3v6.5L5.5 18.5A2 2 0 0 0 7.3 21.5h9.4a2 2 0 0 0 1.8-3L14 9.5V3"
-                  />
-                  <path
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    d="M8.2 14h7.6"
-                  />
+                  <path d="M12 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                 </svg>
                 <span>Add setup</span>
               </button>
@@ -804,11 +792,27 @@
               hidden
               title="Replay placed cards over the last week"
             >
-              Replay
+              <span>Replay</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M8 5.5v13l11-6.5-11-6.5z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linejoin="round"
+                />
+              </svg>
             </button>
-            <div class="schedule-workspace-toggle" role="group" aria-label="Schedule workspace">
-              <button type="button" class="schedule-workspace-toggle-btn is-active" data-schedule-workspace="live">Live</button>
-              <button type="button" class="schedule-workspace-toggle-btn" data-schedule-workspace="replay">Replay</button>
+            <div
+              id="schedule-workspace-switcher"
+              class="schedule-workspace-switcher"
+              role="switch"
+              aria-checked="false"
+              aria-label="Schedule workspace"
+            >
+              <span class="schedule-workspace-switcher-handle" aria-hidden="true"></span>
+              <button type="button" class="schedule-workspace-switcher-opt is-active" data-schedule-workspace="live">Live</button>
+              <button type="button" class="schedule-workspace-switcher-opt" data-schedule-workspace="replay">Replay</button>
             </div>
           </div>
           <div id="schedule-heatmap-panel" class="schedule-heatmap-panel" hidden></div>

@@ -2300,9 +2300,10 @@
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
     try {
-      const res = await fetch(`/api/schedule-placements/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/schedule-placements/${encodeURIComponent(id)}?${seriesQuery()}`,
+        { method: "DELETE" },
+      );
       if (!res.ok && res.status !== 204) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Remove failed (${res.status})`);
@@ -2368,15 +2369,20 @@
     if (!placement) return;
 
     try {
-      const res = await fetch(`/api/schedule-placements/${encodeURIComponent(placement._id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          day: placement.day,
-          startHour: placement.startHour,
-          durationHours: placement.durationHours,
-        }),
-      });
+      const res = await fetch(
+        `/api/schedule-placements/${encodeURIComponent(placement._id)}?${seriesQuery()}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            withSeries({
+              day: placement.day,
+              startHour: placement.startHour,
+              durationHours: placement.durationHours,
+            }),
+          ),
+        },
+      );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Update failed (${res.status})`);
@@ -2460,15 +2466,20 @@
     }
 
     try {
-      const res = await fetch(`/api/schedule-placements/${encodeURIComponent(placementId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          day: preview.day,
-          startHour: preview.startHour,
-          durationHours: preview.durationHours,
-        }),
-      });
+      const res = await fetch(
+        `/api/schedule-placements/${encodeURIComponent(placementId)}?${seriesQuery()}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            withSeries({
+              day: preview.day,
+              startHour: preview.startHour,
+              durationHours: preview.durationHours,
+            }),
+          ),
+        },
+      );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Move failed (${res.status})`);

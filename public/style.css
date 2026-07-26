@@ -905,9 +905,19 @@ body {
 }
 
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+.app:has(#page-schedule-heatmap.is-replay-workspace:not([hidden]))::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--accent);
+  pointer-events: none;
+  z-index: 10000;
 }
 
 .app[hidden] {
@@ -1250,7 +1260,8 @@ body {
   overflow: hidden;
 }
 
-.app-page-schedule.is-heatmap-view .schedule-setups-list {
+.app-page-schedule.is-heatmap-view .schedule-setups-list,
+.app-page-schedule.is-heatmap-view .schedule-add-setup-wrap {
   display: none !important;
 }
 
@@ -1390,22 +1401,39 @@ body {
 }
 
 .schedule-replay-run-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
-  min-height: 40px;
+  min-height: 36px;
   padding: 0 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 70%, #fff);
+  border: 1px dashed var(--accent);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 28%, var(--bg));
-  color: #fff;
-  font-size: 0.95rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+
+.schedule-replay-run-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 .schedule-replay-run-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 42%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 80%, #fff);
+  color: #fff;
+}
+
+.schedule-replay-run-btn:active:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
 }
 
 .schedule-replay-run-btn:disabled {
@@ -1413,44 +1441,72 @@ body {
   cursor: wait;
 }
 
-.schedule-workspace-toggle {
-  display: flex;
+.schedule-workspace-switcher {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   width: 100%;
+  min-height: 36px;
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 70%, #000);
+  box-sizing: border-box;
   overflow: hidden;
-  background: var(--bg);
 }
 
-.schedule-workspace-toggle-btn {
-  flex: 1 1 0;
-  min-height: 36px;
-  padding: 0 8px;
-  border: 0;
+.schedule-workspace-switcher-handle {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--down);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition: transform 0.2s ease, background-color 0.2s ease;
+  z-index: 0;
+}
+
+.schedule-workspace-switcher.is-replay .schedule-workspace-switcher-handle {
+  transform: translateX(100%);
+  background: var(--accent);
+}
+
+.schedule-workspace-switcher-opt {
+  position: relative;
+  z-index: 1;
+  min-height: 30px;
+  padding: 0 10px;
+  border: none;
   background: transparent;
-  color: var(--muted, #9aa3ad);
+  color: var(--muted);
   font-size: 0.85rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+  outline: none;
 }
 
-.schedule-workspace-toggle-btn:hover:not(.is-active) {
+.schedule-workspace-switcher:focus,
+.schedule-workspace-switcher:focus-visible,
+.schedule-workspace-switcher-opt:focus,
+.schedule-workspace-switcher-opt:focus-visible {
+  outline: none;
+}
+
+.schedule-workspace-switcher-opt:hover:not(.is-active) {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
-.schedule-workspace-toggle-btn.is-active {
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+.schedule-workspace-switcher-opt.is-active {
   color: #fff;
-}
-
-.schedule-workspace-toggle-btn + .schedule-workspace-toggle-btn {
-  border-left: 1px solid var(--border);
-}
-
-.app-page-schedule.is-replay-workspace .schedule-setups-panel {
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .schedule-heatmap-panel {
