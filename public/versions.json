@@ -1,6 +1,11 @@
 {
-  "current": "1.6.1",
+  "current": "1.7.0",
   "releases": [
+    {
+      "version": "1.7.0",
+      "releasedAt": "2026-07-26T19:50:48.000Z",
+      "notes": "Simulator Replay latency (ms) on Schedule; latency/GTD delay applied in the sim engine; Heroku live app proxies Replay (placements, setups, latency) to SCHEDULE_REPLAY_SERVICE_URL and streams card results back; No Data cards, header range spinner, week fill; schedule docs updated."
+    },
     {
       "version": "1.6.1",
       "releasedAt": "2026-07-26T17:36:00.000Z",
