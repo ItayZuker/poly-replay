@@ -1,6 +1,6 @@
 # Schedule & Heatmap
 
-Toggle **Schedule** and **Heatmap** on this page. At the bottom of the setups list, switch **Live** vs **Demo** workspace.
+Toggle **Schedule** and **Heatmap** on this page. At the bottom of the setups list, switch **Live** vs **Simulator** workspace.
 
 ## Setups
 
@@ -35,10 +35,17 @@ With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** set
 | Card stats | Live trade outcomes | Filled when you press **Replay** |
 | Header total | Same summary chrome (**Market** = series all-time, **Live** = since reset, **Schedule** = sum of cards) | Same — totals update as replay results arrive |
 
-In **Replay** (**Demo** on the switcher), a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Demo switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
+In **Replay** (**Simulator** on the switcher), a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Simulator switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
 
-The external replay worker URL is not configured yet — the UI and storage are ready; pressing **Replay** reports that the service is not configured until it is wired.
+Replay uses the same simulation engine as demo trading, run over **recorded** market windows (local tick files). Turn **Recording** on per series under Market → Trade.
+
+| Role | Env | Behavior |
+|------|-----|----------|
+| **Recorder** | no `TRADING_EXECUTOR`; **Recording** on for the series | Captures ticks/windows; Replay runs against local data (or serves the worker endpoint) |
+| **Live** | `TRADING_EXECUTOR=1` | Does **not** record (toggle still saves); set `SCHEDULE_REPLAY_SERVICE_URL` to the recorder’s `/api/internal/schedule-replay` |
+
+If `SCHEDULE_REPLAY_SERVICE_URL` is empty, Replay runs in-process on this server (typical for a local recorder). Optional `SCHEDULE_REPLAY_WORKER_SECRET` protects the worker endpoint (`x-replay-worker-secret` header).
 
 ## Heatmap
 
-Day × hour intensity from recorded windows (e.g. crossings, range). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Demo are independent toggles.
+Day × hour intensity from recorded windows (e.g. crossings, range). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Simulator are independent toggles. On a recorder process, new windows update the heatmap as they finalize.

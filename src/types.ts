@@ -9,6 +9,8 @@ export interface MarketDocument {
   _id: string;
   label: string;
   timeframeMinutes: number;
+  /** When true, a non-executor process captures ticks/windows for this series. */
+  recordingEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -10,6 +10,9 @@ Live trading console for the selected series.
 | **Auto Trade** | Bot may trade using the active setup |
 | **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup |
 | **Size** | Manual / fallback order size |
+| **Recording** | Per-series: capture ticks/windows for Replay and Heatmap |
+
+**Recording** is stored per market (e.g. `btc-5m` on, `eth-5m` off). A process with `TRADING_EXECUTOR` on saves the toggle but does not capture data — run a non-executor instance (or leave executor off locally) to actually record. See [Information flow](doc:data-flow).
 
 Scheduled live: **Allow trade** + **Auto Trade** + **Use Schedule** on.
 

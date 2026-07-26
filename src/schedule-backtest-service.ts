@@ -54,10 +54,17 @@ export interface BacktestProgress {
 
 export interface BacktestScheduleOptions {
   onProgress?: (progress: BacktestProgress) => void;
+  /** Fired when each placement finishes (for SSE streaming). */
+  onPlacementComplete?: (stats: PlacementBacktestStats) => void;
   shouldAbort?: () => boolean;
   /** When set, only placements using this setup are simulated; others are read from cache. */
   recomputeSetupId?: string;
   tickCache?: Map<number, ReplayTickDocument[]>;
+  /**
+   * Prefer these phase setups (from the Replay request body) over Mongo.
+   * Keys are setup ids.
+   */
+  setupsById?: Map<string, TradingPhaseSetup | null> | Record<string, TradingPhaseSetup | null>;
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
@@ -441,10 +448,21 @@ export async function backtestSchedulePlacements(
   const recomputeSetupId = options.recomputeSetupId;
 
   const setupCache = new Map<string, TradingPhaseSetup | null>();
+  const providedSetups =
+    options.setupsById instanceof Map
+      ? options.setupsById
+      : options.setupsById
+        ? new Map(Object.entries(options.setupsById))
+        : null;
   const uniqueSetupIds = [...new Set(placements.map((p) => p.setupId))];
   await Promise.all(
     uniqueSetupIds.map(async (setupId) => {
-      const setup = await getTradingSetupById(userId, setupId);
+      if (providedSetups?.has(setupId)) {
+        setupCache.set(setupId, providedSetups.get(setupId) ?? null);
+        return;
+      }
+      // Replay workspace setups — never fall back to live collections by accident.
+      const setup = await getTradingSetupById(userId, setupId, "replay");
       setupCache.set(setupId, setup?.setup ?? null);
     }),
   );
@@ -530,6 +548,7 @@ export async function backtestSchedulePlacements(
       statsById.set(plan.placement._id, plan.stats);
       completedUnits += 1;
       reportProgress(false);
+      options.onPlacementComplete?.(plan.stats);
       continue;
     }
 
@@ -539,6 +558,7 @@ export async function backtestSchedulePlacements(
       cacheUpdates.push({ placementId: plan.placement._id, cacheKey: plan.cacheKey, stats: computed });
       completedUnits += 1;
       reportProgress(false);
+      options.onPlacementComplete?.(computed);
       continue;
     }
 
@@ -568,6 +588,7 @@ export async function backtestSchedulePlacements(
     const computed = aggregateResult(plan.placement._id, results);
     statsById.set(plan.placement._id, computed);
     cacheUpdates.push({ placementId: plan.placement._id, cacheKey: plan.cacheKey, stats: computed });
+    options.onPlacementComplete?.(computed);
   }
 
   if (cacheUpdates.length > 0) {

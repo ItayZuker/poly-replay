@@ -1,12 +1,6 @@
-import { createRequire } from "node:module";
-import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
-import type { Archiver } from "archiver";
-
-const require = createRequire(import.meta.url);
-const archiver = require("archiver") as (format: string, options?: { zlib?: { level?: number } }) => Archiver;
-import { hotCutoffSec, utcDayKey } from "../retention.js";
+import { hotCutoffSec } from "../retention.js";
 import { logService } from "../log-service.js";
 import type { MarketDocument } from "../types.js";
 import {
@@ -15,178 +9,98 @@ import {
   marketWindowsDir,
   parseWindowStartFromFilename,
 } from "./data-dir.js";
+import { pruneRecordedWindows } from "./recorded-window-repository.js";
+import { deleteRecordedWindowsBefore } from "./recorded-window-mongo-repository.js";
 
-export interface ArchiveDayResult {
-  dayKey: string;
-  windowCount: number;
-  zipPath: string;
-  skippedExisting: boolean;
-}
-
-export interface ArchiveMarketResult {
+export interface PruneMarketResult {
   series: string;
   cutoffSec: number;
-  days: ArchiveDayResult[];
-  orphansRemoved: number;
+  windowsRemoved: number;
+  tickDirsRemoved: number;
+  archiveRemoved: boolean;
 }
 
-async function listColdWindowStarts(series: string, cutoffSec: number): Promise<Set<number>> {
-  const cold = new Set<number>();
-
-  const scanDir = async (dir: string) => {
-    try {
-      const entries = await fsp.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const windowStart = parseWindowStartFromFilename(entry.name);
-        if (windowStart == null || windowStart >= cutoffSec) continue;
-        cold.add(windowStart);
-      }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") throw err;
-    }
-  };
-
-  await Promise.all([
-    scanDir(marketTicksDir(series)),
-    scanDir(marketWindowsDir(series)),
-  ]);
-
-  return cold;
-}
-
-async function zipExists(zipPath: string): Promise<boolean> {
+async function listColdTickDirs(series: string, cutoffSec: number): Promise<number[]> {
+  const ticksDir = marketTicksDir(series);
   try {
-    await fsp.access(zipPath);
-    return true;
+    const entries = await fsp.readdir(ticksDir, { withFileTypes: true });
+    const cold: number[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const windowStart = parseWindowStartFromFilename(entry.name);
+      if (windowStart == null || windowStart >= cutoffSec) continue;
+      cold.push(windowStart);
+    }
+    return cold;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+async function removeTickDir(series: string, windowStart: number): Promise<void> {
+  const tickDir = path.join(marketTicksDir(series), String(windowStart));
+  await fsp.rm(tickDir, { recursive: true, force: true });
+}
+
+/** Drop any legacy zip archive folder for this series. */
+async function removeArchiveDir(series: string): Promise<boolean> {
+  const archiveDir = marketArchiveDir(series);
+  try {
+    await fsp.access(archiveDir);
   } catch {
     return false;
   }
+  await fsp.rm(archiveDir, { recursive: true, force: true });
+  return true;
 }
 
-async function removeHotWindowFiles(
-  series: string,
-  windowStart: number,
-): Promise<void> {
-  const tickDir = path.join(marketTicksDir(series), String(windowStart));
-  await fsp.rm(tickDir, { recursive: true, force: true });
-
-  const windowFile = path.join(marketWindowsDir(series), `${windowStart}.json`);
-  await fsp.rm(windowFile, { force: true });
-}
-
-async function appendWindowToArchive(
-  archive: Archiver,
-  series: string,
-  windowStart: number,
-): Promise<void> {
-  const tickDir = path.join(marketTicksDir(series), String(windowStart));
-  try {
-    await fsp.access(tickDir);
-    archive.directory(tickDir, `ticks/${windowStart}`);
-  } catch {
-    // no tick dir
-  }
-
-  const windowFile = path.join(marketWindowsDir(series), `${windowStart}.json`);
-  try {
-    await fsp.access(windowFile);
-    archive.file(windowFile, { name: `windows/${windowStart}.json` });
-  } catch {
-    // no window file
-  }
-}
-
-async function buildDayZip(
-  series: string,
-  dayKey: string,
-  windowStarts: number[],
-): Promise<string> {
-  const archiveDir = marketArchiveDir(series);
-  await fsp.mkdir(archiveDir, { recursive: true });
-  const zipPath = path.join(archiveDir, `${dayKey}.zip`);
-
-  await new Promise<void>((resolve, reject) => {
-    const output = fs.createWriteStream(zipPath);
-    const archive = archiver("zip", { zlib: { level: 6 } });
-
-    output.on("close", () => resolve());
-    archive.on("error", reject);
-    output.on("error", reject);
-    archive.pipe(output);
-
-    void (async () => {
-      try {
-        for (const windowStart of windowStarts.sort((a, b) => a - b)) {
-          await appendWindowToArchive(archive, series, windowStart);
-        }
-        await archive.finalize();
-      } catch (err) {
-        reject(err);
-      }
-    })();
-  });
-
-  return zipPath;
-}
-
-/** Zip cold window data by UTC day and remove hot copies. Runs regardless of recording state. */
-export async function archiveColdMarketData(
+/**
+ * Permanently delete tick/window data older than the hot retention window (~7 days).
+ * No zip archive — cold data is discarded.
+ */
+export async function pruneColdMarketData(
   market: MarketDocument,
-): Promise<ArchiveMarketResult> {
+): Promise<PruneMarketResult> {
   const series = market._id;
   const cutoffSec = hotCutoffSec();
-  const coldWindows = await listColdWindowStarts(series, cutoffSec);
 
-  const byDay = new Map<string, number[]>();
-  for (const windowStart of coldWindows) {
-    const dayKey = utcDayKey(windowStart);
-    const batch = byDay.get(dayKey) ?? [];
-    batch.push(windowStart);
-    byDay.set(dayKey, batch);
+  const coldTicks = await listColdTickDirs(series, cutoffSec);
+  for (const windowStart of coldTicks) {
+    await removeTickDir(series, windowStart);
   }
 
-  const days: ArchiveDayResult[] = [];
-  let orphansRemoved = 0;
+  const windowsRemoved = await pruneRecordedWindows(market, cutoffSec);
+  await deleteRecordedWindowsBefore(cutoffSec, series).catch((err) => {
+    logService.warn(
+      "retention",
+      `Mongo recorded_windows prune failed (${series}): ${String(err)}`,
+    );
+  });
 
-  for (const [dayKey, windowStarts] of [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    const zipPath = path.join(marketArchiveDir(series), `${dayKey}.zip`);
-    const exists = await zipExists(zipPath);
+  const archiveRemoved = await removeArchiveDir(series);
 
-    if (exists) {
-      for (const windowStart of windowStarts) {
-        await removeHotWindowFiles(series, windowStart);
-        orphansRemoved += 1;
-      }
-      days.push({
-        dayKey,
-        windowCount: windowStarts.length,
-        zipPath,
-        skippedExisting: true,
-      });
-      continue;
-    }
-
-    if (windowStarts.length === 0) continue;
-
-    await buildDayZip(series, dayKey, windowStarts);
-
-    for (const windowStart of windowStarts) {
-      await removeHotWindowFiles(series, windowStart);
-    }
-
-    days.push({
-      dayKey,
-      windowCount: windowStarts.length,
-      zipPath,
-      skippedExisting: false,
-    });
-
-    logService.success(
-      "archive",
-      `Archived ${windowStarts.length} windows for ${series} (${dayKey})`,
+  if (coldTicks.length > 0 || windowsRemoved > 0 || archiveRemoved) {
+    logService.info(
+      "retention",
+      `Pruned ${series}: ${coldTicks.length} tick dirs, ${windowsRemoved} window files` +
+        (archiveRemoved ? ", removed legacy archive/" : ""),
     );
   }
 
-  return { series, cutoffSec, days, orphansRemoved };
+  return {
+    series,
+    cutoffSec,
+    windowsRemoved,
+    tickDirsRemoved: coldTicks.length,
+    archiveRemoved,
+  };
+}
+
+/** @deprecated Use pruneColdMarketData — no longer zips cold data. */
+export async function archiveColdMarketData(
+  market: MarketDocument,
+): Promise<PruneMarketResult> {
+  return pruneColdMarketData(market);
 }

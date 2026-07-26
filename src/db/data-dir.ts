@@ -60,6 +60,7 @@ export function marketHeatmapDir(series: string): string {
   return path.join(marketDir(series), "heatmap");
 }
 
+/** Legacy zip folder — no longer created; retention deletes it if present. */
 export function marketArchiveDir(series: string): string {
   return path.join(marketDir(series), "archive");
 }
@@ -68,7 +69,6 @@ export async function ensureMarketDirs(series: string): Promise<void> {
   await Promise.all([
     fs.mkdir(marketTicksDir(series), { recursive: true }),
     fs.mkdir(marketWindowsDir(series), { recursive: true }),
-    fs.mkdir(marketArchiveDir(series), { recursive: true }),
   ]);
 }
 

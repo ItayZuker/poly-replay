@@ -1,10 +1,19 @@
-# Poly Recorder
+# Poly Real
 
-Passive Polymarket up/down market data recorder. Collects every CLOB book update and Chainlink price tick, persisting to local JSON files for downstream simulation.
+Schedule-driven Polymarket up/down trading with optional market-data recording and Replay backtests.
+
+One codebase, two process roles:
+
+| Role | Env / UI | Purpose |
+|------|----------|---------|
+| **Live** | `TRADING_EXECUTOR=1` | UI + real/demo trading. Does **not** record (Recording toggle still saves). |
+| **Recorder** | executor off; **Recording** on per series (Market → Trade) | Captures ticks/windows; runs Replay; exposes the replay worker. |
 
 ## Requirements
 
 - Node.js 20+
+- MongoDB (users, setups, schedule, markets, heatmap summaries)
+- Wallet credentials for live trading (optional for recorder-only)
 
 ## Setup
 
@@ -13,51 +22,49 @@ npm install
 npm start
 ```
 
-Open http://localhost:3847
+Open http://localhost:3848 (or `PORT`)
 
-## Environment
+Product docs: http://localhost:3848/docs
+
+## Environment (roles)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATA_DIR` | `./data` | Folder for all recorded data |
-| `CLOB_HOST` | `https://clob.polymarket.com` | CLOB REST host |
-| `CHAIN_ID` | `137` | Polygon chain ID |
-| `PORT` | `3847` | HTTP server port |
+| `PORT` | `3848` | HTTP listen port |
+| `DATA_DIR` | `./data` | Recorded ticks/windows |
+| `MONGODB_URI` / `MONGODB_DB` | — / `poly_recorder` | Database |
+| `TRADING_EXECUTOR` | off | Allow this process to place CLOB orders |
+| `SCHEDULE_REPLAY_SERVICE_URL` | empty | Live → recorder `…/api/internal/schedule-replay` |
+| `SCHEDULE_REPLAY_WORKER_SECRET` | empty | Optional worker auth (`x-replay-worker-secret`) |
+| `CLOB_HOST` | Polymarket | CLOB REST host |
+| `CHAIN_ID` | `137` | Polygon |
 
-No wallet, private key, CLOB API keys, or database required.
+### Typical local split
 
-## Data layout
+**Recorder** (this machine — collect data + Replay):
+
+```env
+# TRADING_EXECUTOR unset
+# SCHEDULE_REPLAY_SERVICE_URL unset  → Replay runs in-process
+```
+
+Then enable **Recording** for each series under Market → Trade.
+
+**Live** (e.g. Heroku — trade; proxy Replay to recorder):
+
+```env
+TRADING_EXECUTOR=1
+SCHEDULE_REPLAY_SERVICE_URL=http://your-recorder-host:3848/api/internal/schedule-replay
+SCHEDULE_REPLAY_WORKER_SECRET=shared-secret
+```
+
+## Data layout (recorder)
 
 ```
 data/
-  markets.json
-  btc_5m/
-    ticks/
-      {windowStart}.jsonl    # one compact tick per line
-    windows/
-      {windowStart}.json     # window summary
-    heatmap/
-      {windowStart}.json     # heatmap stats
+  {series}/
+    ticks/{windowStart}/   # clob-raw / clob-book / chainlink jsonl
+    windows/{windowStart}.json
 ```
 
-See [docs/database-schema.md](docs/database-schema.md) for numeric key mappings.
-
-## Markets
-
-Six markets are seeded on startup: `btc-5m`, `eth-5m`, `sol-5m`, `btc-15m`, `eth-15m`, `sol-15m`.
-
-The last **7 days** of tick/window data stay unzipped for simulation. Older data is archived daily to `archive/YYYY-MM-DD.zip` (runs every hour, even when recording is off). Toggle **Recording** per market to start/stop capture.
-
-## APIs
-
-- `GET /api/markets` — list markets
-- `PATCH /api/markets/:series` — toggle recording
-- `GET /api/quotes?series=` — live quotes
-- `GET /api/book?series=` — order book depth
-- `GET /api/window?series=` — current window state
-- `GET /api/ticks?series=&windowStart=` — replay ticks
-- `GET /api/stream` — SSE live updates
-
-## Replay
-
-Read ticks from `data/btc_5m/ticks/{windowStart}.jsonl` (one JSON object per line), or use `GET /api/ticks?series=btc-5m&windowStart=…`.
+Only the last ~7 days are kept. Older ticks/windows are deleted hourly on the recorder process (no zip archive).

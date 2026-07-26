@@ -18,7 +18,7 @@ export interface HeatmapRecordedWindow {
 }
 
 type MongoRecordedWindowDoc = {
-  _id?: string;
+  _id?: string | undefined;
   series?: string;
   marketSeries?: string;
   windowStart?: number;
@@ -114,6 +114,61 @@ function normalizeDoc(doc: MongoRecordedWindowDoc): HeatmapRecordedWindow | null
   if (windowOutcome === "up" || windowOutcome === "down") out.windowOutcome = windowOutcome;
 
   return out;
+}
+
+/** Upsert slim heatmap fields for one finished window (recorder role). */
+export async function upsertRecordedWindowSummary(
+  series: string,
+  window: {
+    windowStart: number;
+    windowEnd: number;
+    savedAt: string;
+    ptbCrossings?: number;
+    rangeTop?: number;
+    rangeBottom?: number;
+    uniqueTraders?: number;
+    newWallets?: number;
+    windowOutcome?: WindowOutcome;
+  },
+): Promise<void> {
+  const mongo = await getMongoClient();
+  const _id = `${series}:${window.windowStart}`;
+  const $set: MongoRecordedWindowDoc = {
+    series,
+    windowStart: window.windowStart,
+    windowEnd: window.windowEnd,
+    savedAt: window.savedAt,
+  };
+  if (window.ptbCrossings != null) $set.ptbCrossings = window.ptbCrossings;
+  if (window.rangeTop != null) $set.rangeTop = window.rangeTop;
+  if (window.rangeBottom != null) $set.rangeBottom = window.rangeBottom;
+  if (window.uniqueTraders != null) $set.uniqueTraders = window.uniqueTraders;
+  if (window.newWallets != null) $set.newWallets = window.newWallets;
+  if (window.windowOutcome === "up" || window.windowOutcome === "down") {
+    $set.windowOutcome = window.windowOutcome;
+  }
+
+  await mongo
+    .db(getMongoDbName())
+    .collection<MongoRecordedWindowDoc>(COLLECTION)
+    .updateOne({ _id }, { $set }, { upsert: true });
+}
+
+/** Delete Mongo heatmap summaries older than cutoff (optionally one series). */
+export async function deleteRecordedWindowsBefore(
+  cutoffUtc: number,
+  series?: string,
+): Promise<number> {
+  const mongo = await getMongoClient();
+  const filter: { windowStart: { $lt: number }; series?: string } = {
+    windowStart: { $lt: cutoffUtc },
+  };
+  if (series) filter.series = series;
+  const result = await mongo
+    .db(getMongoDbName())
+    .collection(COLLECTION)
+    .deleteMany(filter);
+  return result.deletedCount ?? 0;
 }
 
 /**

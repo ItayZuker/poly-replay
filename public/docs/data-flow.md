@@ -50,6 +50,22 @@ Without schedule, phases come from the graph setup — [Setups & phases](doc:set
 
 Saved over REST to the database (`trading_setups_real` / `schedual_setups_real` for **Live**; `trading_setups_replay` / `schedual_setups_replay` for **Replay**). The server picks the active **Live** UTC placement each tick. SSE keeps the schedule board updated.
 
-**Replay** runs via REST `POST /api/schedule-replay` (SSE response). The external worker URL is configured with `SCHEDULE_REPLAY_SERVICE_URL` (empty until wired).
+**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`).
+
+```flow
+# Replay roles
+Browser -> POST /api/schedule-replay -> Live server
+Live server -> POST SCHEDULE_REPLAY_SERVICE_URL -> Recorder worker
+Recorder worker -> SimulatorEngine over DATA_DIR ticks -> SSE stats
+```
+
+| Control / env | Role |
+|---------------|------|
+| **Recording** (Market → Trade) | Per-series flag in Mongo — `PATCH /api/markets/:series` |
+| `TRADING_EXECUTOR=1` | Live — may place CLOB orders; never runs recorders (toggle still persists) |
+| Non-executor process | Starts/stops `MarketRecorder` for each series with Recording on; writes `DATA_DIR` + Mongo heatmap summaries |
+| `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process |
+| `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
+| `DATA_DIR` | Local tick/window files (default `./data`) |
 
 Wallet credentials in [Settings](doc:settings) unlock Market/Schedule and live signing.

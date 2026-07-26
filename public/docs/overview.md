@@ -10,6 +10,7 @@ Poly Real is schedule-driven Polymarket **up/down** trading: build phase-based s
 - Use **Replay** mode on Schedule to trial setups over recent history (separate board from Live)
 - Run **demo**, then **live** with your wallet
 - Use the **Heatmap** for historical window activity
+- Toggle **Recording** per market for Replay/Heatmap data; deploy the same app as a recorder and/or live trader (`TRADING_EXECUTOR`) so Replay shares the trading engine
 
 ## Pages
 

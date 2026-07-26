@@ -2,7 +2,13 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { initStorageAndSeed, ensureAllMarketIndexes, listMarkets, getMarket } from "./db/market-repository.js";
+import {
+  initStorageAndSeed,
+  ensureAllMarketIndexes,
+  listMarkets,
+  getMarket,
+  updateMarket,
+} from "./db/market-repository.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
 import {
   listChainlinkTicks,
@@ -60,7 +66,7 @@ import {
   loadAllHeatmapWindows,
   setHeatmapUpdateListener,
 } from "./heatmap-service.js";
-import type { EnrichedLiveWindowState, SimSetup } from "./types.js";
+import type { EnrichedLiveWindowState, SimSetup, TradingPhaseSetup } from "./types.js";
 import {
   dropTradingClient,
   getTradingAccountStatus,
@@ -71,6 +77,13 @@ import {
 } from "./trading-client.js";
 import { liveTradingRegistry } from "./live-trading-service.js";
 import { isTradingExecutor } from "./trading-executor.js";
+import { canProcessRecord } from "./recording-enabled.js";
+import { recordingManager } from "./recording-manager.js";
+import { startArchiveScheduler, stopArchiveScheduler } from "./archive-service.js";
+import {
+  backtestSchedulePlacements,
+  type PlacementBacktestStats,
+} from "./schedule-backtest-service.js";
 import { ensureWalletRegistryReady } from "./wallet-registry.js";
 import { traderRegistryService } from "./trader-registry-service.js";
 import {
@@ -152,6 +165,8 @@ function isPublicAuthPath(req: express.Request): boolean {
   if (req.method === "POST" && req.path === "/api/auth/login") return true;
   if (req.method === "POST" && req.path === "/api/auth/register") return true;
   if (req.method === "GET" && req.path === "/api/auth/me") return true;
+  // Live→recorder worker; gated by SCHEDULE_REPLAY_WORKER_SECRET when set.
+  if (req.method === "POST" && req.path === "/api/internal/schedule-replay") return true;
   return false;
 }
 
@@ -425,8 +440,13 @@ function filterSchedulePlacements(
   return all.filter((p) => idSet.has(p._id));
 }
 
-/** Empty until an external replay worker URL is configured. */
+/**
+ * Live role: point at the recorder instance's `/api/internal/schedule-replay`.
+ * Empty → run backtest in-process (typical for a local recorder).
+ */
 const SCHEDULE_REPLAY_SERVICE_URL = String(process.env.SCHEDULE_REPLAY_SERVICE_URL ?? "").trim();
+/** Optional shared secret for `/api/internal/schedule-replay` and outbound proxy. */
+const SCHEDULE_REPLAY_WORKER_SECRET = String(process.env.SCHEDULE_REPLAY_WORKER_SECRET ?? "").trim();
 
 function writeSseEvent(
   res: express.Response,
@@ -438,6 +458,84 @@ function writeSseEvent(
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   const flush = (res as express.Response & { flush?: () => void }).flush;
   if (typeof flush === "function") flush.call(res);
+}
+
+function assertReplayWorkerAuth(req: express.Request): boolean {
+  if (!SCHEDULE_REPLAY_WORKER_SECRET) return true;
+  const header = String(req.headers["x-replay-worker-secret"] ?? "");
+  return header === SCHEDULE_REPLAY_WORKER_SECRET;
+}
+
+function setupsByIdFromBody(setups: unknown): Map<string, TradingPhaseSetup | null> {
+  const map = new Map<string, TradingPhaseSetup | null>();
+  if (!Array.isArray(setups)) return map;
+  for (const item of setups) {
+    const id = String((item as { _id?: unknown })?._id ?? "").trim();
+    if (!id) continue;
+    const rawSetup = (item as { setup?: TradingPhaseSetup })?.setup;
+    map.set(id, rawSetup ? normalizePhaseSetup(rawSetup) : null);
+  }
+  return map;
+}
+
+async function runScheduleReplaySse(
+  res: express.Response,
+  closed: { value: boolean },
+  input: {
+    userId: string;
+    series: string;
+    placements: SchedulePlacementListItem[];
+    setups: unknown;
+    latencyMs?: number;
+  },
+): Promise<void> {
+  const market = await getMarket(input.series);
+  if (!market) {
+    writeSseEvent(res, closed, "failure", { error: `Unknown series: ${input.series}` });
+    res.end();
+    return;
+  }
+
+  const latencyMs =
+    typeof input.latencyMs === "number" && Number.isFinite(input.latencyMs)
+      ? Math.max(0, Math.min(2000, Math.floor(input.latencyMs)))
+      : simulatorService.getSetup().latencyMs;
+
+  writeSseEvent(res, closed, "progress", {
+    completed: 0,
+    total: Math.max(1, input.placements.length),
+    indeterminate: true,
+  });
+
+  let lastProgress = { completed: 0, total: Math.max(1, input.placements.length) };
+  const stats = await backtestSchedulePlacements(
+    input.userId,
+    market,
+    input.placements,
+    latencyMs,
+    {
+      setupsById: setupsByIdFromBody(input.setups),
+      shouldAbort: () => closed.value,
+      onProgress: (progress) => {
+        lastProgress = {
+          completed: progress.completed,
+          total: Math.max(1, progress.total),
+        };
+        writeSseEvent(res, closed, "progress", progress);
+      },
+      onPlacementComplete: (placementStats: PlacementBacktestStats) => {
+        writeSseEvent(res, closed, "placement", {
+          ...placementStats,
+          progress: lastProgress,
+        });
+      },
+    },
+  );
+
+  if (!closed.value) {
+    writeSseEvent(res, closed, "done", { stats });
+    res.end();
+  }
 }
 
 app.get("/api/account", async (req, res) => {
@@ -753,6 +851,42 @@ app.get("/api/markets", async (_req, res) => {
     res.json(markets);
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+app.patch("/api/markets/:series", async (req, res) => {
+  try {
+    requireUserId(req);
+    const series = String(req.params.series ?? "").trim();
+    const patch: { recordingEnabled?: boolean } = {};
+    if (typeof req.body?.recordingEnabled === "boolean") {
+      patch.recordingEnabled = req.body.recordingEnabled;
+    }
+    if (patch.recordingEnabled === undefined) {
+      res.status(400).json({ error: "recordingEnabled boolean required" });
+      return;
+    }
+    const updated = await updateMarket(series, patch);
+    if (!updated) {
+      res.status(404).json({ error: "Market not found" });
+      return;
+    }
+    await recordingManager.refreshMarket(updated);
+    const markets = await listMarkets();
+    broadcast("markets", markets);
+    logService.info(
+      "recording",
+      `Recording ${updated.recordingEnabled ? "enabled" : "disabled"} for ${updated._id}` +
+        (canProcessRecord() ? "" : " (saved; this process does not record)"),
+    );
+    res.json(updated);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === "Unauthorized") {
+      res.status(401).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
   }
 });
 
@@ -1264,7 +1398,9 @@ app.delete("/api/schedule-placements/:id", async (req, res) => {
 /**
  * Replay the current Replay-mode schedule over historical windows.
  * Streams per-placement stats (event: placement) then event: done.
- * External worker URL is empty until SCHEDULE_REPLAY_SERVICE_URL is set.
+ *
+ * If SCHEDULE_REPLAY_SERVICE_URL is set (live role), proxies to that worker.
+ * Otherwise runs the backtest in-process against local DATA_DIR (recorder role).
  */
 app.post("/api/schedule-replay", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -1297,29 +1433,40 @@ app.post("/api/schedule-replay", async (req, res) => {
             await Promise.all(setupIds.map((id: string) => getTradingSetupById(userId, id, "replay")))
           ).filter(Boolean);
 
+    if (!SCHEDULE_REPLAY_SERVICE_URL) {
+      await runScheduleReplaySse(res, closed, {
+        userId,
+        series,
+        placements,
+        setups,
+        latencyMs: req.body?.latencyMs,
+      });
+      return;
+    }
+
     writeSseEvent(res, closed, "progress", {
       completed: 0,
       total: Math.max(1, placements.length),
-      indeterminate: !SCHEDULE_REPLAY_SERVICE_URL,
+      indeterminate: true,
     });
 
-    if (!SCHEDULE_REPLAY_SERVICE_URL) {
-      writeSseEvent(res, closed, "failure", {
-        error: "Replay service is not configured (SCHEDULE_REPLAY_SERVICE_URL is empty)",
-        configured: false,
-      });
-      res.end();
-      return;
+    const remoteHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    if (SCHEDULE_REPLAY_WORKER_SECRET) {
+      remoteHeaders["x-replay-worker-secret"] = SCHEDULE_REPLAY_WORKER_SECRET;
     }
 
     const remoteRes = await fetch(SCHEDULE_REPLAY_SERVICE_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: remoteHeaders,
       body: JSON.stringify({
         userId,
         series,
         placements,
         setups,
+        latencyMs: req.body?.latencyMs ?? simulatorService.getSetup().latencyMs,
       }),
     });
     if (!remoteRes.ok || !remoteRes.body) {
@@ -1347,6 +1494,48 @@ app.post("/api/schedule-replay", async (req, res) => {
     }
     if (buffer && !closed.value) res.write(buffer);
     if (!closed.value) res.end();
+  } catch (err) {
+    writeSseEvent(res, closed, "failure", { error: String(err) });
+    res.end();
+  }
+});
+
+/**
+ * Recorder-role worker endpoint. Live instances proxy here via SCHEDULE_REPLAY_SERVICE_URL.
+ * Auth: optional x-replay-worker-secret when SCHEDULE_REPLAY_WORKER_SECRET is set.
+ */
+app.post("/api/internal/schedule-replay", async (req, res) => {
+  if (!assertReplayWorkerAuth(req)) {
+    res.status(401).json({ error: "Unauthorized replay worker request" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const closed = { value: false };
+  req.on("close", () => {
+    closed.value = true;
+  });
+
+  try {
+    const userId = String(req.body?.userId ?? "").trim();
+    if (!userId) {
+      writeSseEvent(res, closed, "failure", { error: "userId is required" });
+      res.end();
+      return;
+    }
+    const series = parseSeriesParam(req, req.body?.series);
+    const placements = Array.isArray(req.body?.placements) ? req.body.placements : [];
+    await runScheduleReplaySse(res, closed, {
+      userId,
+      series,
+      placements,
+      setups: req.body?.setups,
+      latencyMs: req.body?.latencyMs,
+    });
   } catch (err) {
     writeSseEvent(res, closed, "failure", { error: String(err) });
     res.end();
@@ -1519,6 +1708,22 @@ async function main(): Promise<void> {
   } else {
     logService.info("server", "TRADING_EXECUTOR off — settings only, no order placement");
   }
+  if (canProcessRecord()) {
+    logService.info(
+      "server",
+      "Recording available — per-market Recording toggle starts capture on this process",
+    );
+  } else {
+    logService.info(
+      "server",
+      "TRADING_EXECUTOR on — per-market Recording toggles save to Mongo but this process will not record",
+    );
+  }
+  if (SCHEDULE_REPLAY_SERVICE_URL) {
+    logService.info("server", `Schedule replay proxies to ${SCHEDULE_REPLAY_SERVICE_URL}`);
+  } else {
+    logService.info("server", "Schedule replay runs in-process (no SCHEDULE_REPLAY_SERVICE_URL)");
+  }
 
   logService.onEntry((entry) => {
     broadcastLog(entry);
@@ -1542,6 +1747,19 @@ async function main(): Promise<void> {
   chainlinkPriceFeed.start();
   clobMarketFeed.start();
   displayService.start();
+
+  let recordingSyncTimer: ReturnType<typeof setInterval> | null = null;
+  if (canProcessRecord()) {
+    await recordingManager.sync();
+    startArchiveScheduler();
+    // Pick up Recording toggles saved by another process (e.g. live UI → shared Mongo).
+    recordingSyncTimer = setInterval(() => {
+      void recordingManager.sync().catch((err) => {
+        logService.warn("recorder", `Periodic sync failed: ${String(err)}`);
+      });
+    }, 30_000);
+    recordingSyncTimer.unref?.();
+  }
 
   // Send each Chainlink point as a tiny incremental event. Full window
   // snapshots remain the recovery path for initial load and reconnects.
@@ -1567,6 +1785,9 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     clearInterval(heatmapRefreshTimer);
+    if (recordingSyncTimer) clearInterval(recordingSyncTimer);
+    stopArchiveScheduler();
+    recordingManager.stopAll();
     traderRegistryService.stop();
     liveTradingRegistry.stopPolling();
     displayService.stop();

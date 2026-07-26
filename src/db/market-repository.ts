@@ -19,6 +19,13 @@ async function collection() {
   return mongo.db(getMongoDbName()).collection<MarketDocument>(COLLECTION);
 }
 
+function normalizeMarket(doc: MarketDocument): MarketDocument {
+  return {
+    ...doc,
+    recordingEnabled: doc.recordingEnabled === true,
+  };
+}
+
 export async function ensureMarketIndexes(): Promise<void> {
   const col = await collection();
   await col.createIndex({ timeframeMinutes: 1 });
@@ -63,6 +70,7 @@ export async function seedMarkets(): Promise<void> {
         },
         $setOnInsert: {
           _id: seed.series,
+          recordingEnabled: false,
           createdAt: existing?.createdAt ?? now,
         },
       },
@@ -83,7 +91,7 @@ export async function ensureAllMarketIndexes(): Promise<void> {
 export async function listMarkets(): Promise<MarketDocument[]> {
   const col = await collection();
   const docs = await col.find({ _id: { $in: [...SEED_SERIES_IDS] } }).toArray();
-  const byId = new Map(docs.map((d) => [d._id, d]));
+  const byId = new Map(docs.map((d) => [d._id, normalizeMarket(d)]));
   return SEED_SERIES_IDS.map((series) => byId.get(series)).filter(
     (market): market is MarketDocument => market != null,
   );
@@ -91,7 +99,28 @@ export async function listMarkets(): Promise<MarketDocument[]> {
 
 export async function getMarket(series: string): Promise<MarketDocument | null> {
   const col = await collection();
-  return col.findOne({ _id: series });
+  const doc = await col.findOne({ _id: series });
+  return doc ? normalizeMarket(doc) : null;
+}
+
+export async function updateMarket(
+  series: string,
+  patch: Partial<Pick<MarketDocument, "recordingEnabled">>,
+): Promise<MarketDocument | null> {
+  const col = await collection();
+  const existing = await col.findOne({ _id: series });
+  if (!existing) return null;
+
+  const $set: Partial<MarketDocument> = {
+    updatedAt: new Date().toISOString(),
+  };
+  if (typeof patch.recordingEnabled === "boolean") {
+    $set.recordingEnabled = patch.recordingEnabled;
+  }
+
+  await col.updateOne({ _id: series }, { $set });
+  const updated = await col.findOne({ _id: series });
+  return updated ? normalizeMarket(updated) : null;
 }
 
 export { getDataDir };
