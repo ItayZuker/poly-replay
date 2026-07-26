@@ -1,6 +1,6 @@
 # Schedule & Heatmap
 
-Toggle **Schedule** and **Heatmap** on this page. At the bottom of the setups list, switch **Live** vs **Replay** workspace.
+Toggle **Schedule** and **Heatmap** on this page. At the bottom of the setups list, switch **Live** vs **Demo** workspace.
 
 ## Setups
 
@@ -35,10 +35,10 @@ With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** set
 | Card stats | Live trade outcomes | Filled when you press **Replay** |
 | Header total | Same summary chrome (**Market** = series all-time, **Live** = since reset, **Schedule** = sum of cards) | Same — totals update as replay results arrive |
 
-In **Replay**, a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Replay switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
+In **Replay** (**Demo** on the switcher), a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Demo switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
 
 The external replay worker URL is not configured yet — the UI and storage are ready; pressing **Replay** reports that the service is not configured until it is wired.
 
 ## Heatmap
 
-Day × hour intensity from recorded windows (e.g. crossings, range). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Replay are independent toggles.
+Day × hour intensity from recorded windows (e.g. crossings, range). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Demo are independent toggles.
