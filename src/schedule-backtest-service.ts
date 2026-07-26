@@ -66,6 +66,8 @@ export interface PlacementBacktestStats {
   green: number;
   red: number;
   blue: number;
+  /** Windows simulated with ticks where no buy triggered (Replay gray dot). */
+  gray: number;
   pnl: number;
 }
 
@@ -335,17 +337,19 @@ function emptyStats(placementId: string): PlacementBacktestStats {
     green: 0,
     red: 0,
     blue: 0,
+    gray: 0,
     pnl: 0,
   };
 }
 
 function aggregateResult(
   placementId: string,
-  results: SimLastWindow[],
+  results: Array<SimLastWindow | null>,
 ): PlacementBacktestStats {
   let green = 0;
   let red = 0;
   let blue = 0;
+  let gray = 0;
   let pnl = 0;
 
   for (const result of results) {
@@ -353,7 +357,8 @@ function aggregateResult(
     if (bucket === "green") green += 1;
     else if (bucket === "red") red += 1;
     else if (bucket === "blue") blue += 1;
-    pnl += result.pl ?? 0;
+    else gray += 1;
+    if (result) pnl += result.pl ?? 0;
   }
 
   return {
@@ -362,6 +367,7 @@ function aggregateResult(
     green,
     red,
     blue,
+    gray,
     pnl: Number.isFinite(pnl) ? pnl : 0,
   };
 }
@@ -670,9 +676,8 @@ export async function backtestSchedulePlacements(
       (sim): sim is RecordedWindowSimulation => sim != null,
     );
     const withTicks = finished.filter((sim) => sim.hadTicks);
-    const results = withTicks
-      .map((sim) => sim.result)
-      .filter((result): result is SimLastWindow => result != null);
+    // Include null results so “ran, no buy” windows count toward gray.
+    const results = withTicks.map((sim) => sim.result);
 
     // Window metadata without tick files must not look like “ran, no trades”.
     if (withTicks.length === 0) {
@@ -702,7 +707,7 @@ export async function backtestSchedulePlacements(
       }
       logService.info(
         "replay",
-        `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue} pnl ${computed.pnl.toFixed(2)}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
+        `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue}/gray${computed.gray} pnl ${computed.pnl.toFixed(2)}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
       );
       options.onPlacementComplete?.(computed);
     }

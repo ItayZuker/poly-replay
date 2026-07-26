@@ -50,6 +50,10 @@ function syncScheduleWorkspaceUi() {
   if (replayBtn) {
     replayBtn.hidden = !isReplayWorkspace();
   }
+  const replayLatency = $("schedule-replay-latency");
+  if (replayLatency) {
+    replayLatency.hidden = !isReplayWorkspace();
+  }
 }
 
 async function setScheduleWorkspaceMode(nextMode, options = {}) {

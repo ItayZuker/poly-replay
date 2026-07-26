@@ -67,6 +67,15 @@ interface RestingGtdBuy {
   phaseIdx: number;
 }
 
+/** GTD place delayed by latency — not fillable until liveAtMs. */
+interface PendingGtdPlace {
+  side: Side;
+  shares: number;
+  limitPrice: number;
+  phaseIdx: number;
+  liveAtMs: number;
+}
+
 interface SellWatch {
   target: number;
 }
@@ -195,7 +204,9 @@ export class SimulatorEngine {
   }
   private clearAllRestingGtd(): void {
     this.restingGtds.clear();
+    this.pendingGtdPlaces.clear();
   }
+  private pendingGtdPlaces = new Map<Side, PendingGtdPlace>();
   private pendingBuy: PendingBuy | null = null;
   private pendingPhaseAborts = new Map<number, number>();
   private abortedBuyPhases = new Set<number>();
@@ -627,7 +638,9 @@ export class SimulatorEngine {
       this.buyWatch = null;
     }
     for (const side of SIDES_ORDER) {
-      if (this.restingGtds.has(side)) this.cancelRestingGtdSide(side, "phase change", simNowMs);
+      if (this.restingGtds.has(side) || this.pendingGtdPlaces.has(side)) {
+        this.cancelRestingGtdSide(side, "phase change", simNowMs);
+      }
     }
     // Re-evaluate sell target from the new phase's sell settings.
     this.sellWatch = null;
@@ -896,6 +909,7 @@ export class SimulatorEngine {
     phase: SimSetup["phases"][number],
     phaseIdx: number,
     state: LiveWindowState,
+    setup: SimSetup,
     simNowMs: number,
     preCancelForNextPhase = false,
   ): void {
@@ -907,33 +921,91 @@ export class SimulatorEngine {
 
     const shares = Math.max(1, phase.buyShares || 1);
     const limitPrice = centsToPrice(phase.buyTrigger);
+    const latency = this.latencyMs(setup);
 
     for (const side of SIDES_ORDER) {
-      if (this.restingGtds.has(side)) continue;
+      if (this.restingGtds.has(side) || this.pendingGtdPlaces.has(side)) continue;
       if (!this.sideStillWantsBuy(side, phase)) continue;
       if (!gapAllowsBuy(side, phase, state.assetGap)) continue;
 
-      this.restingGtds.set(side, {
+      if (latency <= 0) {
+        this.restingGtds.set(side, {
+          side,
+          shares,
+          limitPrice,
+          phaseIdx,
+        });
+        logService.info(
+          "sim",
+          `GTD resting placed: ${side} ${shares} sh @ ${fmtCents(limitPrice)} (phase ${phaseIdx + 1})`,
+        );
+        continue;
+      }
+
+      this.pendingGtdPlaces.set(side, {
         side,
         shares,
         limitPrice,
         phaseIdx,
+        liveAtMs: simNowMs + latency,
       });
       logService.info(
         "sim",
-        `GTD resting placed: ${side} ${shares} sh @ ${fmtCents(limitPrice)} (phase ${phaseIdx + 1})`,
+        `GTD resting scheduled: ${side} ${shares} sh @ ${fmtCents(limitPrice)}, latency ${latency} ms (phase ${phaseIdx + 1})`,
+      );
+    }
+  }
+
+  /** Promote latency-delayed GTD places to live resting orders. */
+  private processPendingGtdPlaces(
+    phase: SimSetup["phases"][number],
+    phaseIdx: number,
+    state: LiveWindowState,
+    simNowMs: number,
+  ): void {
+    for (const side of [...SIDES_ORDER]) {
+      const pending = this.pendingGtdPlaces.get(side);
+      if (!pending) continue;
+      if (simNowMs < pending.liveAtMs) continue;
+
+      this.pendingGtdPlaces.delete(side);
+      if (
+        pending.phaseIdx !== phaseIdx ||
+        phase.buyOptimize ||
+        !phase.buyEnabled ||
+        this.isPhaseBuyAborted(phaseIdx) ||
+        !this.sideStillWantsBuy(side, phase) ||
+        !gapAllowsBuy(side, phase, state.assetGap) ||
+        this.restingGtds.has(side)
+      ) {
+        logService.info("sim", `GTD resting dropped after latency (${side})`);
+        continue;
+      }
+
+      this.restingGtds.set(side, {
+        side: pending.side,
+        shares: pending.shares,
+        limitPrice: pending.limitPrice,
+        phaseIdx: pending.phaseIdx,
+      });
+      logService.info(
+        "sim",
+        `GTD resting placed: ${side} ${pending.shares} sh @ ${fmtCents(pending.limitPrice)} (phase ${phaseIdx + 1})`,
       );
     }
   }
 
   private cancelRestingGtdSide(side: Side, reason: string, nowMs?: number): void {
-    if (!this.restingGtds.has(side)) return;
+    const hadResting = this.restingGtds.has(side);
+    const hadPending = this.pendingGtdPlaces.has(side);
+    if (!hadResting && !hadPending) return;
     if (isRoutineGtdCancelReason(reason)) {
       this.gtdRepressUntilMs = (nowMs ?? Date.now()) + GTD_FILTER_REPRESS_MS;
     } else {
       logService.info("sim", `GTD resting cancelled (${reason}) ${side}`);
     }
     this.restingGtds.delete(side);
+    this.pendingGtdPlaces.delete(side);
   }
 
   private syncRestingGtdForPhase(
@@ -1196,13 +1268,24 @@ export class SimulatorEngine {
 
     // GTD resting: cancel on optimize/gap/phase-ending, fill from book, place when active.
     this.syncRestingGtdForPhase(phase, phaseIdx, state, simNowMs, preCancelForNextPhase);
+    this.processPendingGtdPlaces(phase, phaseIdx, state, simNowMs);
     this.tickRestingGtd(quote, nowSec, state, phase, phaseIdx, simNowMs);
-    if (!this.buysFullySatisfied(phase) || this.restingGtds.size > 0) {
-      this.tryPlaceRestingGtd(phase, phaseIdx, state, simNowMs, preCancelForNextPhase);
+    if (
+      !this.buysFullySatisfied(phase) ||
+      this.restingGtds.size > 0 ||
+      this.pendingGtdPlaces.size > 0
+    ) {
+      this.tryPlaceRestingGtd(phase, phaseIdx, state, setup, simNowMs, preCancelForNextPhase);
+      this.processPendingGtdPlaces(phase, phaseIdx, state, simNowMs);
       this.tickRestingGtd(quote, nowSec, state, phase, phaseIdx, simNowMs);
     }
 
-    if (!this.buysFullySatisfied(phase) && !this.pendingBuy && this.restingGtds.size === 0) {
+    if (
+      !this.buysFullySatisfied(phase) &&
+      !this.pendingBuy &&
+      this.restingGtds.size === 0 &&
+      this.pendingGtdPlaces.size === 0
+    ) {
       this.tryStartBuyWatch(phase, quote, nowSec, state, setup, simNowMs);
       this.tickBuyWatch(quote, nowSec, state, setup, simNowMs);
     }

@@ -1400,6 +1400,64 @@ body {
   display: none !important;
 }
 
+.schedule-replay-latency {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 2px;
+  box-sizing: border-box;
+}
+
+.schedule-replay-latency[hidden] {
+  display: none !important;
+}
+
+.schedule-replay-latency-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.schedule-replay-latency-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-replay-latency-input {
+  width: 4.5rem;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  box-sizing: border-box;
+}
+
+.schedule-replay-latency-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.schedule-replay-latency-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.schedule-replay-latency-unit {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .schedule-replay-run-btn {
   display: flex;
   align-items: center;
@@ -1429,6 +1487,16 @@ body {
   flex-shrink: 0;
 }
 
+.schedule-replay-run-btn.is-stop .schedule-replay-spin-icon {
+  animation: schedule-replay-spin 0.9s linear infinite;
+}
+
+@keyframes schedule-replay-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .schedule-replay-run-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 32%, var(--bg));
   border-color: color-mix(in srgb, var(--accent) 80%, #fff);
@@ -1446,20 +1514,38 @@ body {
 }
 
 .schedule-replay-run-btn.is-stop {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--down) 70%, var(--border));
-  background: color-mix(in srgb, var(--down) 22%, var(--bg));
+  border-style: dashed;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  color: var(--text);
+  animation: schedule-replay-stop-pulse 1.4s ease-in-out infinite;
 }
 
 .schedule-replay-run-btn.is-stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--down) 40%, var(--bg));
-  border-color: var(--down);
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 80%, #fff);
   color: #fff;
+  animation: none;
 }
 
 .schedule-replay-run-btn.is-stop:active:not(:disabled) {
-  background: var(--down);
+  background: var(--accent);
   color: #fff;
+  animation: none;
+}
+
+@keyframes schedule-replay-stop-pulse {
+  0%,
+  100% {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+    color: var(--text);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--accent) 55%, #fff);
+    background: color-mix(in srgb, var(--accent) 34%, var(--bg));
+    color: #fff;
+  }
 }
 
 .schedule-workspace-switcher {
@@ -1503,9 +1589,8 @@ body {
   border: none;
   background: transparent;
   color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 0.75rem;
+  font-weight: 500;
   cursor: pointer;
   text-align: center;
   display: flex;
@@ -2207,6 +2292,26 @@ body.is-schedule-resizing {
   cursor: grabbing;
 }
 
+.schedule-placement-no-data {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-align: center;
+  padding: 0 6px;
+}
+
+.schedule-placement-card.is-no-data .schedule-placement-hour-band-middle {
+  visibility: hidden;
+}
+
 .schedule-placement-card-body {
   position: relative;
   flex: 1;
@@ -2313,6 +2418,10 @@ body.is-schedule-resizing {
 
 .schedule-placement-dot-blue {
   background: var(--accent);
+}
+
+.schedule-placement-dot-gray {
+  background: #6e7681;
 }
 
 .schedule-placement-pnl-cell {
@@ -2537,6 +2646,7 @@ body.is-schedule-resizing {
 }
 
 .schedule-utc-header {
+  position: relative;
   height: var(--schedule-toolbar-height);
   box-sizing: border-box;
   display: flex;
@@ -2548,6 +2658,43 @@ body.is-schedule-resizing {
   font-weight: 500;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+body.is-schedule-dragging .schedule-utc-header {
+  background: var(--panel);
+  color: transparent;
+}
+
+body.is-schedule-dragging .schedule-utc-header::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 1px dashed #6e7681;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+body.is-schedule-dragging .schedule-utc-header::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  opacity: 0.7;
+  background: center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%238b949e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 2v9m-3-3 3 3 3-3M4 12v4h12v-4'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+body.is-schedule-dragging .schedule-utc-header.is-fill-drop-target::before {
+  border-style: solid;
+  border-color: #8b949e;
+}
+
+body.is-schedule-dragging .schedule-utc-header.is-fill-drop-target::after {
+  opacity: 1;
 }
 
 .schedule-utc-body {
@@ -3610,8 +3757,9 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Reset icon only for Market stats; other ranges show a passive money bag. */
-#schedule-week-reset .schedule-summary-money-icon {
+/* Reset icon for Live; Market / Schedule show a passive money bag. */
+#schedule-week-reset .schedule-summary-money-icon,
+#schedule-week-reset .schedule-summary-loading-spinner {
   display: none;
 }
 
@@ -3621,6 +3769,33 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 
 #schedule-week-reset.is-money-mode .schedule-summary-money-icon {
   display: block;
+}
+
+#schedule-week-reset.is-loading .schedule-summary-reset-icon,
+#schedule-week-reset.is-loading .schedule-summary-money-icon {
+  display: none;
+}
+
+#schedule-week-reset.is-loading .schedule-summary-loading-spinner {
+  display: block;
+}
+
+.schedule-summary-loading-spinner {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: schedule-placement-spin 0.7s linear infinite;
+}
+
+#schedule-week-reset.is-loading,
+#schedule-week-reset.is-loading:hover {
+  color: var(--muted);
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
 }
 
 #schedule-week-reset.is-money-mode,
@@ -3637,6 +3812,11 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 
 #schedule-week-reset.is-money-mode.is-negative {
   color: var(--down);
+}
+
+#schedule-week-reset.is-loading.is-positive,
+#schedule-week-reset.is-loading.is-negative {
+  color: var(--muted);
 }
 
 .schedule-highlighted-clear-btn:hover {

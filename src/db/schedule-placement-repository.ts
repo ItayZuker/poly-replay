@@ -465,6 +465,47 @@ export async function replaceDayWithSetup(
   return listSchedulePlacements(userId, seriesKey, mode);
 }
 
+/** Replace the whole week (all days) with twelve contiguous two-hour placements per day. */
+export async function replaceWeekWithSetup(
+  userId: string,
+  setupIdInput: string,
+  titleInput: string,
+  series: string = DEFAULT_MARKET_SERIES,
+  mode: ScheduleWorkspaceMode = "live",
+): Promise<SchedulePlacementListItem[]> {
+  await ensurePlacementMigrations(mode);
+  const setupId = String(setupIdInput ?? "").trim();
+  const title = String(titleInput ?? "").trim();
+  const seriesKey = normalizeSeries(series);
+  if (!setupId || !title) throw new Error("Invalid week fill fields");
+
+  const mongo = await getMongoClient();
+  const collection = mongo
+    .db(getMongoDbName())
+    .collection<SchedulePlacementRecord>(collectionFor(mode));
+  await collection.deleteMany({ userId, series: seriesKey });
+
+  const now = new Date();
+  const docs: SchedulePlacementRecord[] = [];
+  for (const day of VALID_DAYS) {
+    for (let index = 0; index < 12; index += 1) {
+      docs.push({
+        userId,
+        series: seriesKey,
+        setupId,
+        title,
+        day,
+        startHour: index * 2,
+        durationHours: 2,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+  await collection.insertMany(docs);
+  return listSchedulePlacements(userId, seriesKey, mode);
+}
+
 export async function updatePlacementTitlesBySetupId(
   userId: string,
   setupId: string,

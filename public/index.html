@@ -313,6 +313,7 @@
                 d="M9.3 7.7c-.3-.4-.8-.6-1.3-.6-.8 0-1.4.4-1.4 1s.6.9 1.4 1 1.4.4 1.4 1-.6 1-1.4 1c-.5 0-1-.2-1.3-.6M8 6.4v.7M8 11.1v.7"
               />
             </svg>
+            <span class="schedule-summary-loading-spinner" aria-hidden="true"></span>
           </button>
         </div>
         <div id="countdown" class="countdown">—</div>
@@ -792,6 +793,25 @@
             <div class="schedule-setups-empty">Loading…</div>
           </div>
           <div class="schedule-workspace-footer">
+            <div id="schedule-replay-latency" class="schedule-replay-latency" hidden>
+              <label class="schedule-replay-latency-label" for="schedule-replay-latency-input"
+                >Latency</label
+              >
+              <div class="schedule-replay-latency-field">
+                <input
+                  id="schedule-replay-latency-input"
+                  class="schedule-replay-latency-input"
+                  type="number"
+                  min="0"
+                  max="2000"
+                  step="10"
+                  value="150"
+                  inputmode="numeric"
+                  title="Simulated order latency for Replay (FAK and GTD place delay)"
+                />
+                <span class="schedule-replay-latency-unit">ms</span>
+              </div>
+            </div>
             <button
               type="button"
               id="schedule-replay-run-btn"
@@ -801,13 +821,7 @@
             >
               <span>Replay</span>
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path
-                  d="M8 5.5v13l11-6.5-11-6.5z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linejoin="round"
-                />
+                <path d="M7 4.5v15l13-7.5-13-7.5z" fill="currentColor" />
               </svg>
             </button>
             <div

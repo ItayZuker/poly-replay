@@ -17,10 +17,10 @@ Reusable templates — full fields: [Setups & phases](doc:setups-phases).
 ## Schedule grid
 
 - Days × UTC hours
-- Place or clear setups (drag or day-fill helpers)
+- Place or clear setups (drag onto a cell, drop on a day header to fill that column, or drop on the **UTC** header to fill the whole week in one request)
 - Current UTC cell is highlighted
 - Double-click a placement to highlight it; highlighted cards feed the **Custom** header total (and still work with Heatmap)
-- Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the selected market series; **Live** = since last header reset; **Schedule** = sum of cards on the week grid
+- Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the selected market series; **Live** = since last header reset; **Schedule** = sum of cards on the week grid. Switching ranges shows a spinner on the totals icon while values load.
 - Counts and P/L always show numeric values (`0` / `+$0.00`) when empty — never dashes
 
 With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** setup on the current cell drives trading for that series. Replay placements never trade.
@@ -35,9 +35,9 @@ With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** set
 | Card stats | Live trade outcomes | Filled when you press **Replay** |
 | Header total | Same summary chrome (**Market** = series all-time, **Live** = since reset, **Schedule** = sum of cards) | Same — totals update as replay results arrive |
 
-In **Replay** (**Simulator** on the switcher), a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Simulator switcher. It sends the placed cards (and their setups) for the areas they cover on the week grid. For each card it loads recorded ticks in that day/hour slot and runs the same simulation engine as demo trading. Cards are processed **top-left first** (Monday → Sunday, then earlier UTC hour). Results stream back **one card at a time** (green / red / blue + PnL). The top summary shows the **total**.
+In **Replay** (**Simulator** on the switcher), a blue border frames the whole screen so the workspace is obvious, and a **Replay** button appears above the Live/Simulator switcher. Above Replay, set **Latency (ms)** (shown only in Simulator) — simulated delay for FAK fills and before GTD limits become live. It sends the placed cards (and their setups) for the areas they cover on the week grid. For each card it loads recorded ticks in that day/hour slot and runs the same simulation engine as demo trading. Cards are processed **top-left first** (Monday → Sunday, then earlier UTC hour). Results stream back **one card at a time** (green / red / blue / gray + PnL). Gray is Replay-only: windows that ran with ticks but never triggered a buy. The top summary shows the **total**. Cards with **no windows/ticks** in their slot stay full color after Replay and show a centered **No Data** label; cards that ran over recordings use the completed stats look (including zeros if nothing hit).
 
-Replay schedule cards stay **editable** (move, resize, remove, place) — they are never locked like Live cards after a trade. Replay setups can also be edited in the setup editor while placed; on **Live**, phases stay locked until you remove the setup’s placements. While Replay is running, the button switches to **Stop** (stop icon); click it to cancel. Changing a card on the schedule (or switching workspace) also stops the run.
+Replay schedule cards stay **editable** (move, resize, remove, place) — they are never locked like Live cards after a trade. Replay setups can also be edited in the setup editor while placed; on **Live**, phases stay locked until you remove the setup’s placements. While Replay is running, the button switches to **Stop** (stop icon, same style with a color pulse); click it to cancel. Changing a card on the Replay schedule also stops the run. Switching between **Live** and **Simulator** does **not** stop a running Replay — progress keeps applying and is restored when you return to Simulator.
 
 Replay uses the same simulation engine as demo trading. Window times/outcomes come from Mongo (`recorded_windows`, same as the heatmap); the engine still needs **local tick files** under `DATA_DIR` (book + Chainlink) for each window. If ticks were pruned or Dropbox only kept recent files locally, those day/hour cards stay empty even though the heatmap still shows activity. Turn **Recording** on per series under Market → Trade, and keep `DATA_DIR` fully available on disk for the rolling week.
 

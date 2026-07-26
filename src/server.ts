@@ -31,6 +31,7 @@ import {
   listSchedulePlacements,
   replaceAllPlacementsSetup,
   replaceDayWithSetup,
+  replaceWeekWithSetup,
   updatePlacementTitlesBySetupId,
   updateSchedulePlacement,
 } from "./db/schedule-placement-repository.js";
@@ -1334,6 +1335,38 @@ app.post("/api/schedule-placements/replace-day", async (req, res) => {
     );
     if (mode === "live") {
       for (const placement of removed) tradingFor(req).forgetPlacement(placement._id);
+      await reconcileLiveScheduleInUseFlags(userId);
+      await tradingFor(req).refreshScheduleContext(true);
+      pushWindowStateImmediate();
+    }
+    await broadcastSchedulePlacements(userId, series, mode);
+    res.json(placements);
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+  }
+});
+
+app.post("/api/schedule-placements/replace-week", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const mode = parseWorkspaceMode(req);
+    const series = parseSeriesParam(req, req.body?.series);
+    const setupId = String(req.body?.setupId ?? "");
+    const setup = await getTradingSetupById(userId, setupId, mode);
+    if (!setup) {
+      res.status(404).json({ error: "Trading setup not found" });
+      return;
+    }
+    const before = await listSchedulePlacements(userId, series, mode);
+    const placements = await replaceWeekWithSetup(
+      userId,
+      setupId,
+      setup.title,
+      series,
+      mode,
+    );
+    if (mode === "live") {
+      for (const placement of before) tradingFor(req).forgetPlacement(placement._id);
       await reconcileLiveScheduleInUseFlags(userId);
       await tradingFor(req).refreshScheduleContext(true);
       pushWindowStateImmediate();

@@ -4,6 +4,8 @@
   const DROP_DURATIONS = [2, 1.5, 1];
   const MIN_DURATION = 1;
   const STATS_CACHE_STORAGE_KEY = "poly-real:schedule-placement-stats";
+  const REPLAY_LATENCY_STORAGE_KEY = "poly-real:schedule-replay-latency-ms";
+  const DEFAULT_REPLAY_LATENCY_MS = 150;
   /** Live real-trade stats — do not reuse sim backtest caches. */
 
   let placements = [];
@@ -29,6 +31,8 @@
   let openMenuId = null;
   let dropPreviewEl = null;
   let headerFillPreviewDay = null;
+  /** True while previewing a UTC-header drop that fills every day column. */
+  let headerFillPreviewWeek = false;
   const busyDays = new Set();
   let framedPlacementIds = new Set();
   /** Placements that have started ≥1 window — locked until removed. */
@@ -265,25 +269,18 @@
 
   function clearHeaderFillPreview() {
     document
-      .querySelectorAll(".schedule-day-header.is-fill-drop-target")
+      .querySelectorAll(
+        ".schedule-day-header.is-fill-drop-target, .schedule-utc-header.is-fill-drop-target",
+      )
       .forEach((header) => header.classList.remove("is-fill-drop-target"));
     document.querySelectorAll(".schedule-column-fill-preview").forEach((el) => el.remove());
     headerFillPreviewDay = null;
+    headerFillPreviewWeek = false;
   }
 
-  function showHeaderFillPreview(day, setupId) {
-    if (
-      headerFillPreviewDay === day &&
-      document.querySelector(`.schedule-day-column[data-day="${day}"] .schedule-column-fill-preview`)
-    ) {
-      return;
-    }
-    clearHeaderFillPreview();
-    const column = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
-    const header = column?.querySelector(".schedule-day-header");
+  function appendColumnFillPreview(day, setupId) {
     const layer = getPlacementLayer(day);
-    if (!header || !layer) return;
-    header.classList.add("is-fill-drop-target");
+    if (!layer) return;
     const preview = document.createElement("div");
     preview.className = "schedule-column-fill-preview";
     preview.style.setProperty(
@@ -298,7 +295,42 @@
       preview.appendChild(card);
     }
     layer.appendChild(preview);
+  }
+
+  function showHeaderFillPreview(day, setupId) {
+    if (
+      !headerFillPreviewWeek &&
+      headerFillPreviewDay === day &&
+      document.querySelector(`.schedule-day-column[data-day="${day}"] .schedule-column-fill-preview`)
+    ) {
+      return;
+    }
+    clearHeaderFillPreview();
+    const column = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
+    const header = column?.querySelector(".schedule-day-header");
+    if (!header || !getPlacementLayer(day)) return;
+    header.classList.add("is-fill-drop-target");
+    appendColumnFillPreview(day, setupId);
     headerFillPreviewDay = day;
+  }
+
+  function showWeekFillPreview(setupId) {
+    if (
+      headerFillPreviewWeek &&
+      document.querySelectorAll(".schedule-column-fill-preview").length === DAYS.length
+    ) {
+      return;
+    }
+    clearHeaderFillPreview();
+    document.querySelector(".schedule-utc-header")?.classList.add("is-fill-drop-target");
+    for (const day of DAYS) {
+      const header = document.querySelector(
+        `.schedule-day-column[data-day="${day}"] .schedule-day-header`,
+      );
+      header?.classList.add("is-fill-drop-target");
+      appendColumnFillPreview(day, setupId);
+    }
+    headerFillPreviewWeek = true;
   }
 
   function setDayBusy(day, busy) {
@@ -397,6 +429,47 @@
     } finally {
       busyDays.delete(day);
       setDayBusy(day, false);
+    }
+  }
+
+  async function fillWeek(setupId, title) {
+    if (DAYS.some((day) => busyDays.has(day))) return;
+    interruptReplayIfRunning("schedule changed");
+    const previousByDay = Object.fromEntries(
+      DAYS.map((day) => [day, placements.filter((placement) => placement.day === day)]),
+    );
+    clearHeaderFillPreview();
+    for (const day of DAYS) {
+      busyDays.add(day);
+      setDayBusy(day, true);
+    }
+    try {
+      const res = await fetch("/api/schedule-placements/replace-week", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(withSeries({ setupId, title })),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Fill week failed (${res.status})`);
+      }
+      const next = await res.json();
+      placements = Array.isArray(next) ? next : placements;
+      for (const day of DAYS) {
+        discardDayPlacementState(day, previousByDay[day] || []);
+      }
+      renderPlacements();
+      if (typeof window.refreshScheduleSetupsList === "function") {
+        void window.refreshScheduleSetupsList();
+      }
+    } catch (err) {
+      console.error(err);
+      await loadPlacements();
+    } finally {
+      for (const day of DAYS) {
+        busyDays.delete(day);
+        setDayBusy(day, false);
+      }
     }
   }
 
@@ -864,12 +937,18 @@
   }
 
   function cardStatsMuted(placementId) {
+    // Replay: never mute — empty slots stay full color (with "No Data" after a run).
+    // Live still mutes cards that have no completed stats.
+    if (isReplayWorkspace()) return false;
     if (!placementStats.has(placementId)) return true;
     return placementStats.get(placementId)?.hasData !== true;
   }
 
   function cardStatsShowLoading(placementId) {
-    if (replayRunning && !placementStats.has(placementId)) return true;
+    // Only show Replay spinners on the Simulator board — not while viewing Live.
+    if (replayRunning && isReplayWorkspace() && !placementStats.has(placementId)) {
+      return true;
+    }
     return (
       statsBatchFetching &&
       statsPendingIds.has(placementId) &&
@@ -1382,17 +1461,55 @@
     const btn = document.getElementById("schedule-week-reset");
     if (!btn) return;
     const isLive = headerSummaryRange === "live";
+    const loading = btn.classList.contains("is-loading");
     btn.classList.toggle("is-money-mode", !isLive);
     // Prefer aria-disabled over the disabled attribute so P/L icon colors are not muted by UA styles.
     btn.disabled = false;
-    btn.setAttribute("aria-disabled", isLive ? "false" : "true");
-    btn.tabIndex = isLive ? 0 : -1;
+    btn.setAttribute("aria-disabled", isLive && !loading ? "false" : "true");
+    btn.tabIndex = isLive && !loading ? 0 : -1;
+    if (loading) {
+      btn.setAttribute("aria-label", "Loading totals");
+      btn.title = "Loading totals";
+      return;
+    }
     if (isLive) {
       btn.setAttribute("aria-label", "Reset Live counts");
       btn.title = "Reset Live counts (demo + real since last reset)";
     } else {
       btn.setAttribute("aria-label", "Stats totals");
       btn.title = "Totals";
+    }
+  }
+
+  function setHeaderSummaryLoading(loading) {
+    const btn = document.getElementById("schedule-week-reset");
+    if (!btn) return;
+    btn.classList.toggle("is-loading", loading);
+    btn.setAttribute("aria-busy", loading ? "true" : "false");
+    syncHeaderSummaryResetButton();
+  }
+
+  /** Paint the icon spinner, then load totals for the selected header range. */
+  async function refreshHeaderSummaryWithLoader() {
+    setHeaderSummaryLoading(true);
+    // Two frames so the spinner paints before sync Live/Schedule work.
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+    try {
+      if (headerSummaryRange === "market") {
+        const series = selectedSeries();
+        const cached = headerMarketTotals[series];
+        if (cached) {
+          renderHeaderSummaryTotals(cached);
+          setHeaderSummaryLoading(false);
+          void fetchHeaderSummaryTotals();
+          return;
+        }
+      }
+      await fetchHeaderSummaryTotals();
+    } finally {
+      setHeaderSummaryLoading(false);
     }
   }
 
@@ -1416,12 +1533,12 @@
     select.value = next;
     saveHeaderSummaryPrefs();
     syncHeaderSummaryControls();
-    void fetchHeaderSummaryTotals();
+    void refreshHeaderSummaryWithLoader();
   }
 
   function onSelectedSeriesChanged() {
     if (headerSummaryRange !== "market") return;
-    void fetchHeaderSummaryTotals();
+    void refreshHeaderSummaryWithLoader();
   }
 
   function emptyLiveStats(placementId) {
@@ -1484,7 +1601,7 @@
           headerSummaryFetchTimer = null;
         }
         syncHeaderSummaryControls();
-        void fetchHeaderSummaryTotals();
+        void refreshHeaderSummaryWithLoader();
       });
     }
     syncHeaderSummaryControls();
@@ -1629,15 +1746,34 @@
     });
   }
 
+  function syncReplayNoDataLabel(card, showNoData) {
+    card.classList.toggle("is-no-data", showNoData);
+    let label = card.querySelector(".schedule-placement-no-data");
+    if (showNoData) {
+      if (!label) {
+        label = document.createElement("div");
+        label.className = "schedule-placement-no-data";
+        label.textContent = "No Data";
+        card.querySelector(".schedule-placement-card-body")?.appendChild(label);
+      }
+      return;
+    }
+    label?.remove();
+  }
+
   function applyCardStatsStates() {
     document.querySelectorAll(".schedule-placement-card").forEach((card) => {
       const placementId = card.dataset.placementId;
       const showValues = cardShowsStats(placementId);
       const stats = placementStats.get(placementId);
       const hasData = showValues && stats?.hasData === true;
+      // Replay finished with no windows/ticks in this slot.
+      const showNoData =
+        isReplayWorkspace() && showValues && stats != null && stats.hasData !== true;
 
       applyCardStatsVisualState(card, placementId);
       syncPlacementLockUi(card, placementId);
+      syncReplayNoDataLabel(card, showNoData);
 
       let overlay = card.querySelector(".schedule-placement-loading");
       const isLoading = cardStatsShowLoading(placementId);
@@ -1651,14 +1787,25 @@
       const pnlEl = card.querySelector(".schedule-placement-pnl");
       if (dots) {
         dots.replaceChildren();
-        appendStatItem(dots, "green", stats?.green ?? 0, hasData);
-        appendStatItem(dots, "red", stats?.red ?? 0, hasData);
-        appendStatItem(dots, "blue", stats?.blue ?? 0, hasData);
+        if (!showNoData) {
+          appendStatItem(dots, "green", stats?.green ?? 0, hasData);
+          appendStatItem(dots, "red", stats?.red ?? 0, hasData);
+          appendStatItem(dots, "blue", stats?.blue ?? 0, hasData);
+          // Replay only: windows that ran with ticks but never triggered a buy.
+          if (isReplayWorkspace()) {
+            appendStatItem(dots, "gray", stats?.gray ?? 0, hasData);
+          }
+        }
       }
       if (pnlEl) {
-        const pnl = stats?.pnl;
-        pnlEl.textContent = formatPlacementPnl(pnl, hasData);
-        setPnlSignClass(pnlEl, pnl, hasData);
+        if (showNoData) {
+          pnlEl.textContent = "";
+          setPnlSignClass(pnlEl, 0, false);
+        } else {
+          const pnl = stats?.pnl;
+          pnlEl.textContent = formatPlacementPnl(pnl, hasData);
+          setPnlSignClass(pnlEl, pnl, hasData);
+        }
       }
     });
     updateDayHeaderPnls();
@@ -2224,18 +2371,27 @@
     const isLoading = statsBatchFetching && statsPendingIds.has(placement._id);
     const showValues = cardShowsStats(placement._id);
     const hasData = showValues && stats?.hasData === true;
-    appendStatItem(dots, "green", stats?.green ?? 0, hasData);
-    appendStatItem(dots, "red", stats?.red ?? 0, hasData);
-    appendStatItem(dots, "blue", stats?.blue ?? 0, hasData);
+    const showNoData =
+      isReplayWorkspace() && showValues && stats != null && stats.hasData !== true;
+    if (!showNoData) {
+      appendStatItem(dots, "green", stats?.green ?? 0, hasData);
+      appendStatItem(dots, "red", stats?.red ?? 0, hasData);
+      appendStatItem(dots, "blue", stats?.blue ?? 0, hasData);
+      if (isReplayWorkspace()) {
+        appendStatItem(dots, "gray", stats?.gray ?? 0, hasData);
+      }
+    }
     statsCell.appendChild(dots);
 
     const pnlCell = document.createElement("div");
     pnlCell.className = "schedule-placement-band-cell schedule-placement-pnl-cell";
     const pnl = document.createElement("div");
     pnl.className = "schedule-placement-pnl";
-    const pnlValue = stats?.pnl;
-    pnl.textContent = formatPlacementPnl(pnlValue, hasData);
-    setPnlSignClass(pnl, pnlValue, hasData);
+    if (!showNoData) {
+      const pnlValue = stats?.pnl;
+      pnl.textContent = formatPlacementPnl(pnlValue, hasData);
+      setPnlSignClass(pnl, pnlValue, hasData);
+    }
     pnlCell.appendChild(pnl);
 
     middleBand.append(statsCell, pnlCell);
@@ -2253,6 +2409,7 @@
     });
 
     applyCardStatsVisualState(card, placement._id);
+    syncReplayNoDataLabel(card, showNoData);
     if (isLoading) card.appendChild(buildLoadingOverlay());
 
     resizeTop.addEventListener("mousedown", (e) => startResize(e, placement._id, "top"));
@@ -2667,6 +2824,7 @@
       title: listDragState.title,
       preview: null,
       headerDay: null,
+      headerWeek: false,
     };
     document.body.classList.add("is-schedule-dragging");
     positionFloatingListItem(clientX, clientY);
@@ -2842,10 +3000,23 @@
   function updateDragPreview(clientX, clientY) {
     if (!dragState) return;
     const el = document.elementFromPoint(clientX, clientY);
-    const day = dayFromElement(el);
     clearDropPreview();
     dragState.preview = null;
     dragState.headerDay = null;
+    dragState.headerWeek = false;
+
+    const utcHeader = el?.closest?.(".schedule-utc-header");
+    if (utcHeader) {
+      if (DAYS.some((day) => busyDays.has(day))) {
+        clearHeaderFillPreview();
+        return;
+      }
+      dragState.headerWeek = true;
+      showWeekFillPreview(dragState.setupId);
+      return;
+    }
+
+    const day = dayFromElement(el);
     if (!day || busyDays.has(day)) {
       clearHeaderFillPreview();
       return;
@@ -2870,7 +3041,7 @@
   }
 
   async function commitDrop() {
-    if (!dragState?.preview && !dragState?.headerDay) {
+    if (!dragState?.preview && !dragState?.headerDay && !dragState?.headerWeek) {
       dragState = null;
       clearDropPreview();
       clearHeaderFillPreview();
@@ -2878,13 +3049,17 @@
       return;
     }
 
-    const { setupId, title, preview, headerDay } = dragState;
+    const { setupId, title, preview, headerDay, headerWeek } = dragState;
     dragState = null;
     clearDropPreview();
     clearHeaderFillPreview();
     document.body.classList.remove("is-schedule-dragging");
 
     interruptReplayIfRunning("schedule changed");
+    if (headerWeek) {
+      await fillWeek(setupId, title);
+      return;
+    }
     if (headerDay) {
       await fillDay(headerDay, setupId, title);
       return;
@@ -3038,8 +3213,17 @@
     syncNowHighlights();
   }
 
+  function restoreActiveReplayStatsToBoard() {
+    if (!isReplayWorkspace() || activeReplayStats.size === 0) return;
+    for (const placement of placements) {
+      const stats = activeReplayStats.get(placement._id);
+      if (stats) placementStats.set(placement._id, { ...stats });
+    }
+    applyCardStatsStates();
+  }
+
   async function onWorkspaceModeChanged(mode) {
-    interruptReplayIfRunning("workspace changed");
+    // Keep a running Replay alive across Live ↔ Simulator toggles.
     const expectedMode = mode || workspaceMode();
     clearWorkspaceBoard();
     await loadPlacements({
@@ -3049,6 +3233,10 @@
     if (isReplayWorkspace()) {
       setHeaderSummaryRange("schedule");
       lockedPlacementIds.clear();
+      restoreActiveReplayStatsToBoard();
+      if (replayRunning) showHeaderStatsProgressIndeterminate();
+    } else {
+      hideHeaderStatsProgress();
     }
     syncHeaderSummaryControls();
     updateWeekHeaderSummary();
@@ -3102,15 +3290,20 @@
 
   function applyReplayPlacementStat(stats) {
     if (!stats?.placementId) return;
-    placementStats.set(stats.placementId, {
+    const next = {
       placementId: stats.placementId,
       hasData: stats.hasData === true,
       green: stats.green ?? 0,
       red: stats.red ?? 0,
       blue: stats.blue ?? 0,
+      gray: stats.gray ?? 0,
       pnl: stats.pnl ?? 0,
       locked: false,
-    });
+    };
+    activeReplayStats.set(stats.placementId, next);
+    // Update the visible board only while Simulator is active.
+    if (!isReplayWorkspace()) return;
+    placementStats.set(stats.placementId, { ...next });
     applyCardStatsStates();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
@@ -3121,24 +3314,27 @@
    * Do NOT call this on Stop/abort — that made Sat/Sun look “done with zeros” while still unsimulated.
    */
   function finalizeReplayCardStats() {
-    for (const placement of placements) {
-      if (placementStats.has(placement._id)) continue;
-      placementStats.set(placement._id, {
-        placementId: placement._id,
+    for (const placementId of activeReplayPlacementIds) {
+      if (activeReplayStats.has(placementId)) continue;
+      activeReplayStats.set(placementId, {
+        placementId,
         hasData: false,
         green: 0,
         red: 0,
         blue: 0,
+        gray: 0,
         pnl: 0,
         locked: false,
       });
     }
-    applyCardStatsStates();
+    if (!isReplayWorkspace()) return;
+    restoreActiveReplayStatsToBoard();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
   }
 
   function clearReplayLoadingOnly() {
+    if (!isReplayWorkspace()) return;
     applyCardStatsStates();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
@@ -3148,11 +3344,56 @@
   /** @type {AbortController | null} */
   let replayAbort = null;
   let replayStopReason = null;
+  /** Survives Live ↔ Simulator toggles while a Replay is in flight / finished. */
+  let activeReplayStats = new Map();
+  /** Placement IDs included in the current Replay run. */
+  let activeReplayPlacementIds = new Set();
 
   const REPLAY_PLAY_ICON =
-    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5.5v13l11-6.5-11-6.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 4.5v15l13-7.5-13-7.5z" fill="currentColor"/></svg>';
   const REPLAY_STOP_ICON =
-    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></svg>';
+    '<svg class="schedule-replay-spin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 9"/>' +
+    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 3v6h-6"/>' +
+    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20.5 12a8.5 8.5 0 0 1-14.3 6.2L3 15"/>' +
+    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 21v-6h6"/>' +
+    "</svg>";
+
+  function readReplayLatencyMs() {
+    const input = document.getElementById("schedule-replay-latency-input");
+    const raw = input ? Number(input.value) : Number.NaN;
+    if (!Number.isFinite(raw)) return DEFAULT_REPLAY_LATENCY_MS;
+    return Math.max(0, Math.min(2000, Math.floor(raw)));
+  }
+
+  function persistReplayLatencyMs(ms) {
+    try {
+      localStorage.setItem(REPLAY_LATENCY_STORAGE_KEY, String(ms));
+    } catch {
+      // ignore
+    }
+  }
+
+  function initReplayLatencyInput() {
+    const input = document.getElementById("schedule-replay-latency-input");
+    if (!input || input.dataset.bound === "1") return;
+    input.dataset.bound = "1";
+    try {
+      const stored = Number(localStorage.getItem(REPLAY_LATENCY_STORAGE_KEY));
+      if (Number.isFinite(stored)) {
+        input.value = String(Math.max(0, Math.min(2000, Math.floor(stored))));
+      }
+    } catch {
+      // keep default
+    }
+    const commit = () => {
+      const ms = readReplayLatencyMs();
+      input.value = String(ms);
+      persistReplayLatencyMs(ms);
+    };
+    input.addEventListener("change", commit);
+    input.addEventListener("blur", commit);
+  }
 
   function syncReplayRunButton() {
     const btn = document.getElementById("schedule-replay-run-btn");
@@ -3160,6 +3401,8 @@
     btn.disabled = false;
     btn.classList.toggle("is-stop", replayRunning);
     btn.setAttribute("aria-pressed", replayRunning ? "true" : "false");
+    const latencyInput = document.getElementById("schedule-replay-latency-input");
+    if (latencyInput) latencyInput.disabled = replayRunning;
     if (replayRunning) {
       btn.title = "Stop Replay";
       btn.innerHTML = `<span>Stop</span>${REPLAY_STOP_ICON}`;
@@ -3180,16 +3423,14 @@
 
   function interruptReplayIfRunning(reason = "schedule changed") {
     if (!replayRunning) return;
+    // Workspace toggles must not abort Replay — only schedule edits / explicit Stop.
+    if (reason === "workspace changed") return;
     stopReplay(reason);
     window.appendLogEntry?.({
       level: "info",
       source: "client",
       message:
-        reason === "schedule changed"
-          ? "Replay stopped — schedule changed"
-          : reason === "workspace changed"
-            ? "Replay stopped — workspace changed"
-            : "Replay stopped",
+        reason === "schedule changed" ? "Replay stopped — schedule changed" : "Replay stopped",
     });
   }
 
@@ -3224,6 +3465,7 @@
     syncReplayRunButton();
     placementStats.clear();
     lockedPlacementIds.clear();
+    activeReplayStats.clear();
     applyCardStatsStates();
     showHeaderStatsProgressIndeterminate();
     const dayOrder = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
@@ -3233,11 +3475,14 @@
       if (a.startHour !== b.startHour) return a.startHour - b.startHour;
       return String(a._id).localeCompare(String(b._id));
     });
+    activeReplayPlacementIds = new Set(orderedPlacements.map((p) => p._id));
     const first = orderedPlacements[0];
+    const latencyMs = readReplayLatencyMs();
+    persistReplayLatencyMs(latencyMs);
     window.appendLogEntry?.({
       level: "info",
       source: "client",
-      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h); applying setups to recorded windows…`,
+      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms; applying setups to recorded windows…`,
     });
 
     const setupIds = [...new Set(orderedPlacements.map((p) => p.setupId).filter(Boolean))];
@@ -3258,6 +3503,7 @@
           series: selectedSeries(),
           placements: orderedPlacements,
           setups,
+          latencyMs,
         }),
       });
       if (!res.ok || !res.body) {
@@ -3273,12 +3519,13 @@
 
       const handleSseEvent = (event, data) => {
         if (event === "progress") {
+          if (!isReplayWorkspace()) return;
           const { completed, total, indeterminate } = data || {};
           if (indeterminate) showHeaderStatsProgressIndeterminate();
           else if (total > 0) setHeaderStatsProgress(completed / total);
         } else if (event === "placement") {
           applyReplayPlacementStat(data);
-          if (data?.progress?.total > 0) {
+          if (isReplayWorkspace() && data?.progress?.total > 0) {
             setHeaderStatsProgress(data.progress.completed / data.progress.total);
           }
         } else if (event === "done") {
@@ -3327,8 +3574,9 @@
           message: "Replay ended without a full result stream — try again (or use fewer cards)",
         });
       }
-      const withData = [...placementStats.values()].filter((s) => s.hasData === true).length;
-      const pending = placements.filter((p) => !placementStats.has(p._id)).length;
+      const withData = [...activeReplayStats.values()].filter((s) => s.hasData === true).length;
+      const replayCardCount = activeReplayPlacementIds.size || orderedPlacements.length;
+      const pending = [...activeReplayPlacementIds].filter((id) => !activeReplayStats.has(id)).length;
       if (!signal.aborted && gotDoneEvent) {
         if (withData === 0) {
           window.appendLogEntry?.({
@@ -3341,7 +3589,7 @@
           window.appendLogEntry?.({
             level: "success",
             source: "client",
-            message: `Replay finished — ${withData}/${placements.length} card(s) had tick data to simulate`,
+            message: `Replay finished — ${withData}/${replayCardCount} card(s) had tick data to simulate`,
           });
         }
       } else if (signal.aborted || !gotDoneEvent) {
@@ -3351,7 +3599,7 @@
           message:
             pending > 0
               ? `Replay stopped early — ${withData} card(s) have stats; ${pending} card(s) were not simulated yet (not zero trades)`
-              : `Replay stopped — kept stats for ${withData}/${placements.length} card(s)`,
+              : `Replay stopped — kept stats for ${withData}/${replayCardCount} card(s)`,
         });
       }
     } catch (err) {
@@ -3417,6 +3665,7 @@
     bindWeekSummaryReset();
     bindHeaderSummaryRange();
     bindGlobalPointer();
+    initReplayLatencyInput();
     syncNowHighlights();
     syncHeaderSummaryControls();
     syncReplayRunButton();
