@@ -1,6 +1,11 @@
 {
-  "current": "1.5.4",
+  "current": "1.5.5",
   "releases": [
+    {
+      "version": "1.5.5",
+      "releasedAt": "2026-07-26T12:17:01.143Z",
+      "notes": "Schedule workspace polish: Live/Demo switcher with sliding handle and Replay screen border; hide Add setup on Heatmap; Replay run button matches Add setup and only shows in Demo; fix Replay card move/delete; docs updated."
+    },
     {
       "version": "1.5.4",
       "releasedAt": "2026-07-25T04:32:00.000Z",
