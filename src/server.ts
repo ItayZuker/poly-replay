@@ -510,6 +510,7 @@ async function runScheduleReplaySse(
     placements: SchedulePlacementListItem[];
     setups: unknown;
     latencyMs?: number;
+    fillSuccessPct?: number;
   },
 ): Promise<void> {
   const market = await getMarket(input.series);
@@ -523,6 +524,10 @@ async function runScheduleReplaySse(
     typeof input.latencyMs === "number" && Number.isFinite(input.latencyMs)
       ? Math.max(0, Math.min(2000, Math.floor(input.latencyMs)))
       : simulatorService.getSetup().latencyMs;
+  const fillSuccessPct =
+    typeof input.fillSuccessPct === "number" && Number.isFinite(input.fillSuccessPct)
+      ? Math.max(0, Math.min(100, input.fillSuccessPct))
+      : 100;
 
   writeSseEvent(res, closed, "progress", {
     completed: 0,
@@ -532,7 +537,7 @@ async function runScheduleReplaySse(
 
   logService.info(
     "replay",
-    `Schedule replay started for ${input.series} (${input.placements.length} placement(s)) — loads ticks + applies setups`,
+    `Schedule replay started for ${input.series} (${input.placements.length} placement(s), latency ${latencyMs} ms, fill success ${fillSuccessPct}%) — loads ticks + applies setups`,
   );
 
   let lastProgress = { completed: 0, total: Math.max(1, input.placements.length) };
@@ -544,6 +549,7 @@ async function runScheduleReplaySse(
     latencyMs,
     {
       setupsById: setupsByIdFromBody(input.setups),
+      fillSuccessPct,
       // Always re-sim on interactive Replay so stats match current setups + recordings.
       forceResimulate: true,
       shouldAbort: () => closed.value,
@@ -1537,6 +1543,7 @@ app.post("/api/schedule-replay", async (req, res) => {
         placements,
         setups,
         latencyMs: req.body?.latencyMs,
+        fillSuccessPct: req.body?.fillSuccessPct,
       });
       responseFinished = true;
       abortSocket?.off("close", onSocketClose);
@@ -1566,6 +1573,7 @@ app.post("/api/schedule-replay", async (req, res) => {
         placements,
         setups,
         latencyMs: req.body?.latencyMs ?? simulatorService.getSetup().latencyMs,
+        fillSuccessPct: req.body?.fillSuccessPct ?? 100,
       }),
     });
     if (!remoteRes.ok || !remoteRes.body) {
@@ -1638,6 +1646,7 @@ app.post("/api/internal/schedule-replay", async (req, res) => {
       placements,
       setups: req.body?.setups,
       latencyMs: req.body?.latencyMs,
+      fillSuccessPct: req.body?.fillSuccessPct,
     });
     responseFinished = true;
   } catch (err) {

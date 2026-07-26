@@ -529,6 +529,19 @@ export class SimulatorEngine {
     return setup.feeParams ?? DEFAULT_CRYPTO_TAKER_FEE_PARAMS;
   }
 
+  /**
+   * After latency / book walk would fill: succeed with probability fillSuccessPct.
+   * 100 = always; 0 = never.
+   */
+  private acceptFillSuccess(setup: SimSetup): boolean {
+    const pct = setup.fillSuccessPct;
+    const p =
+      typeof pct === "number" && Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 100;
+    if (p >= 100) return true;
+    if (p <= 0) return false;
+    return Math.random() * 100 < p;
+  }
+
   /** Schedule FAK-style taker buy after simulated latency. */
   private scheduleFakBuy(
     side: Side,
@@ -716,6 +729,11 @@ export class SimulatorEngine {
       logService.error("sim", `FAK buy skipped after latency (no size available)`);
       return;
     }
+    if (!this.acceptFillSuccess(setup)) {
+      logService.error("sim", `FAK buy skipped after latency (fill success roll failed)`);
+      this.buyWatch = null;
+      return;
+    }
 
     this.applyBuyFill(side, fill, nowSec, state, phaseIdx, phase, "taker", triggerCents);
     this.buyWatch = null;
@@ -841,6 +859,10 @@ export class SimulatorEngine {
         ? walkBids(bidsForSide(quote, side), shares, true, feeParams)
         : fillMakerLimitSell(bidsForSide(quote, side), shares, limitPrice);
     if (!fill) return;
+    if (!this.acceptFillSuccess(setup)) {
+      logService.error("sim", `Sell skipped (fill success roll failed)`);
+      return;
+    }
 
     const positionCost = pos.buyCost + pos.buyFees;
     const sellNet = fill.proceeds - fill.fees;
@@ -1060,6 +1082,7 @@ export class SimulatorEngine {
     phase: SimSetup["phases"][number],
     phaseIdx: number,
     simNowMs: number,
+    setup: SimSetup,
   ): void {
     for (const side of [...SIDES_ORDER]) {
       const resting = this.restingGtds.get(side);
@@ -1075,6 +1098,11 @@ export class SimulatorEngine {
         resting.limitPrice,
       );
       if (!fill || fill.shares <= 0) continue;
+      if (!this.acceptFillSuccess(setup)) {
+        // One roll per resting order attempt — do not re-roll every tick.
+        this.cancelRestingGtdSide(side, "fill success roll failed", simNowMs);
+        continue;
+      }
 
       this.applyBuyFill(resting.side, fill, nowSec, state, resting.phaseIdx, phase, "maker");
       const still = this.restingGtds.get(side);
@@ -1269,7 +1297,7 @@ export class SimulatorEngine {
     // GTD resting: cancel on optimize/gap/phase-ending, fill from book, place when active.
     this.syncRestingGtdForPhase(phase, phaseIdx, state, simNowMs, preCancelForNextPhase);
     this.processPendingGtdPlaces(phase, phaseIdx, state, simNowMs);
-    this.tickRestingGtd(quote, nowSec, state, phase, phaseIdx, simNowMs);
+    this.tickRestingGtd(quote, nowSec, state, phase, phaseIdx, simNowMs, setup);
     if (
       !this.buysFullySatisfied(phase) ||
       this.restingGtds.size > 0 ||
@@ -1277,7 +1305,7 @@ export class SimulatorEngine {
     ) {
       this.tryPlaceRestingGtd(phase, phaseIdx, state, setup, simNowMs, preCancelForNextPhase);
       this.processPendingGtdPlaces(phase, phaseIdx, state, simNowMs);
-      this.tickRestingGtd(quote, nowSec, state, phase, phaseIdx, simNowMs);
+      this.tickRestingGtd(quote, nowSec, state, phase, phaseIdx, simNowMs, setup);
     }
 
     if (

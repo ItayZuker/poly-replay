@@ -11,6 +11,7 @@ export function defaultSimSetup(): SimSetup {
     phaseSplit: [1 / 3, 2 / 3],
     phases: [defaultPhaseConfig(), defaultPhaseConfig(), defaultPhaseConfig()],
     latencyMs: 150,
+    fillSuccessPct: 100,
     feeParams: { ...DEFAULT_CRYPTO_TAKER_FEE_PARAMS },
   };
 }
@@ -20,11 +21,17 @@ function normalizeSetup(input: SimSetup, durationSec?: number): SimSetup {
 
   const split = clampPhaseSplits(input.phaseSplit[0], input.phaseSplit[1], durationSec);
   const latencyMs = Math.max(0, Math.min(2000, Math.floor(input.latencyMs ?? 150)));
+  const rawPct = input.fillSuccessPct;
+  const fillSuccessPct =
+    typeof rawPct === "number" && Number.isFinite(rawPct)
+      ? Math.max(0, Math.min(100, rawPct))
+      : 100;
   const feeParams = input.feeParams ?? DEFAULT_CRYPTO_TAKER_FEE_PARAMS;
   return {
     phaseSplit: split,
     phases,
     latencyMs,
+    fillSuccessPct,
     feeParams: {
       feeRate: feeParams.feeRate,
       feeExponent: feeParams.feeExponent,
@@ -36,12 +43,14 @@ export function phaseSetupToSimSetup(
   setup: TradingPhaseSetup,
   latencyMs: number,
   durationSec?: number,
+  fillSuccessPct = 100,
 ): SimSetup {
   return normalizeSetup(
     {
       phaseSplit: setup.phaseSplit,
       phases: setup.phases,
       latencyMs,
+      fillSuccessPct,
     },
     durationSec,
   );
@@ -57,6 +66,7 @@ export class SimulatorService {
       phaseSplit: [...this.setup.phaseSplit] as [number, number],
       phases: this.setup.phases.map((p) => ({ ...p })) as SimSetup["phases"],
       latencyMs: this.setup.latencyMs,
+      fillSuccessPct: this.setup.fillSuccessPct ?? 100,
       feeParams: this.setup.feeParams ? { ...this.setup.feeParams } : undefined,
     };
   }
@@ -91,6 +101,7 @@ export class SimulatorService {
         ? patch.phases.map((p, i) => ({ ...this.setup.phases[i], ...p }))
         : this.setup.phases) as SimSetup["phases"],
       latencyMs: patch.latencyMs ?? this.setup.latencyMs,
+      fillSuccessPct: patch.fillSuccessPct ?? this.setup.fillSuccessPct ?? 100,
       feeParams: patch.feeParams ?? this.setup.feeParams,
     };
     return this.setSetup(next, durationSec);

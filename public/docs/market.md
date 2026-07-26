@@ -12,6 +12,13 @@ Live trading console for the selected series.
 | **Size** | Manual / fallback order size |
 | **Recording** | Per-series: capture ticks/windows for Replay and Heatmap |
 
+Below **Recording**, Trade also shows live execution metrics (each on its own row):
+
+| Metric | Meaning |
+|--------|---------|
+| **Latency** | Same feed latency as the Settings header (ms) |
+| **Fill success** | Rolling last **7 days** (same window as recordings): share of CLOB **buy and sell** place/fire attempts that matched **any size**. Updates on every attempt. **—** until the first attempt |
+
 **Recording** is stored per market (e.g. `btc-5m` on, `eth-5m` off). A process with `TRADING_EXECUTOR` on saves the toggle but does not capture data — run a non-executor instance (or leave executor off locally) to actually record. See [Information flow](doc:data-flow).
 
 Scheduled live: **Allow trade** + **Auto Trade** + **Use Schedule** on.

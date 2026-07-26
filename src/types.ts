@@ -258,6 +258,11 @@ export interface SimSetup {
   phases: [SimPhaseConfig, SimPhaseConfig, SimPhaseConfig];
   /** Simulated order latency before fill re-check (ms). */
   latencyMs: number;
+  /**
+   * Probability (0–100) that a would-be fill succeeds after latency.
+   * 100 = always fill when the book allows; 0 = never fill.
+   */
+  fillSuccessPct?: number;
   /** Polymarket taker fee params (crypto default; override from CLOB when available). */
   feeParams?: SimTakerFeeParams;
 }
@@ -423,6 +428,14 @@ export interface PlacementLiveStats {
   locked: boolean;
 }
 
+export interface FillSuccessPublicStats {
+  attempts: number;
+  successes: number;
+  /** 0–100; null when there are no attempts in the rolling window. */
+  ratePct: number | null;
+  cutoffUtc: number;
+}
+
 export interface TradingPublicState {
   config: TradingConfig;
   positions: { up: LiveSidePosition | null; down: LiveSidePosition | null };
@@ -450,6 +463,8 @@ export interface TradingPublicState {
   scheduleSetupId: string | null;
   quotesEnabled: boolean;
   previewMode: boolean;
+  /** Rolling ~7-day CLOB fill success (buys + sells; any size = success). */
+  fillSuccess: FillSuccessPublicStats;
 }
 
 export interface EnrichedLiveWindowState extends LiveWindowState {

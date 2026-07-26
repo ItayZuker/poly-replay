@@ -3,7 +3,7 @@ import type { SchedulePlacementListItem } from "./db/schedule-placement-reposito
 import type { PlacementBacktestStats } from "./schedule-backtest-service.js";
 
 /** Bump when simulator/backtest rules change. */
-export const SCHEDULE_BACKTEST_CACHE_VERSION = "6";
+export const SCHEDULE_BACKTEST_CACHE_VERSION = "7";
 
 export function rollingCutoffDayUtc(now = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -14,10 +14,12 @@ export function buildPlacementCacheKey(input: {
   placement: SchedulePlacementListItem;
   phaseSetup: TradingPhaseSetup | null | undefined;
   latencyMs: number;
+  fillSuccessPct: number;
   heatmapVersion: string;
   cutoffDay: string;
 }): string {
-  const { series, placement, phaseSetup, latencyMs, heatmapVersion, cutoffDay } = input;
+  const { series, placement, phaseSetup, latencyMs, fillSuccessPct, heatmapVersion, cutoffDay } =
+    input;
   const setupSig = phaseSetup ? JSON.stringify(phaseSetup) : `missing:${placement.setupId}`;
   return [
     SCHEDULE_BACKTEST_CACHE_VERSION,
@@ -29,6 +31,7 @@ export function buildPlacementCacheKey(input: {
     placement.setupId,
     setupSig,
     latencyMs,
+    fillSuccessPct,
     heatmapVersion,
     cutoffDay,
   ].join("|");

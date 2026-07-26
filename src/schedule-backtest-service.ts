@@ -96,6 +96,8 @@ export interface BacktestScheduleOptions {
    * Keys are setup ids.
    */
   setupsById?: Map<string, TradingPhaseSetup | null> | Record<string, TradingPhaseSetup | null>;
+  /** 0–100: probability each would-be fill succeeds after latency. Default 100. */
+  fillSuccessPct?: number;
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
@@ -403,6 +405,7 @@ async function buildPlacementPlan(
     series: string;
     phaseSetup: TradingPhaseSetup | null;
     latencyMs: number;
+    fillSuccessPct: number;
     heatmapVersion: string;
     cutoffDay: string;
     cutoffUtc: number;
@@ -410,13 +413,23 @@ async function buildPlacementPlan(
     allowCached: boolean;
   },
 ): Promise<PlacementPlan> {
-  const { series, phaseSetup, latencyMs, heatmapVersion, cutoffDay, cutoffUtc, allWindows, allowCached } =
-    input;
+  const {
+    series,
+    phaseSetup,
+    latencyMs,
+    fillSuccessPct,
+    heatmapVersion,
+    cutoffDay,
+    cutoffUtc,
+    allWindows,
+    allowCached,
+  } = input;
   const cacheKey = buildPlacementCacheKey({
     series,
     placement,
     phaseSetup,
     latencyMs,
+    fillSuccessPct,
     heatmapVersion,
     cutoffDay,
   });
@@ -449,7 +462,7 @@ async function buildPlacementPlan(
     slotWindows[0]?.windowEnd && slotWindows[0]?.windowStart
       ? slotWindows[0].windowEnd - slotWindows[0].windowStart
       : undefined;
-  const simSetup = phaseSetupToSimSetup(phaseSetup, latencyMs, windowDuration);
+  const simSetup = phaseSetupToSimSetup(phaseSetup, latencyMs, windowDuration, fillSuccessPct);
   return { placement, cacheKey, kind: "simulate", slotWindows, simSetup };
 }
 
@@ -461,6 +474,12 @@ export async function backtestSchedulePlacements(
   options: BacktestScheduleOptions = {},
 ): Promise<PlacementBacktestStats[]> {
   if (placements.length === 0) return [];
+
+  const rawFillPct = options.fillSuccessPct;
+  const fillSuccessPct =
+    typeof rawFillPct === "number" && Number.isFinite(rawFillPct)
+      ? Math.max(0, Math.min(100, rawFillPct))
+      : 100;
 
   // Always process Mon/top → Sun/bottom so the board fills left-to-right.
   placements = sortPlacementsTopLeft(placements);
@@ -536,6 +555,7 @@ export async function backtestSchedulePlacements(
         placement,
         phaseSetup,
         latencyMs,
+        fillSuccessPct,
         heatmapVersion,
         cutoffDay,
       });
@@ -553,6 +573,7 @@ export async function backtestSchedulePlacements(
   const planInput = {
     series,
     latencyMs,
+    fillSuccessPct,
     heatmapVersion,
     cutoffDay,
     cutoffUtc,

@@ -50,7 +50,9 @@ Without schedule, phases come from the graph setup — [Setups & phases](doc:set
 
 Saved over REST to the database (`trading_setups_real` / `schedual_setups_real` for **Live**; `trading_setups_replay` / `schedual_setups_replay` for **Replay**). The server picks the active **Live** UTC placement each tick. SSE keeps the schedule board updated.
 
-**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`).
+**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill).
+
+Live **Fill success** (Market → Trade) counts CLOB buy/sell attempts over the rolling 7-day cutoff and updates whenever an order is placed or later matches any size.
 
 ```flow
 # Replay roles

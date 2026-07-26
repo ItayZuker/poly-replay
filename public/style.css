@@ -1390,14 +1390,47 @@ body {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   padding: 8px;
   border-top: 1px solid var(--border);
   box-sizing: border-box;
+  transition: gap 0.22s ease;
+}
+
+.app-page-schedule.is-replay-workspace .schedule-workspace-footer {
+  gap: 8px;
 }
 
 .app-page-schedule.is-heatmap-view .schedule-workspace-footer {
   display: none !important;
+}
+
+/* Collapses above the Live/Simulator switcher; border rises with the panel. */
+.schedule-replay-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  box-sizing: border-box;
+  transition: max-height 0.22s ease, opacity 0.18s ease;
+}
+
+.app-page-schedule.is-replay-workspace .schedule-replay-panel {
+  max-height: 160px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.schedule-replay-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .schedule-replay-latency {
@@ -1409,10 +1442,6 @@ body {
   min-height: 32px;
   padding: 0 2px;
   box-sizing: border-box;
-}
-
-.schedule-replay-latency[hidden] {
-  display: none !important;
 }
 
 .schedule-replay-latency-label {
@@ -1475,10 +1504,7 @@ body {
   letter-spacing: 0.02em;
   cursor: pointer;
   transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
-}
-
-.schedule-replay-run-btn[hidden] {
-  display: none !important;
+  flex-shrink: 0;
 }
 
 .schedule-replay-run-btn svg {
@@ -4133,6 +4159,19 @@ body.is-row-resizing .panel-header-drag-handle {
   padding-bottom: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+.trade-metric-field {
+  width: 100%;
+}
+
+.trade-metric-field .trade-metric-value {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
 }
 
 .trade-panel-body {

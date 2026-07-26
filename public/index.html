@@ -452,6 +452,18 @@
                     <span class="switch-slider"></span>
                   </span>
                 </label>
+                <div class="wallet-control-field trade-metric-field" aria-label="Latency">
+                  <span class="wallet-control-label">Latency</span>
+                  <span id="trade-feed-latency-ms" class="trade-metric-value">—</span>
+                </div>
+                <div
+                  class="wallet-control-field trade-metric-field"
+                  aria-label="Fill success"
+                  title="Share of buy/sell orders that matched any size in the last 7 days"
+                >
+                  <span class="wallet-control-label">Fill success</span>
+                  <span id="trade-fill-success" class="trade-metric-value">—</span>
+                </div>
               </div>
             </div>
           </div>
@@ -792,38 +804,65 @@
           <div id="schedule-setups-list" class="schedule-setups-list">
             <div class="schedule-setups-empty">Loading…</div>
           </div>
-          <div class="schedule-workspace-footer">
-            <div id="schedule-replay-latency" class="schedule-replay-latency" hidden>
-              <label class="schedule-replay-latency-label" for="schedule-replay-latency-input"
-                >Latency</label
+          <div class="schedule-workspace-footer" id="schedule-workspace-footer">
+            <div
+              id="schedule-replay-panel"
+              class="schedule-replay-panel"
+              aria-hidden="true"
+            >
+              <button
+                type="button"
+                id="schedule-replay-run-btn"
+                class="schedule-replay-run-btn"
+                title="Replay placed cards over the last week"
+                tabindex="-1"
               >
-              <div class="schedule-replay-latency-field">
-                <input
-                  id="schedule-replay-latency-input"
-                  class="schedule-replay-latency-input"
-                  type="number"
-                  min="0"
-                  max="2000"
-                  step="10"
-                  value="150"
-                  inputmode="numeric"
-                  title="Simulated order latency for Replay (FAK and GTD place delay)"
-                />
-                <span class="schedule-replay-latency-unit">ms</span>
+                <span>Replay</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M7 4.5v15l13-7.5-13-7.5z" fill="currentColor" />
+                </svg>
+              </button>
+              <div id="schedule-replay-controls" class="schedule-replay-controls">
+                <div class="schedule-replay-latency">
+                  <label class="schedule-replay-latency-label" for="schedule-replay-latency-input"
+                    >Latency (ms)</label
+                  >
+                  <div class="schedule-replay-latency-field">
+                    <input
+                      id="schedule-replay-latency-input"
+                      class="schedule-replay-latency-input"
+                      type="number"
+                      min="0"
+                      max="2000"
+                      step="10"
+                      value="150"
+                      inputmode="numeric"
+                      tabindex="-1"
+                      title="Simulated order latency for Replay (FAK and GTD place delay). Prefills from live feed latency."
+                    />
+                  </div>
+                </div>
+                <div class="schedule-replay-latency">
+                  <label class="schedule-replay-latency-label" for="schedule-replay-fill-success-input"
+                    >Fill success (%)</label
+                  >
+                  <div class="schedule-replay-latency-field">
+                    <input
+                      id="schedule-replay-fill-success-input"
+                      class="schedule-replay-latency-input"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="100"
+                      inputmode="numeric"
+                      tabindex="-1"
+                      title="Chance each Replay fill attempt succeeds after latency. Prefills from live 7-day fill success."
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-            <button
-              type="button"
-              id="schedule-replay-run-btn"
-              class="schedule-replay-run-btn"
-              hidden
-              title="Replay placed cards over the last week"
-            >
-              <span>Replay</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M7 4.5v15l13-7.5-13-7.5z" fill="currentColor" />
-              </svg>
-            </button>
             <div
               id="schedule-workspace-switcher"
               class="schedule-workspace-switcher"

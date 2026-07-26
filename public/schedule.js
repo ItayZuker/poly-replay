@@ -5,7 +5,9 @@
   const MIN_DURATION = 1;
   const STATS_CACHE_STORAGE_KEY = "poly-real:schedule-placement-stats";
   const REPLAY_LATENCY_STORAGE_KEY = "poly-real:schedule-replay-latency-ms";
+  const REPLAY_FILL_SUCCESS_STORAGE_KEY = "poly-real:schedule-replay-fill-success-pct";
   const DEFAULT_REPLAY_LATENCY_MS = 150;
+  const DEFAULT_REPLAY_FILL_SUCCESS_PCT = 100;
   /** Live real-trade stats — do not reuse sim backtest caches. */
 
   let placements = [];
@@ -679,14 +681,24 @@
   }
 
   function statsCacheVersion() {
-    return isReplayWorkspace() ? "replay-1" : "live-1";
+    return isReplayWorkspace() ? "replay-2" : "live-1";
   }
 
   function simLatencyMs() {
+    if (isReplayWorkspace()) return readReplayLatencyMs();
     if (typeof window.getSimLatencyMs === "function") {
       return window.getSimLatencyMs();
     }
-    return 150;
+    return DEFAULT_REPLAY_LATENCY_MS;
+  }
+
+  function simFillSuccessPct() {
+    if (isReplayWorkspace()) return readReplayFillSuccessPct();
+    const live = window.getLiveFillSuccessPct?.();
+    if (typeof live === "number" && Number.isFinite(live)) {
+      return Math.max(0, Math.min(100, live));
+    }
+    return DEFAULT_REPLAY_FILL_SUCCESS_PCT;
   }
 
   function setupFingerprint(setupId) {
@@ -731,6 +743,7 @@
       placement.setupId,
       setupFingerprint(placement.setupId),
       simLatencyMs(),
+      simFillSuccessPct(),
       heatmapVersionForSeries(selectedSeries()),
       rollingCutoffDayUtc(),
     ].join("|");
@@ -3374,25 +3387,101 @@
     }
   }
 
-  function initReplayLatencyInput() {
-    const input = document.getElementById("schedule-replay-latency-input");
-    if (!input || input.dataset.bound === "1") return;
-    input.dataset.bound = "1";
+  function readReplayFillSuccessPct() {
+    const input = document.getElementById("schedule-replay-fill-success-input");
+    const raw = input ? Number(input.value) : Number.NaN;
+    if (!Number.isFinite(raw)) return DEFAULT_REPLAY_FILL_SUCCESS_PCT;
+    return Math.max(0, Math.min(100, raw));
+  }
+
+  function persistReplayFillSuccessPct(pct) {
     try {
-      const stored = Number(localStorage.getItem(REPLAY_LATENCY_STORAGE_KEY));
-      if (Number.isFinite(stored)) {
-        input.value = String(Math.max(0, Math.min(2000, Math.floor(stored))));
-      }
+      localStorage.setItem(REPLAY_FILL_SUCCESS_STORAGE_KEY, String(pct));
     } catch {
-      // keep default
+      // ignore
     }
-    const commit = () => {
-      const ms = readReplayLatencyMs();
-      input.value = String(ms);
-      persistReplayLatencyMs(ms);
-    };
-    input.addEventListener("change", commit);
-    input.addEventListener("blur", commit);
+  }
+
+  function markReplayInputUserEdited(input) {
+    if (input) input.dataset.userEdited = "1";
+  }
+
+  /** Prefill Latency / Fill success from live metrics unless the user edited them. */
+  function syncReplayInputsFromLive() {
+    if (!isReplayWorkspace() || replayRunning) return;
+
+    const latencyInput = document.getElementById("schedule-replay-latency-input");
+    if (latencyInput && latencyInput.dataset.userEdited !== "1") {
+      const liveMs = window.getSimLatencyMs?.();
+      if (Number.isFinite(liveMs)) {
+        const ms = Math.max(0, Math.min(2000, Math.floor(liveMs)));
+        if (latencyInput.value !== String(ms)) {
+          latencyInput.value = String(ms);
+          persistReplayLatencyMs(ms);
+        }
+      }
+    }
+
+    const fillInput = document.getElementById("schedule-replay-fill-success-input");
+    if (fillInput && fillInput.dataset.userEdited !== "1") {
+      const livePct = window.getLiveFillSuccessPct?.();
+      if (typeof livePct === "number" && Number.isFinite(livePct)) {
+        const pct = Math.max(0, Math.min(100, Math.round(livePct * 10) / 10));
+        if (fillInput.value !== String(pct)) {
+          fillInput.value = String(pct);
+          persistReplayFillSuccessPct(pct);
+        }
+      }
+    }
+  }
+
+  function initReplayLatencyInput() {
+    const latencyInput = document.getElementById("schedule-replay-latency-input");
+    if (latencyInput && latencyInput.dataset.bound !== "1") {
+      latencyInput.dataset.bound = "1";
+      try {
+        const stored = Number(localStorage.getItem(REPLAY_LATENCY_STORAGE_KEY));
+        if (Number.isFinite(stored)) {
+          latencyInput.value = String(Math.max(0, Math.min(2000, Math.floor(stored))));
+        }
+      } catch {
+        // keep default
+      }
+      const commitLatency = () => {
+        markReplayInputUserEdited(latencyInput);
+        const ms = readReplayLatencyMs();
+        latencyInput.value = String(ms);
+        persistReplayLatencyMs(ms);
+      };
+      latencyInput.addEventListener("change", commitLatency);
+      latencyInput.addEventListener("blur", commitLatency);
+      latencyInput.addEventListener("input", () => markReplayInputUserEdited(latencyInput));
+    }
+
+    const fillInput = document.getElementById("schedule-replay-fill-success-input");
+    if (fillInput && fillInput.dataset.bound !== "1") {
+      fillInput.dataset.bound = "1";
+      try {
+        const stored = Number(localStorage.getItem(REPLAY_FILL_SUCCESS_STORAGE_KEY));
+        if (Number.isFinite(stored)) {
+          fillInput.value = String(Math.max(0, Math.min(100, stored)));
+        }
+      } catch {
+        // keep default
+      }
+      const commitFill = () => {
+        markReplayInputUserEdited(fillInput);
+        const pct = readReplayFillSuccessPct();
+        fillInput.value = String(pct);
+        persistReplayFillSuccessPct(pct);
+      };
+      fillInput.addEventListener("change", commitFill);
+      fillInput.addEventListener("blur", commitFill);
+      fillInput.addEventListener("input", () => markReplayInputUserEdited(fillInput));
+    }
+
+    // Prefer live feed latency / 7-day fill success when available.
+    syncReplayInputsFromLive();
   }
 
   function syncReplayRunButton() {
@@ -3403,6 +3492,8 @@
     btn.setAttribute("aria-pressed", replayRunning ? "true" : "false");
     const latencyInput = document.getElementById("schedule-replay-latency-input");
     if (latencyInput) latencyInput.disabled = replayRunning;
+    const fillInput = document.getElementById("schedule-replay-fill-success-input");
+    if (fillInput) fillInput.disabled = replayRunning;
     if (replayRunning) {
       btn.title = "Stop Replay";
       btn.innerHTML = `<span>Stop</span>${REPLAY_STOP_ICON}`;
@@ -3478,11 +3569,13 @@
     activeReplayPlacementIds = new Set(orderedPlacements.map((p) => p._id));
     const first = orderedPlacements[0];
     const latencyMs = readReplayLatencyMs();
+    const fillSuccessPct = readReplayFillSuccessPct();
     persistReplayLatencyMs(latencyMs);
+    persistReplayFillSuccessPct(fillSuccessPct);
     window.appendLogEntry?.({
       level: "info",
       source: "client",
-      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms; applying setups to recorded windows…`,
+      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%; applying setups to recorded windows…`,
     });
 
     const setupIds = [...new Set(orderedPlacements.map((p) => p.setupId).filter(Boolean))];
@@ -3504,6 +3597,7 @@
           placements: orderedPlacements,
           setups,
           latencyMs,
+          fillSuccessPct,
         }),
       });
       if (!res.ok || !res.body) {
@@ -3691,6 +3785,7 @@
     applyDemoLastWindow,
     syncHeaderSummaryControls,
     setHeaderSummaryRange,
+    syncReplayInputsFromLive,
     onSelectedSeriesChanged,
     closeMenus,
     getPlacementCountsBySetup,

@@ -54,6 +54,13 @@ import {
   type TradingStatEvent,
 } from "./db/trading-session-memory-repository.js";
 import {
+  markFillAttemptSuccess,
+  recordFillAttempt,
+  summarizeFillSuccess,
+  type FillSuccessStats,
+} from "./db/fill-attempt-repository.js";
+import { getRollingCutoffUtcSec } from "./heatmap-service.js";
+import {
   getUserById,
   listUsersForLiveTrading,
   resolveUserTradingForSeries,
@@ -85,6 +92,7 @@ import type {
   TradingPositionCard,
   TradingPublicState,
   PlacementLiveStats,
+  FillSuccessPublicStats,
 } from "./types.js";
 
 interface RestingBuyOrder {
@@ -669,6 +677,13 @@ export class LiveTradingService {
   private settlementRecheckedIds = new Set<string>();
   /** Market this engine's config/schedule/resting orders are bound to. */
   private boundSeries: string = DEFAULT_MARKET_SERIES;
+  /** Rolling ~7-day CLOB fill success (buys + sells). */
+  private fillSuccessStats: FillSuccessStats = {
+    attempts: 0,
+    successes: 0,
+    ratePct: null,
+    cutoffUtc: getRollingCutoffUtcSec(),
+  };
 
   constructor(private readonly userId: string) {}
 
@@ -687,6 +702,52 @@ export class LiveTradingService {
 
   private notify(): void {
     for (const listener of this.listeners) listener();
+  }
+
+  private applyFillSuccessStats(stats: FillSuccessStats): void {
+    this.fillSuccessStats = stats;
+    this.notify();
+  }
+
+  /** Record a CLOB place/fire attempt; success=true when any size already matched. */
+  private async noteFillAttempt(input: {
+    leg: "buy" | "sell";
+    side?: "up" | "down";
+    series?: string;
+    orderId?: string;
+    success?: boolean;
+  }): Promise<void> {
+    if (!isTradingExecutor()) return;
+    try {
+      const stats = await recordFillAttempt({
+        userId: this.userId,
+        leg: input.leg,
+        side: input.side,
+        series: input.series ?? this.boundSeries,
+        orderId: input.orderId,
+        success: input.success,
+      });
+      this.applyFillSuccessStats(stats);
+    } catch (err) {
+      logService.warn("trading", `Failed to record fill attempt: ${String(err)}`);
+    }
+  }
+
+  /** Mark a previously recorded attempt successful once any size matches. */
+  private async noteFillSuccess(orderId: string | undefined): Promise<void> {
+    if (!isTradingExecutor()) return;
+    const id = String(orderId ?? "").trim();
+    if (!id) return;
+    try {
+      const stats = await markFillAttemptSuccess(this.userId, id);
+      this.applyFillSuccessStats(stats);
+    } catch (err) {
+      logService.warn("trading", `Failed to mark fill success: ${String(err)}`);
+    }
+  }
+
+  getFillSuccessStats(): FillSuccessPublicStats {
+    return { ...this.fillSuccessStats };
   }
 
   getConfig(): TradingConfig {
@@ -729,6 +790,12 @@ export class LiveTradingService {
       const collectionStartedAt = await getLiveCollectionStartedAt(this.userId);
       const collectionMs = collectionStartedAt ? Date.parse(collectionStartedAt) : NaN;
       this.liveCollectionStartedAtMs = Number.isFinite(collectionMs) ? collectionMs : null;
+
+      try {
+        this.fillSuccessStats = await summarizeFillSuccess(this.userId);
+      } catch (err) {
+        logService.warn("trading", `Failed to load fill success stats: ${String(err)}`);
+      }
 
       const events = await listTradingStatEvents(this.userId, {});
       if (this.liveCollectionStartedAtMs == null && events.length > 0) {
@@ -1182,6 +1249,7 @@ export class LiveTradingService {
         this.config.useSchedule && this.scheduleContext ? this.scheduleContext.setupId : null,
       quotesEnabled: this.canExecuteOrders(),
       previewMode,
+      fillSuccess: this.getFillSuccessStats(),
     };
   }
 
@@ -1912,6 +1980,7 @@ export class LiveTradingService {
                 "trading",
                 `Pending buy confirmed via order: ${pending.side.toUpperCase()} ${fillShares} sh @ ${(fillPrice * 100).toFixed(1)}¢`,
               );
+              await this.noteFillSuccess(pending.orderId);
               await this.recordBuyFill(
                 state,
                 pending.side,
@@ -1974,6 +2043,7 @@ export class LiveTradingService {
           "trading",
           `Pending buy confirmed on-chain: ${side.toUpperCase()} ${shares} sh @ ${(price * 100).toFixed(1)}¢`,
         );
+        await this.noteFillSuccess(pending.orderId);
         await this.recordBuyFill(
           state,
           side,
@@ -2524,6 +2594,7 @@ export class LiveTradingService {
         "trading",
         `GTD buy filled during cancel (${resting.side} ${delta} sh @ ~${(fillPrice * 100).toFixed(1)}¢) — recording race fill`,
       );
+      await this.noteFillSuccess(resting.orderId);
       await this.recordBuyFill(
         state,
         resting.side,
@@ -2731,6 +2802,12 @@ export class LiveTradingService {
           logTag: `phase ${phaseIdx + 1}`,
         });
         if (!result.success || !result.orderId) {
+          await this.noteFillAttempt({
+            leg: "buy",
+            side,
+            series: state.series,
+            success: false,
+          });
           if (this.restingBuys.size === 0) this.autoEngine.setExternalBuyPaused(false);
           const err = result.error ?? "";
           if (/expiration/i.test(err)) {
@@ -2743,12 +2820,22 @@ export class LiveTradingService {
           continue;
         }
 
-        if (result.fillShares != null && result.fillPrice != null && result.fillShares > 0) {
+        const immediateFill =
+          result.fillShares != null && result.fillPrice != null && result.fillShares > 0;
+        await this.noteFillAttempt({
+          leg: "buy",
+          side,
+          series: state.series,
+          orderId: result.orderId,
+          success: immediateFill,
+        });
+
+        if (immediateFill) {
           await this.recordBuyFill(
             state,
             side,
-            result.fillShares,
-            result.fillPrice,
+            result.fillShares!,
+            result.fillPrice!,
             result.usdcAmount,
             result.tokenId,
             result.conditionId,
@@ -2812,6 +2899,7 @@ export class LiveTradingService {
     if (matched > resting.sizeMatched + 1e-9) {
       const delta = matched - resting.sizeMatched;
       const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
+      await this.noteFillSuccess(resting.orderId);
       await this.recordBuyFill(
         state,
         resting.side,
@@ -2972,6 +3060,12 @@ export class LiveTradingService {
         state,
       });
       if (!result.success || !result.orderId) {
+        await this.noteFillAttempt({
+          leg: "sell",
+          side,
+          series: state.series,
+          success: false,
+        });
         const err = result.error ?? "";
         if (/expiration/i.test(err)) {
           this.gtdSellBlockedWindowKey = key;
@@ -2991,12 +3085,22 @@ export class LiveTradingService {
 
       this.gtdSellRepressUntilMs = 0;
 
-      if (result.fillShares != null && result.fillPrice != null && result.fillShares > 0) {
+      const immediateSellFill =
+        result.fillShares != null && result.fillPrice != null && result.fillShares > 0;
+      await this.noteFillAttempt({
+        leg: "sell",
+        side,
+        series: state.series,
+        orderId: result.orderId,
+        success: immediateSellFill,
+      });
+
+      if (immediateSellFill) {
         await this.recordSellFill(
           state,
           side,
-          result.fillShares,
-          result.fillPrice,
+          result.fillShares!,
+          result.fillPrice!,
           result.usdcAmount,
           result.tokenId,
           result.conditionId,
@@ -3035,6 +3139,7 @@ export class LiveTradingService {
     if (matched > resting.sizeMatched + 1e-9) {
       const delta = matched - resting.sizeMatched;
       const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
+      await this.noteFillSuccess(resting.orderId);
       await this.recordSellFill(
         state,
         resting.side,
@@ -3769,6 +3874,13 @@ export class LiveTradingService {
       if (!result.success || result.fillPrice == null || result.fillShares == null) {
         if (leg === "buy" && result.ambiguous) {
           const reason = result.error ?? "ambiguous buy response";
+          await this.noteFillAttempt({
+            leg: "buy",
+            side,
+            series: state.series,
+            orderId: result.orderId,
+            success: false,
+          });
           this.beginPendingBuyConfirm(state, {
             side,
             source,
@@ -3782,11 +3894,28 @@ export class LiveTradingService {
           await this.resolvePendingBuyConfirm(state);
           const pos = this.positions[side] ?? this.positions.up ?? this.positions.down;
           if (pos) {
+            await this.noteFillSuccess(result.orderId);
             return { ok: true, fillShares: pos.shares, fillPrice: pos.avgPrice };
           }
+        } else {
+          await this.noteFillAttempt({
+            leg,
+            side,
+            series: state.series,
+            orderId: result.orderId,
+            success: false,
+          });
         }
         return { ok: false, error: result.error ?? "Order failed" };
       }
+
+      await this.noteFillAttempt({
+        leg,
+        side,
+        series: state.series,
+        orderId: result.orderId,
+        success: true,
+      });
 
       const nowSec = Math.floor(Date.now() / 1000);
       const fillShares = result.fillShares;

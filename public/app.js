@@ -37,22 +37,30 @@ function withScheduleWorkspaceMode(url) {
 
 function syncScheduleWorkspaceUi() {
   const page = $("page-schedule-heatmap");
-  page?.classList.toggle("is-replay-workspace", isReplayWorkspace());
+  const replayOpen = isReplayWorkspace();
+  page?.classList.toggle("is-replay-workspace", replayOpen);
   const switcher = $("schedule-workspace-switcher");
-  switcher?.classList.toggle("is-replay", isReplayWorkspace());
+  switcher?.classList.toggle("is-replay", replayOpen);
   if (switcher) {
-    switcher.setAttribute("aria-checked", isReplayWorkspace() ? "true" : "false");
+    switcher.setAttribute("aria-checked", replayOpen ? "true" : "false");
   }
   document.querySelectorAll("[data-schedule-workspace]").forEach((btn) => {
     btn.classList.toggle("is-active", btn.dataset.scheduleWorkspace === scheduleWorkspaceMode);
   });
+  const replayPanel = $("schedule-replay-panel");
+  if (replayPanel) {
+    replayPanel.setAttribute("aria-hidden", replayOpen ? "false" : "true");
+  }
   const replayBtn = $("schedule-replay-run-btn");
   if (replayBtn) {
-    replayBtn.hidden = !isReplayWorkspace();
+    replayBtn.tabIndex = replayOpen ? 0 : -1;
   }
-  const replayLatency = $("schedule-replay-latency");
-  if (replayLatency) {
-    replayLatency.hidden = !isReplayWorkspace();
+  const latencyInput = $("schedule-replay-latency-input");
+  const fillInput = $("schedule-replay-fill-success-input");
+  if (latencyInput) latencyInput.tabIndex = replayOpen ? 0 : -1;
+  if (fillInput) fillInput.tabIndex = replayOpen ? 0 : -1;
+  if (replayOpen) {
+    window.SchedulePlacements?.syncReplayInputsFromLive?.();
   }
 }
 
@@ -3167,6 +3175,7 @@ function updateWindowUI(state) {
   if (window.Simulator) window.Simulator.syncFromState(state);
 
   syncLatencyDisplay(state);
+  syncFillSuccessDisplay(state?.trading);
   syncGraphSaveBtn(state);
   updatePositionsPanel(state);
   updateQuoteBoxes(state);
@@ -3252,10 +3261,34 @@ function applyQuotesUpdate(quotes) {
 }
 
 function syncLatencyDisplay(state) {
-  const el = $("feed-latency-ms");
-  if (!el) return;
   const ms = state?.feedLatencyMs;
-  el.textContent = Number.isFinite(ms) ? String(Math.round(ms)) : "—";
+  const text = Number.isFinite(ms) ? `${Math.round(ms)} ms` : "—";
+  const settingsEl = $("feed-latency-ms");
+  if (settingsEl) {
+    settingsEl.textContent = Number.isFinite(ms) ? String(Math.round(ms)) : "—";
+  }
+  const tradeEl = $("trade-feed-latency-ms");
+  if (tradeEl) tradeEl.textContent = text;
+}
+
+function syncFillSuccessDisplay(trading) {
+  const el = $("trade-fill-success");
+  if (!el) return;
+  const rate = trading?.fillSuccess?.ratePct;
+  const attempts = trading?.fillSuccess?.attempts;
+  if (typeof rate === "number" && Number.isFinite(rate)) {
+    el.textContent = `${rate % 1 === 0 ? String(rate) : rate.toFixed(1)}%`;
+    el.title =
+      attempts > 0
+        ? `${trading.fillSuccess.successes}/${attempts} orders matched any size (last 7 days)`
+        : "Share of buy/sell orders that matched any size in the last 7 days";
+  } else {
+    el.textContent = "—";
+    el.title = "No fill attempts in the last 7 days";
+  }
+  window.__liveFillSuccessPct =
+    typeof rate === "number" && Number.isFinite(rate) ? rate : null;
+  window.SchedulePlacements?.syncReplayInputsFromLive?.();
 }
 
 function updateCountdown(state) {
@@ -3543,6 +3576,17 @@ window.getSimLatencyMs = () => {
   if (Number.isFinite(ms)) return Math.max(0, Math.round(ms));
   const setupMs = window.windowState?.sim?.setup?.latencyMs;
   return Number.isFinite(setupMs) ? setupMs : 150;
+};
+
+window.getLiveFillSuccessPct = () => {
+  const rate = window.windowState?.trading?.fillSuccess?.ratePct;
+  if (typeof rate === "number" && Number.isFinite(rate)) {
+    return Math.max(0, Math.min(100, rate));
+  }
+  if (typeof window.__liveFillSuccessPct === "number" && Number.isFinite(window.__liveFillSuccessPct)) {
+    return Math.max(0, Math.min(100, window.__liveFillSuccessPct));
+  }
+  return null;
 };
 
 function closeSetupMenus() {
