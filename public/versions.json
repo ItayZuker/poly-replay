@@ -1,6 +1,11 @@
 {
-  "current": "1.7.0",
+  "current": "1.8.0",
   "releases": [
+    {
+      "version": "1.8.0",
+      "releasedAt": "2026-07-26T21:02:59.000Z",
+      "notes": "Live fill-success % (buys+sells, rolling 7 days) on Market → Trade with feed latency; Replay Fill success (%) input with per-attempt random fills, prefills from live; Simulator footer expands for Replay + inputs; docs updated."
+    },
     {
       "version": "1.7.0",
       "releasedAt": "2026-07-26T19:50:48.000Z",
