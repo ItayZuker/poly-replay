@@ -1,6 +1,11 @@
 {
-  "current": "1.6.0",
+  "current": "1.6.1",
   "releases": [
+    {
+      "version": "1.6.1",
+      "releasedAt": "2026-07-26T17:36:00.000Z",
+      "notes": "Fix schedule Replay: match Mongo recorded windows, derive Chainlink assetGap, harden SSE stats streaming, and avoid Dropbox tick-read stalls so weekend cards can finish; schedule docs note local ticks vs heatmap."
+    },
     {
       "version": "1.6.0",
       "releasedAt": "2026-07-26T13:54:17.901Z",
