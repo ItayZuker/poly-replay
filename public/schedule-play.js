@@ -7,8 +7,6 @@
   const CHART_PAD = { top: 10, right: 10, bottom: 22, left: 10 };
   const MARKER_HIT_PX = 10;
   const tickCache = new Map();
-  /** Book top-of-book samples for quote boxes (separate from Chainlink price line). */
-  const quoteCache = new Map();
 
   let modal = null;
   let canvas = null;
@@ -38,8 +36,6 @@
   let playSeries = "btc-5m";
   let selectedIndex = -1;
   let priceHistory = [];
-  /** @type {Array<{ t: number, yesAsk: number|null, yesBid: number|null, noAsk: number|null, noBid: number|null }>} */
-  let quoteHistory = [];
   let playheadSec = 0;
   let playing = false;
   /** When true, reaching the end of a window advances to the next and keeps playing. */
@@ -380,22 +376,6 @@
     return sign + fmtPlayPrice(Math.abs(value));
   }
 
-  function fmtPlayTickDelta(delta) {
-    if (delta == null || !Number.isFinite(delta)) return "—";
-    const sign = delta >= 0 ? "+" : "-";
-    const abs = Math.abs(delta);
-    if (abs >= 1000) {
-      return `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-    }
-    if (abs >= 1) return `${sign}$${abs.toFixed(2)}`;
-    return `${sign}$${abs.toFixed(4)}`;
-  }
-
-  function fmtPlayQuote(v) {
-    if (v == null || !Number.isFinite(v)) return "—";
-    return (v * 100).toFixed(1) + "¢";
-  }
-
   function setPlaySignedValue(el, text, sign) {
     if (!el) return;
     el.textContent = text;
@@ -404,34 +384,12 @@
     else if (sign < 0) el.classList.add("gap-negative");
   }
 
-  function quotesAt(untilSec) {
-    let cur = { yesAsk: null, yesBid: null, noAsk: null, noBid: null };
-    for (const q of quoteHistory) {
-      if (q.t > untilSec) break;
-      if (q.yesAsk != null && Number.isFinite(q.yesAsk)) cur.yesAsk = q.yesAsk;
-      if (q.yesBid != null && Number.isFinite(q.yesBid)) cur.yesBid = q.yesBid;
-      if (q.noAsk != null && Number.isFinite(q.noAsk)) cur.noAsk = q.noAsk;
-      if (q.noBid != null && Number.isFinite(q.noBid)) cur.noBid = q.noBid;
-    }
-    return cur;
-  }
-
   function clearMetricsPanel() {
-    const ids = [
-      "play-graph-ptb",
-      "play-graph-current",
-      "play-graph-gap",
-      "play-graph-tick",
-      "play-up-buy",
-      "play-up-sell",
-      "play-down-buy",
-      "play-down-sell",
-    ];
-    for (const id of ids) {
+    for (const id of ["play-graph-ptb", "play-graph-current", "play-graph-gap"]) {
       const el = $(id);
       if (!el) continue;
       el.textContent = "—";
-      if (id.startsWith("play-graph-")) el.className = "sim-value";
+      el.className = "sim-value";
     }
   }
 
@@ -451,41 +409,18 @@
       current != null && Number.isFinite(current) && ptb != null && Number.isFinite(ptb)
         ? current - ptb
         : null;
-    let tickDelta = null;
-    if (visible.length >= 2) {
-      tickDelta = visible[visible.length - 1].price - visible[visible.length - 2].price;
-    }
 
     const ptbEl = $("play-graph-ptb");
     const curEl = $("play-graph-current");
+    const gapEl = $("play-graph-gap");
     if (ptbEl) ptbEl.textContent = fmtPlayPrice(ptb);
     if (curEl) curEl.textContent = fmtPlayPrice(current);
-
-    const gapEl = $("play-graph-gap");
     if (gap != null && Number.isFinite(gap)) {
       setPlaySignedValue(gapEl, fmtPlayGap(gap), gap);
     } else if (gapEl) {
       gapEl.textContent = "—";
       gapEl.className = "sim-value";
     }
-
-    const tickEl = $("play-graph-tick");
-    if (tickDelta != null && Number.isFinite(tickDelta)) {
-      setPlaySignedValue(tickEl, fmtPlayTickDelta(tickDelta), tickDelta);
-    } else if (tickEl) {
-      tickEl.textContent = "—";
-      tickEl.className = "sim-value";
-    }
-
-    const q = quotesAt(until);
-    const upBuy = $("play-up-buy");
-    const upSell = $("play-up-sell");
-    const downBuy = $("play-down-buy");
-    const downSell = $("play-down-sell");
-    if (upBuy) upBuy.textContent = fmtPlayQuote(q.yesAsk);
-    if (upSell) upSell.textContent = fmtPlayQuote(q.yesBid);
-    if (downBuy) downBuy.textContent = fmtPlayQuote(q.noAsk);
-    if (downSell) downSell.textContent = fmtPlayQuote(q.noBid);
   }
 
   function setStatus(text) {
@@ -1453,59 +1388,6 @@
     return history;
   }
 
-  function bestLevelPrice(levels) {
-    if (!Array.isArray(levels) || levels.length === 0) return null;
-    const p = Number(levels[0]?.price);
-    return Number.isFinite(p) ? p : null;
-  }
-
-  function ticksToQuoteHistory(ticks) {
-    const history = [];
-    for (const tick of ticks || []) {
-      if (tick?.tMs == null || !Number.isFinite(tick.tMs)) continue;
-      const yesAsk =
-        tick.yesAsk != null && Number.isFinite(tick.yesAsk)
-          ? tick.yesAsk
-          : bestLevelPrice(tick.yesAsks) ??
-            (tick.yesPrice != null && Number.isFinite(tick.yesPrice) ? tick.yesPrice : null);
-      const yesBid =
-        tick.yesBid != null && Number.isFinite(tick.yesBid)
-          ? tick.yesBid
-          : bestLevelPrice(tick.yesBids);
-      const noAsk =
-        tick.noAsk != null && Number.isFinite(tick.noAsk)
-          ? tick.noAsk
-          : bestLevelPrice(tick.noAsks) ??
-            (tick.noPrice != null && Number.isFinite(tick.noPrice) ? tick.noPrice : null);
-      const noBid =
-        tick.noBid != null && Number.isFinite(tick.noBid)
-          ? tick.noBid
-          : bestLevelPrice(tick.noBids);
-      if (
-        ![yesAsk, yesBid, noAsk, noBid].some((v) => v != null && Number.isFinite(v))
-      ) {
-        continue;
-      }
-      history.push({
-        t: tick.tMs / 1000,
-        yesAsk: yesAsk != null && Number.isFinite(yesAsk) ? yesAsk : null,
-        yesBid: yesBid != null && Number.isFinite(yesBid) ? yesBid : null,
-        noAsk: noAsk != null && Number.isFinite(noAsk) ? noAsk : null,
-        noBid: noBid != null && Number.isFinite(noBid) ? noBid : null,
-      });
-    }
-    history.sort((a, b) => a.t - b.t);
-    return history;
-  }
-
-  async function loadQuotes(windowStart) {
-    const cacheKey = String(windowStart);
-    if (quoteCache.has(cacheKey)) return quoteCache.get(cacheKey);
-    const history = ticksToQuoteHistory(await fetchTickStream(windowStart, "book"));
-    quoteCache.set(cacheKey, history);
-    return history;
-  }
-
   function windowCount() {
     return payload?.windows?.length || 0;
   }
@@ -1798,7 +1680,6 @@
       ? win.windowStart
       : win.windowStart + elapsedFrac * windowDuration(win);
     priceHistory = [];
-    quoteHistory = [];
     updateTransportEnabled();
     clearMetricsPanel();
 
@@ -1814,14 +1695,10 @@
     syncHeaderProgress();
     const token = ++loadToken;
     try {
-      const [history, quotes] = await Promise.all([
-        loadTicks(win.windowStart, win),
-        loadQuotes(win.windowStart).catch(() => []),
-      ]);
+      const history = await loadTicks(win.windowStart, win);
       if (token !== loadToken) return;
       ticksLoading = false;
       priceHistory = history;
-      quoteHistory = quotes;
       updateTransportEnabled();
       if (history.length === 0) {
         setStatus("No price ticks for this window");
@@ -1846,15 +1723,11 @@
         if (!tickCache.has(nextTickKey)) {
           void loadTicks(next.windowStart, next).catch(() => {});
         }
-        if (!quoteCache.has(String(next.windowStart))) {
-          void loadQuotes(next.windowStart).catch(() => {});
-        }
       }
     } catch (err) {
       if (token !== loadToken) return;
       ticksLoading = false;
       priceHistory = [];
-      quoteHistory = [];
       updateTransportEnabled();
       setStatus(err?.message || "Failed to load ticks");
       syncHeaderProgress();
@@ -2009,7 +1882,6 @@
     endScrub(null);
     loadToken += 1;
     priceHistory = [];
-    quoteHistory = [];
     hoverTargets = [];
     playChartLayout = null;
     hidePhaseHover();
@@ -2041,9 +1913,7 @@
     payload = null;
     selectedIndex = -1;
     priceHistory = [];
-    quoteHistory = [];
     tickCache.clear();
-    quoteCache.clear();
     playheadSec = 0;
     viewMode = "play";
     clearHitsHighlight();

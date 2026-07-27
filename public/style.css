@@ -6892,13 +6892,9 @@ body.is-column-resizing * {
   min-width: 0;
 }
 
-.schedule-play-metrics .sim-row,
-.schedule-play-metrics .quote-row {
+.schedule-play-metrics .schedule-play-metrics-row {
   flex: 0 0 auto;
-}
-
-.schedule-play-metrics .quote-box.quote-box-disabled {
-  cursor: default;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .schedule-play-modal.is-hits-view .schedule-play-metrics {
