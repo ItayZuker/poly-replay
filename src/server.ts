@@ -87,7 +87,8 @@ import {
   type PlacementBacktestStats,
 } from "./schedule-backtest-service.js";
 import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
-import { ensureWalletRegistryReady } from "./wallet-registry.js";
+import { ensureWalletRegistryReady, listWalletsForSeries, countWalletsForSeries } from "./wallet-registry.js";
+import { computeWalletWinLossForUser } from "./db/wallet-win-loss.js";
 import { traderRegistryService } from "./trader-registry-service.js";
 import {
   authenticateUser,
@@ -1245,6 +1246,75 @@ app.get("/api/heatmap", (req, res) => {
     res.json(getHeatmapState(series));
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+app.get("/api/trader-wallets", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const series = parseSeriesParam(req);
+    const sortRaw = typeof req.query.sort === "string" ? req.query.sort.trim() : "sightings";
+    const sort =
+      sortRaw === "iWin" || sortRaw === "iLost" || sortRaw === "sightings" ? sortRaw : "sightings";
+    const dir = req.query.dir === "asc" ? "asc" : "desc";
+    const limitRaw = Number(req.query.limit);
+    const limit =
+      Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(500, Math.floor(limitRaw)) : 100;
+
+    const [winLoss, total] = await Promise.all([
+      computeWalletWinLossForUser(userId, series),
+      countWalletsForSeries(series),
+    ]);
+
+    const attachStats = <T extends { address: string }>(wallet: T) => {
+      const stats = winLoss.get(String(wallet.address).toLowerCase()) ?? {
+        iWin: 0,
+        iLost: 0,
+      };
+      return { ...wallet, iWin: stats.iWin, iLost: stats.iLost };
+    };
+
+    let rows;
+    if (sort === "sightings") {
+      const wallets = await listWalletsForSeries(series, {
+        sortBy: "sightings",
+        dir,
+        limit,
+      });
+      rows = wallets.map(attachStats);
+    } else {
+      const wallets = await listWalletsForSeries(series);
+      rows = wallets.map(attachStats);
+      const metric = sort === "iWin" ? "iWin" : "iLost";
+      const dirMul = dir === "asc" ? 1 : -1;
+      rows.sort((a, b) => {
+        const av = Number(a[metric]) || 0;
+        const bv = Number(b[metric]) || 0;
+        if (av !== bv) return av < bv ? -dirMul : dirMul;
+        const as = Number(a.markets?.[series]) || 0;
+        const bs = Number(b.markets?.[series]) || 0;
+        if (as !== bs) return bs - as;
+        return String(a.address).localeCompare(String(b.address));
+      });
+      rows = rows.slice(0, limit);
+    }
+
+    res.json({
+      series,
+      sort,
+      dir,
+      limit,
+      total,
+      wallets: rows,
+      count: rows.length,
+    });
+  } catch (err) {
+    const message = String(err);
+    if (message.includes("MONGODB_URI")) {
+      res.status(503).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
   }
 });
 

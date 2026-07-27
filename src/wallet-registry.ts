@@ -7,9 +7,15 @@ import {
   findTraderWalletsByAddresses,
   importTraderWalletsFromRegistry,
   listAllTraderWallets,
+  listTraderWalletsForSeries,
+  countTraderWalletsForSeries,
   upsertTraderWalletsForWindow,
   deleteInactiveTraderWallets,
 } from "./db/trader-wallet-repository.js";
+import {
+  ensureWindowTraderIndexes,
+  replaceWindowTraders,
+} from "./db/window-trader-repository.js";
 
 let migratePromise: Promise<void> | null = null;
 
@@ -33,6 +39,7 @@ async function migrateFromDiskIfNeeded(): Promise<void> {
 
 export async function ensureWalletRegistryReady(): Promise<void> {
   await ensureTraderWalletIndexes();
+  await ensureWindowTraderIndexes();
   await migrateFromDiskIfNeeded();
 }
 
@@ -74,14 +81,37 @@ export async function classifyWindowTraders(
 export async function registerWindowTraders(
   marketSeries: string,
   addresses: string[],
+  windowStart?: number,
 ): Promise<RegisterWindowTradersResult> {
   await migrateFromDiskIfNeeded();
-  return upsertTraderWalletsForWindow(marketSeries, addresses);
+  const result = await upsertTraderWalletsForWindow(marketSeries, addresses);
+  if (windowStart != null) {
+    await replaceWindowTraders(marketSeries, windowStart, addresses).catch(() => undefined);
+  }
+  return result;
 }
 
 export async function getWalletRegistry(): Promise<WalletRegistry> {
   await migrateFromDiskIfNeeded();
   return listAllTraderWallets();
+}
+
+/** Wallets seen in the given market series. */
+export async function listWalletsForSeries(
+  marketSeries: string,
+  options?: {
+    sortBy?: "sightings" | "lastSeenAt";
+    dir?: "asc" | "desc";
+    limit?: number;
+  },
+) {
+  await migrateFromDiskIfNeeded();
+  return listTraderWalletsForSeries(marketSeries, options);
+}
+
+export async function countWalletsForSeries(marketSeries: string): Promise<number> {
+  await migrateFromDiskIfNeeded();
+  return countTraderWalletsForSeries(marketSeries);
 }
 
 export async function getWalletCount(): Promise<number> {

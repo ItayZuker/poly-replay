@@ -1598,6 +1598,16 @@ function persistHeatmapMetricOrder(order) {
 
 let heatmapCellEls = new Map();
 let lastHeatmapState = null;
+let walletsListOpen = false;
+let walletsListLoadToken = 0;
+/** @type {any[]} */
+let walletsListCache = [];
+let walletsListSeries = "";
+/** @type {{ key: "sightings" | "iWin" | "iLost", dir: "desc" | "asc" }} */
+let walletsListSort = { key: "sightings", dir: "desc" };
+/** @type {"sightings" | "iWin" | "iLost" | null} */
+let walletsListSortLoadingKey = null;
+const WALLETS_LIST_LIMIT = 100;
 let heatmapLegendDrag = null;
 
 function formatLogTime(date = new Date()) {
@@ -3612,6 +3622,7 @@ async function onMarketSeriesChanged(nextSeries) {
     manualShares: 10,
   });
   void loadHeatmap();
+  if (walletsListOpen) void loadTraderWalletsList();
   if (window.SchedulePlacements?.loadPlacements) {
     await window.SchedulePlacements.loadPlacements({ reloadStats: true });
   } else if (window.SchedulePlacements?.refreshAllPlacementStats) {
@@ -4551,6 +4562,287 @@ function startHeatmapLegendDrag(e, item, legend) {
   window.addEventListener("pointercancel", onHeatmapLegendPointerUp);
 }
 
+function walletSightingsForSeries(wallet, series) {
+  const fromMarket = Number(wallet?.markets?.[series]);
+  if (Number.isFinite(fromMarket) && fromMarket > 0) return fromMarket;
+  const total = Number(wallet?.totalSightings);
+  return Number.isFinite(total) ? total : null;
+}
+
+function setWalletsListSort(key) {
+  if (walletsListSortLoadingKey) return;
+  if (walletsListSort.key === key) {
+    walletsListSort = {
+      key,
+      dir: walletsListSort.dir === "desc" ? "asc" : "desc",
+    };
+  } else {
+    walletsListSort = { key, dir: "desc" };
+  }
+  walletsListSortLoadingKey = key;
+  refreshWalletsSortHeaders();
+  void loadTraderWalletsList();
+}
+
+function createWalletsSortHeader(options) {
+  const { key, label, className = "", title } = options;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `schedule-wallets-sort-btn ${className}`.trim();
+  btn.dataset.sortKey = key;
+  const active = walletsListSort.key === key;
+  const loading = walletsListSortLoadingKey === key;
+  const dir = active ? walletsListSort.dir : null;
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+  btn.setAttribute("aria-busy", loading ? "true" : "false");
+  btn.disabled = Boolean(walletsListSortLoadingKey);
+  btn.classList.toggle("is-sorting", loading);
+  btn.title =
+    title ||
+    (loading
+      ? "Sorting…"
+      : active
+        ? dir === "desc"
+          ? "Sorted high to low — click for low to high"
+          : "Sorted low to high — click for high to low"
+        : "Sort high to low");
+
+  const spinner = document.createElement("span");
+  spinner.className = "schedule-wallets-sort-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  if (!loading) spinner.classList.add("is-idle");
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "schedule-wallets-sort-label";
+  labelEl.textContent = label;
+
+  const arrow = document.createElement("span");
+  arrow.className = "schedule-wallets-sort-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = dir === "asc" ? "▲" : "▼";
+  if (!active) arrow.classList.add("is-idle");
+
+  btn.append(spinner, labelEl, arrow);
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setWalletsListSort(key);
+  });
+  return btn;
+}
+
+function refreshWalletsSortHeaders() {
+  const table = document.querySelector(".schedule-wallets-table");
+  if (!table) return;
+  const sightingsTh = table.querySelector("thead th:nth-child(2)");
+  const winTh = table.querySelector("thead th:nth-child(3)");
+  const lostTh = table.querySelector("thead th:nth-child(4)");
+  if (sightingsTh) {
+    sightingsTh.replaceChildren(
+      createWalletsSortHeader({ key: "sightings", label: "Sightings", className: "is-sightings" }),
+    );
+  }
+  if (winTh) {
+    winTh.replaceChildren(
+      createWalletsSortHeader({
+        key: "iWin",
+        label: "I WON",
+        className: "schedule-wallets-stat-label is-win",
+      }),
+    );
+  }
+  if (lostTh) {
+    lostTh.replaceChildren(
+      createWalletsSortHeader({
+        key: "iLost",
+        label: "I LOST",
+        className: "schedule-wallets-stat-label is-lost",
+      }),
+    );
+  }
+}
+
+function syncWalletsListOpenUi() {
+  const page = $("page-schedule-heatmap");
+  const week = document.querySelector(".schedule-week-layout");
+  const panel = $("schedule-wallets-panel");
+  const open = walletsListOpen && isHeatmapViewActive();
+  walletsListOpen = open;
+  page?.classList.toggle("is-wallets-list-view", open);
+  if (week) week.hidden = open;
+  if (panel) panel.hidden = !open;
+  document.querySelectorAll(".heatmap-legend-open-btn").forEach((btn) => {
+    btn.setAttribute("aria-pressed", open ? "true" : "false");
+    btn.title = open ? "Back to heatmap" : "Open wallet list";
+    btn.closest(".heatmap-legend-item")?.classList.toggle("is-wallets-open", open);
+  });
+}
+
+function polymarketProfileUrl(address) {
+  const raw = String(address || "").trim().toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(raw)) return null;
+  return `https://polymarket.com/profile/${raw}`;
+}
+
+function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries, meta = {}) {
+  const body = $("schedule-wallets-body");
+  const countEl = $("schedule-wallets-count");
+  if (!body) return;
+
+  if (errorMessage) {
+    walletsListCache = [];
+    body.innerHTML = "";
+    const err = document.createElement("div");
+    err.className = "schedule-wallets-error";
+    err.textContent = errorMessage;
+    body.appendChild(err);
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+
+  const list = Array.isArray(wallets) ? wallets : [];
+  walletsListCache = list;
+  walletsListSeries = series;
+  const total = Number(meta.total);
+  if (countEl) {
+    if (Number.isFinite(total) && total > list.length) {
+      countEl.textContent = `Top ${list.length} of ${total}`;
+    } else {
+      countEl.textContent = list.length === 1 ? "1 wallet" : `${list.length} wallets`;
+    }
+  }
+
+  if (list.length === 0) {
+    body.innerHTML =
+      '<div class="schedule-wallets-empty">No wallets recorded for this market yet.</div>';
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "schedule-wallets-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const addressTh = document.createElement("th");
+  addressTh.textContent = "Address";
+  const sightingsTh = document.createElement("th");
+  sightingsTh.appendChild(
+    createWalletsSortHeader({ key: "sightings", label: "Sightings", className: "is-sightings" }),
+  );
+  const winTh = document.createElement("th");
+  winTh.appendChild(
+    createWalletsSortHeader({
+      key: "iWin",
+      label: "I WON",
+      className: "schedule-wallets-stat-label is-win",
+    }),
+  );
+  const lostTh = document.createElement("th");
+  lostTh.appendChild(
+    createWalletsSortHeader({
+      key: "iLost",
+      label: "I LOST",
+      className: "schedule-wallets-stat-label is-lost",
+    }),
+  );
+  headRow.append(addressTh, sightingsTh, winTh, lostTh);
+  thead.appendChild(headRow);
+
+  const tbody = document.createElement("tbody");
+  for (const wallet of list) {
+    const tr = document.createElement("tr");
+    const address = document.createElement("td");
+    address.className = "schedule-wallets-address";
+    const addr = String(wallet.address || "").trim();
+    const profileUrl = polymarketProfileUrl(addr);
+    if (profileUrl) {
+      const link = document.createElement("a");
+      link.className = "schedule-wallets-address-link";
+      link.href = profileUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = addr;
+      link.title = "Open Polymarket profile";
+      address.appendChild(link);
+    } else {
+      address.textContent = addr || "—";
+    }
+    const sightings = document.createElement("td");
+    const count = walletSightingsForSeries(wallet, series);
+    sightings.textContent = count == null ? "—" : String(count);
+    const iWin = document.createElement("td");
+    const iWinBadge = document.createElement("span");
+    iWinBadge.className = "schedule-wallets-stat-value is-win";
+    iWinBadge.textContent = Number.isFinite(Number(wallet.iWin)) ? String(wallet.iWin) : "0";
+    iWin.appendChild(iWinBadge);
+    const iLost = document.createElement("td");
+    const iLostBadge = document.createElement("span");
+    iLostBadge.className = "schedule-wallets-stat-value is-lost";
+    iLostBadge.textContent = Number.isFinite(Number(wallet.iLost)) ? String(wallet.iLost) : "0";
+    iLost.appendChild(iLostBadge);
+    tr.append(address, sightings, iWin, iLost);
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  body.replaceChildren(table);
+}
+
+async function loadTraderWalletsList() {
+  const body = $("schedule-wallets-body");
+  const countEl = $("schedule-wallets-count");
+  if (!body) return;
+  const token = ++walletsListLoadToken;
+  const series = selectedSeries;
+  const sort = walletsListSort.key || "sightings";
+  const dir = walletsListSort.dir || "desc";
+  const sorting = Boolean(walletsListSortLoadingKey);
+  if (!sorting) {
+    body.innerHTML = '<div class="schedule-wallets-empty">Loading…</div>';
+    if (countEl) countEl.textContent = "";
+  }
+  try {
+    const params = new URLSearchParams({
+      series,
+      sort,
+      dir,
+      limit: String(WALLETS_LIST_LIMIT),
+    });
+    const res = await fetch(`/api/trader-wallets?${params.toString()}`);
+    if (token !== walletsListLoadToken) return;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to load wallets (${res.status})`);
+    }
+    const data = await res.json();
+    if (token !== walletsListLoadToken) return;
+    if (data?.sort === "sightings" || data?.sort === "iWin" || data?.sort === "iLost") {
+      walletsListSort = {
+        key: data.sort,
+        dir: data.dir === "asc" ? "asc" : "desc",
+      };
+    }
+    walletsListSortLoadingKey = null;
+    renderTraderWalletsList(data?.wallets, null, data?.series || series, {
+      total: data?.total,
+      limit: data?.limit,
+    });
+  } catch (err) {
+    if (token !== walletsListLoadToken) return;
+    walletsListSortLoadingKey = null;
+    renderTraderWalletsList([], err.message || "Failed to load wallets", series);
+  }
+}
+
+function setWalletsListOpen(open) {
+  walletsListOpen = Boolean(open) && isHeatmapViewActive();
+  syncWalletsListOpenUi();
+  if (walletsListOpen) {
+    walletsListSort = { key: "sightings", dir: "desc" };
+    walletsListSortLoadingKey = null;
+    void loadTraderWalletsList();
+  }
+}
+
 function initHeatmapLegend() {
   const panel = $("schedule-heatmap-panel");
   if (!panel) return;
@@ -4588,11 +4880,29 @@ function initHeatmapLegend() {
     label.className = "heatmap-legend-label";
     label.textContent = metric.label;
 
+    head.append(swatch, label);
+
+    if (metric.key === "wallets") {
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "heatmap-legend-open-btn";
+      openBtn.setAttribute("aria-label", "Open wallet list");
+      openBtn.setAttribute("aria-pressed", "false");
+      openBtn.title = "Open wallet list";
+      openBtn.innerHTML =
+        '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3H3v10h10v-3"/><path d="M9 3h4v4"/><path d="M7 9l6-6"/></svg>';
+      openBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setWalletsListOpen(!walletsListOpen);
+      });
+      head.appendChild(openBtn);
+    }
+
     const desc = document.createElement("p");
     desc.className = "heatmap-legend-desc";
     desc.textContent = metric.tip;
 
-    head.append(swatch, label);
     body.append(head, desc);
     item.append(handle, body);
     legend.appendChild(item);
@@ -4600,6 +4910,7 @@ function initHeatmapLegend() {
 
   panel.appendChild(legend);
   syncHeatmapColumnOrder();
+  syncWalletsListOpenUi();
 }
 
 function bindScheduleViewToggle() {
@@ -4619,6 +4930,7 @@ function bindScheduleViewToggle() {
       btn.classList.toggle("is-active", btn.dataset.scheduleView === next);
     }
     if (options.persist !== false) saveScheduleViewPref(next);
+    if (isSchedule) setWalletsListOpen(false);
     // Keep both UIs mounted. Only load heatmap the first time if not yet available.
     if (!isSchedule && !lastHeatmapState) {
       void loadHeatmap();

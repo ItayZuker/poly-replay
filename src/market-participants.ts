@@ -153,7 +153,11 @@ export async function enrichWindowWithUniqueTraders<T extends {
     slug: window.slug,
     waitForSettle: options?.waitForSettle ?? true,
   });
-  const { newWallets, knownWallets } = await registerWindowTraders(marketSeries, wallets);
+  const { newWallets, knownWallets } = await registerWindowTraders(
+    marketSeries,
+    wallets,
+    window.windowStart,
+  );
   return {
     ...window,
     conditionId,

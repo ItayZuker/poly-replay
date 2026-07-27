@@ -11,6 +11,7 @@ import {
 } from "./data-dir.js";
 import { pruneRecordedWindows } from "./recorded-window-repository.js";
 import { deleteRecordedWindowsBefore } from "./recorded-window-mongo-repository.js";
+import { deleteWindowTradersBefore } from "./window-trader-repository.js";
 
 export interface PruneMarketResult {
   series: string;
@@ -76,6 +77,12 @@ export async function pruneColdMarketData(
     logService.warn(
       "retention",
       `Mongo recorded_windows prune failed (${series}): ${String(err)}`,
+    );
+  });
+  await deleteWindowTradersBefore(cutoffSec, series).catch((err) => {
+    logService.warn(
+      "retention",
+      `Mongo window_traders prune failed (${series}): ${String(err)}`,
     );
   });
 

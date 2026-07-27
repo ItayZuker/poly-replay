@@ -119,6 +119,40 @@ export async function listAllTraderWallets(): Promise<WalletRegistry> {
   return registry;
 }
 
+/** Wallets with at least one sighting in `marketSeries` (e.g. btc-5m). */
+export async function listTraderWalletsForSeries(
+  marketSeries: string,
+  options?: {
+    sortBy?: "sightings" | "lastSeenAt";
+    dir?: "asc" | "desc";
+    limit?: number;
+  },
+): Promise<WalletRegistryEntry[]> {
+  const series = String(marketSeries ?? "").trim();
+  if (!series) return [];
+  const col = await collection();
+  const dir = options?.dir === "asc" ? 1 : -1;
+  const sortBy = options?.sortBy === "sightings" ? "sightings" : "lastSeenAt";
+  const sort =
+    sortBy === "sightings"
+      ? ({ [`markets.${series}`]: dir, address: 1 } as Record<string, 1 | -1>)
+      : ({ lastSeenAt: dir, address: 1 } as Record<string, 1 | -1>);
+  let cursor = col.find({ [`markets.${series}`]: { $gt: 0 } }).sort(sort);
+  const limit = Math.floor(Number(options?.limit));
+  if (Number.isFinite(limit) && limit > 0) {
+    cursor = cursor.limit(limit);
+  }
+  const docs = await cursor.toArray();
+  return docs.map(toEntry);
+}
+
+export async function countTraderWalletsForSeries(marketSeries: string): Promise<number> {
+  const series = String(marketSeries ?? "").trim();
+  if (!series) return 0;
+  const col = await collection();
+  return col.countDocuments({ [`markets.${series}`]: { $gt: 0 } });
+}
+
 export async function countTraderWallets(): Promise<number> {
   const col = await collection();
   return col.countDocuments();
