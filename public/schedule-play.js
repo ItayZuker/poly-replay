@@ -7,6 +7,8 @@
   const CHART_PAD = { top: 10, right: 10, bottom: 22, left: 10 };
   const MARKER_HIT_PX = 10;
   const tickCache = new Map();
+  /** Book top-of-book samples for quote boxes (separate from Chainlink price line). */
+  const quoteCache = new Map();
 
   let modal = null;
   let canvas = null;
@@ -36,6 +38,8 @@
   let playSeries = "btc-5m";
   let selectedIndex = -1;
   let priceHistory = [];
+  /** @type {Array<{ t: number, yesAsk: number|null, yesBid: number|null, noAsk: number|null, noBid: number|null }>} */
+  let quoteHistory = [];
   let playheadSec = 0;
   let playing = false;
   /** When true, reaching the end of a window advances to the next and keeps playing. */
@@ -362,6 +366,126 @@
     phaseHoverEl = $("schedule-play-phase-hover");
     headerProgressEl = $("schedule-play-header-progress");
     headerProgressBarEl = headerProgressEl?.querySelector(".schedule-play-header-progress-bar") ?? null;
+  }
+
+  function fmtPlayPrice(v) {
+    if (v == null || !Number.isFinite(v)) return "—";
+    if (v >= 1000) return `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    return `$${v.toFixed(2)}`;
+  }
+
+  function fmtPlayGap(value) {
+    if (value == null || !Number.isFinite(value)) return "—";
+    const sign = value >= 0 ? "+" : "-";
+    return sign + fmtPlayPrice(Math.abs(value));
+  }
+
+  function fmtPlayTickDelta(delta) {
+    if (delta == null || !Number.isFinite(delta)) return "—";
+    const sign = delta >= 0 ? "+" : "-";
+    const abs = Math.abs(delta);
+    if (abs >= 1000) {
+      return `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    }
+    if (abs >= 1) return `${sign}$${abs.toFixed(2)}`;
+    return `${sign}$${abs.toFixed(4)}`;
+  }
+
+  function fmtPlayQuote(v) {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return (v * 100).toFixed(1) + "¢";
+  }
+
+  function setPlaySignedValue(el, text, sign) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = "sim-value";
+    if (sign > 0) el.classList.add("gap-positive");
+    else if (sign < 0) el.classList.add("gap-negative");
+  }
+
+  function quotesAt(untilSec) {
+    let cur = { yesAsk: null, yesBid: null, noAsk: null, noBid: null };
+    for (const q of quoteHistory) {
+      if (q.t > untilSec) break;
+      if (q.yesAsk != null && Number.isFinite(q.yesAsk)) cur.yesAsk = q.yesAsk;
+      if (q.yesBid != null && Number.isFinite(q.yesBid)) cur.yesBid = q.yesBid;
+      if (q.noAsk != null && Number.isFinite(q.noAsk)) cur.noAsk = q.noAsk;
+      if (q.noBid != null && Number.isFinite(q.noBid)) cur.noBid = q.noBid;
+    }
+    return cur;
+  }
+
+  function clearMetricsPanel() {
+    const ids = [
+      "play-graph-ptb",
+      "play-graph-current",
+      "play-graph-gap",
+      "play-graph-tick",
+      "play-up-buy",
+      "play-up-sell",
+      "play-down-buy",
+      "play-down-sell",
+    ];
+    for (const id of ids) {
+      const el = $(id);
+      if (!el) continue;
+      el.textContent = "—";
+      if (id.startsWith("play-graph-")) el.className = "sim-value";
+    }
+  }
+
+  function updateMetricsPanel() {
+    if (viewMode === "hits") return;
+    const win = selectedWindow();
+    if (!win || priceHistory.length === 0) {
+      clearMetricsPanel();
+      return;
+    }
+    const until = playheadSec;
+    const visible = priceHistory.filter((p) => p.t <= until);
+    const last = visible[visible.length - 1];
+    const ptb = win.prevCloseAsset;
+    const current = last?.price;
+    const gap =
+      current != null && Number.isFinite(current) && ptb != null && Number.isFinite(ptb)
+        ? current - ptb
+        : null;
+    let tickDelta = null;
+    if (visible.length >= 2) {
+      tickDelta = visible[visible.length - 1].price - visible[visible.length - 2].price;
+    }
+
+    const ptbEl = $("play-graph-ptb");
+    const curEl = $("play-graph-current");
+    if (ptbEl) ptbEl.textContent = fmtPlayPrice(ptb);
+    if (curEl) curEl.textContent = fmtPlayPrice(current);
+
+    const gapEl = $("play-graph-gap");
+    if (gap != null && Number.isFinite(gap)) {
+      setPlaySignedValue(gapEl, fmtPlayGap(gap), gap);
+    } else if (gapEl) {
+      gapEl.textContent = "—";
+      gapEl.className = "sim-value";
+    }
+
+    const tickEl = $("play-graph-tick");
+    if (tickDelta != null && Number.isFinite(tickDelta)) {
+      setPlaySignedValue(tickEl, fmtPlayTickDelta(tickDelta), tickDelta);
+    } else if (tickEl) {
+      tickEl.textContent = "—";
+      tickEl.className = "sim-value";
+    }
+
+    const q = quotesAt(until);
+    const upBuy = $("play-up-buy");
+    const upSell = $("play-up-sell");
+    const downBuy = $("play-down-buy");
+    const downSell = $("play-down-sell");
+    if (upBuy) upBuy.textContent = fmtPlayQuote(q.yesAsk);
+    if (upSell) upSell.textContent = fmtPlayQuote(q.yesBid);
+    if (downBuy) downBuy.textContent = fmtPlayQuote(q.noAsk);
+    if (downSell) downSell.textContent = fmtPlayQuote(q.noBid);
   }
 
   function setStatus(text) {
@@ -1078,6 +1202,7 @@
       dragLine: null,
       // DOM scrubber is the playhead; skip the canvas duplicate.
       showPlayhead: false,
+      marketOutcome: resolveMarketOutcome(win),
     });
     playChartLayout = layout;
     updateTimeUi(win);
@@ -1124,6 +1249,7 @@
       drawPlayView();
     }
     updateMeta();
+    updateMetricsPanel();
   }
 
   function setViewMode(mode) {
@@ -1237,6 +1363,70 @@
     return history;
   }
 
+  /**
+   * Market up/down for the graph — same idea as Settlement, with inference when
+   * the payload omitted windowOutcome (old cache / thin window JSON).
+   */
+  function resolveMarketOutcome(win) {
+    if (win?.windowOutcome === "up" || win?.windowOutcome === "down") {
+      return win.windowOutcome;
+    }
+    const buy = (win?.markers || []).find((m) => m && m.type === "buy");
+    const side = buy?.side === "up" || buy?.side === "down" ? buy.side : null;
+    if (!side) return null;
+    const label = String(win?.plLabel || "");
+    const pnl = Number(win?.pnl);
+    if (label === "Settlement" && Number.isFinite(pnl)) {
+      if (pnl > 1e-9) return side; // held and won → market matched buy side
+      if (pnl < -1e-9) return side === "up" ? "down" : "up";
+    }
+    if (label === "Trade" && win?.sold && Number.isFinite(pnl) && buy) {
+      // Early exit — market direction is not implied; leave null.
+      return null;
+    }
+    return null;
+  }
+
+  function closeOnOutcomeSide(close, lastPrice, ptb, outcome) {
+    if (outcome === "up" && Number.isFinite(ptb)) {
+      const base = Number.isFinite(close)
+        ? close
+        : Number.isFinite(lastPrice)
+          ? lastPrice
+          : ptb;
+      return Math.max(base, ptb);
+    }
+    if (outcome === "down" && Number.isFinite(ptb)) {
+      const under = ptb - Math.max(1e-6, Math.abs(ptb) * 1e-10);
+      const base = Number.isFinite(close)
+        ? close
+        : Number.isFinite(lastPrice)
+          ? lastPrice
+          : under;
+      return Math.min(base, under);
+    }
+    if (Number.isFinite(close)) return close;
+    if (Number.isFinite(lastPrice)) return lastPrice;
+    return null;
+  }
+
+  /**
+   * Append official close at windowEnd so the line end matches Settlement.
+   * Outcome wins over a contradictory finalPrice (e.g. last live tick stored as close).
+   */
+  function withOfficialClose(history, win) {
+    const endT = Number(win?.windowEnd);
+    if (!Number.isFinite(endT)) return history || [];
+    const pts = Array.isArray(history) ? history.filter((p) => Number(p.t) < endT - 1e-9) : [];
+    const last = pts[pts.length - 1];
+    const ptb = Number(win?.prevCloseAsset);
+    const outcome = resolveMarketOutcome(win);
+    const close = closeOnOutcomeSide(Number(win?.finalPrice), last?.price, ptb, outcome);
+    if (!Number.isFinite(close)) return pts;
+    pts.push({ t: endT, price: close });
+    return pts;
+  }
+
   async function fetchTickStream(windowStart, stream) {
     const series = encodeURIComponent(currentSeries());
     const res = await fetch(
@@ -1247,25 +1437,72 @@
     return body.ticks || [];
   }
 
-  /** Prefer chainlink prices; fall back to book gap+PTB so play still draws when CL is sparse. */
-  async function loadTicks(windowStart, ptb) {
-    const cacheKey = `${windowStart}:${ptb ?? ""}`;
+  /** Chainlink-only market price (no book fallback — keeps the line on the asset feed). */
+  async function loadTicks(windowStart, win) {
+    const outcome = resolveMarketOutcome(win);
+    const ptb = win?.prevCloseAsset;
+    const cacheKey = `${windowStart}:${ptb ?? ""}:${win?.finalPrice ?? ""}:${outcome ?? ""}`;
     if (tickCache.has(cacheKey)) return tickCache.get(cacheKey);
-    // Also reuse a prior entry keyed by windowStart alone (legacy cache).
-    if (tickCache.has(windowStart)) return tickCache.get(windowStart);
 
-    let history = ticksToPriceHistory(await fetchTickStream(windowStart, "chainlink"), ptb);
-    if (history.length < 2) {
-      const bookHistory = ticksToPriceHistory(await fetchTickStream(windowStart, "book"), ptb);
-      if (bookHistory.length > history.length) history = bookHistory;
-    }
-    if (history.length < 2) {
-      const mergedHistory = ticksToPriceHistory(await fetchTickStream(windowStart, "merged"), ptb);
-      if (mergedHistory.length > history.length) history = mergedHistory;
-    }
+    const history = withOfficialClose(
+      ticksToPriceHistory(await fetchTickStream(windowStart, "chainlink"), ptb),
+      win || { windowStart },
+    );
 
     tickCache.set(cacheKey, history);
-    tickCache.set(windowStart, history);
+    return history;
+  }
+
+  function bestLevelPrice(levels) {
+    if (!Array.isArray(levels) || levels.length === 0) return null;
+    const p = Number(levels[0]?.price);
+    return Number.isFinite(p) ? p : null;
+  }
+
+  function ticksToQuoteHistory(ticks) {
+    const history = [];
+    for (const tick of ticks || []) {
+      if (tick?.tMs == null || !Number.isFinite(tick.tMs)) continue;
+      const yesAsk =
+        tick.yesAsk != null && Number.isFinite(tick.yesAsk)
+          ? tick.yesAsk
+          : bestLevelPrice(tick.yesAsks) ??
+            (tick.yesPrice != null && Number.isFinite(tick.yesPrice) ? tick.yesPrice : null);
+      const yesBid =
+        tick.yesBid != null && Number.isFinite(tick.yesBid)
+          ? tick.yesBid
+          : bestLevelPrice(tick.yesBids);
+      const noAsk =
+        tick.noAsk != null && Number.isFinite(tick.noAsk)
+          ? tick.noAsk
+          : bestLevelPrice(tick.noAsks) ??
+            (tick.noPrice != null && Number.isFinite(tick.noPrice) ? tick.noPrice : null);
+      const noBid =
+        tick.noBid != null && Number.isFinite(tick.noBid)
+          ? tick.noBid
+          : bestLevelPrice(tick.noBids);
+      if (
+        ![yesAsk, yesBid, noAsk, noBid].some((v) => v != null && Number.isFinite(v))
+      ) {
+        continue;
+      }
+      history.push({
+        t: tick.tMs / 1000,
+        yesAsk: yesAsk != null && Number.isFinite(yesAsk) ? yesAsk : null,
+        yesBid: yesBid != null && Number.isFinite(yesBid) ? yesBid : null,
+        noAsk: noAsk != null && Number.isFinite(noAsk) ? noAsk : null,
+        noBid: noBid != null && Number.isFinite(noBid) ? noBid : null,
+      });
+    }
+    history.sort((a, b) => a.t - b.t);
+    return history;
+  }
+
+  async function loadQuotes(windowStart) {
+    const cacheKey = String(windowStart);
+    if (quoteCache.has(cacheKey)) return quoteCache.get(cacheKey);
+    const history = ticksToQuoteHistory(await fetchTickStream(windowStart, "book"));
+    quoteCache.set(cacheKey, history);
     return history;
   }
 
@@ -1561,7 +1798,9 @@
       ? win.windowStart
       : win.windowStart + elapsedFrac * windowDuration(win);
     priceHistory = [];
+    quoteHistory = [];
     updateTransportEnabled();
+    clearMetricsPanel();
 
     if (viewMode === "hits") {
       drawFrame();
@@ -1575,10 +1814,14 @@
     syncHeaderProgress();
     const token = ++loadToken;
     try {
-      const history = await loadTicks(win.windowStart, win.prevCloseAsset);
+      const [history, quotes] = await Promise.all([
+        loadTicks(win.windowStart, win),
+        loadQuotes(win.windowStart).catch(() => []),
+      ]);
       if (token !== loadToken) return;
       ticksLoading = false;
       priceHistory = history;
+      quoteHistory = quotes;
       updateTransportEnabled();
       if (history.length === 0) {
         setStatus("No price ticks for this window");
@@ -1598,13 +1841,20 @@
         else syncHeaderProgress();
       }
       const next = payload.windows[index + 1];
-      if (next && !tickCache.has(next.windowStart) && !tickCache.has(`${next.windowStart}:${next.prevCloseAsset ?? ""}`)) {
-        void loadTicks(next.windowStart, next.prevCloseAsset).catch(() => {});
+      if (next) {
+        const nextTickKey = `${next.windowStart}:${next.prevCloseAsset ?? ""}:${next.finalPrice ?? ""}:${resolveMarketOutcome(next) ?? ""}`;
+        if (!tickCache.has(nextTickKey)) {
+          void loadTicks(next.windowStart, next).catch(() => {});
+        }
+        if (!quoteCache.has(String(next.windowStart))) {
+          void loadQuotes(next.windowStart).catch(() => {});
+        }
       }
     } catch (err) {
       if (token !== loadToken) return;
       ticksLoading = false;
       priceHistory = [];
+      quoteHistory = [];
       updateTransportEnabled();
       setStatus(err?.message || "Failed to load ticks");
       syncHeaderProgress();
@@ -1759,6 +2009,7 @@
     endScrub(null);
     loadToken += 1;
     priceHistory = [];
+    quoteHistory = [];
     hoverTargets = [];
     playChartLayout = null;
     hidePhaseHover();
@@ -1773,6 +2024,7 @@
     hideHitTooltip();
     window.Simulator?.closePhaseModal?.();
     hideHeaderProgress();
+    clearMetricsPanel();
     updateTransportEnabled();
     if (modal) modal.hidden = true;
     if (resizeObserver) {
@@ -1789,11 +2041,14 @@
     payload = null;
     selectedIndex = -1;
     priceHistory = [];
+    quoteHistory = [];
     tickCache.clear();
+    quoteCache.clear();
     playheadSec = 0;
     viewMode = "play";
     clearHitsHighlight();
     if (metaEl) metaEl.textContent = "—";
+    clearMetricsPanel();
     setStatus("Loading windows…");
     setWindowsLoading(true, "Loading windows…");
     updateViewChrome();

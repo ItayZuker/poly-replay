@@ -2827,8 +2827,25 @@ function drawPriceChart(state, options = {}) {
   }
 
   const last = drawPoints[drawPoints.length - 1];
+  const marketOutcome =
+    options.marketOutcome === "up" || options.marketOutcome === "down"
+      ? options.marketOutcome
+      : null;
+  const atWindowEnd =
+    revealUntil == null ||
+    (layout.windowEnd != null &&
+      Number.isFinite(layout.windowEnd) &&
+      revealUntil >= layout.windowEnd - 0.05);
+  // Open Replay: once the official close is visible, color from market outcome.
+  // Mid-scrub still follows last visible tick vs PTB.
   const lineColor =
-    ptb != null && last.price >= ptb ? "#2ea043" : "#f85149";
+    atWindowEnd && marketOutcome
+      ? marketOutcome === "up"
+        ? "#2ea043"
+        : "#f85149"
+      : ptb != null && last.price >= ptb
+        ? "#2ea043"
+        : "#f85149";
   const playheadT =
     revealUntil == null
       ? last.t

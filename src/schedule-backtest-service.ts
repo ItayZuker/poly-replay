@@ -1,4 +1,4 @@
-import { getWindowDataVersion } from "./db/recorded-window-repository.js";
+import { getRecordedWindow, getWindowDataVersion } from "./db/recorded-window-repository.js";
 import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
 import { getTradingSetupById } from "./db/trading-setup-repository.js";
 import type { SchedulePlacementListItem } from "./db/schedule-placement-repository.js";
@@ -29,6 +29,7 @@ import type {
   SimMarker,
   SimSetup,
   TradingPhaseSetup,
+  WindowOutcome,
 } from "./types.js";
 
 const UTC_DAY_TO_ID: ScheduleDayId[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -798,7 +799,7 @@ export async function backtestSchedulePlacements(
           setup: phaseSetup,
           latencyMs,
           fillSuccessPct,
-          windows: playWindowsFromSims(withTicks, plan.slotWindows),
+          windows: await playWindowsFromSims(market, withTicks, plan.slotWindows),
         });
       }
       logService.info(
@@ -830,6 +831,10 @@ export interface PlacementPlayWindowItem {
   windowStart: number;
   windowEnd: number;
   prevCloseAsset?: number;
+  /** Official market close (Gamma / window JSON) for Open Replay graph anchoring. */
+  finalPrice?: number;
+  /** Official Polymarket up/down for this window (Settlement source). */
+  windowOutcome?: WindowOutcome;
   bucket: PlayOutcomeBucket;
   pnl: number;
   plLabel: string;
@@ -882,19 +887,87 @@ function enrichMarkersWithAssetPrice(
   });
 }
 
-/** Convert Replay sims into Open Replay windows (no disk I/O — keep Replay responsive). */
-function playWindowsFromSims(
+/** Official close / outcome from local window JSON (Gamma finalize), with sim fallback. */
+async function playSettlementFields(
+  market: MarketDocument,
+  window: RecordedWindowDocument | undefined,
+  result: SimLastWindow | null | undefined,
+): Promise<{
+  windowOutcome?: WindowOutcome;
+  finalPrice?: number;
+  prevCloseAsset?: number;
+}> {
+  const local =
+    window != null ? await getRecordedWindow(market, window.windowStart).catch(() => null) : null;
+
+  let windowOutcome: WindowOutcome | undefined =
+    result?.outcome === "up" || result?.outcome === "down"
+      ? result.outcome
+      : window?.windowOutcome === "up" || window?.windowOutcome === "down"
+        ? window.windowOutcome
+        : local?.windowOutcome === "up" || local?.windowOutcome === "down"
+          ? local.windowOutcome
+          : undefined;
+
+  // Infer from held Settlement when recorded outcome is missing.
+  if (
+    !windowOutcome &&
+    result?.plLabel === "Settlement" &&
+    (result.side === "up" || result.side === "down")
+  ) {
+    if (result.positionWon === true) windowOutcome = result.side;
+    else if (result.positionWon === false) {
+      windowOutcome = result.side === "up" ? "down" : "up";
+    }
+  }
+
+  const prevCloseAssetRaw =
+    local?.prevCloseAsset ?? window?.prevCloseAsset ?? result?.prevCloseAsset;
+  const prevCloseAsset =
+    prevCloseAssetRaw != null && Number.isFinite(prevCloseAssetRaw)
+      ? Number(prevCloseAssetRaw)
+      : undefined;
+
+  let finalPriceRaw = local?.assetPrice ?? window?.assetPrice ?? result?.assetPrice;
+  let finalPrice =
+    finalPriceRaw != null && Number.isFinite(finalPriceRaw) ? Number(finalPriceRaw) : undefined;
+
+  // Drop a close that contradicts the official outcome vs PTB (stale last live tick).
+  if (
+    finalPrice != null &&
+    prevCloseAsset != null &&
+    (windowOutcome === "up" || windowOutcome === "down")
+  ) {
+    if (windowOutcome === "up" && finalPrice < prevCloseAsset) {
+      finalPrice = prevCloseAsset;
+    } else if (windowOutcome === "down" && finalPrice >= prevCloseAsset) {
+      finalPrice = prevCloseAsset - Math.max(1e-6, Math.abs(prevCloseAsset) * 1e-10);
+    }
+  }
+
+  return {
+    windowOutcome,
+    finalPrice,
+    prevCloseAsset,
+  };
+}
+
+/** Convert Replay sims into Open Replay windows (no tick stream I/O — keep Replay responsive). */
+async function playWindowsFromSims(
+  market: MarketDocument,
   withTicks: RecordedWindowSimulation[],
   slotWindows: RecordedWindowDocument[],
-): PlacementPlayWindowItem[] {
+): Promise<PlacementPlayWindowItem[]> {
   const byStart = new Map(slotWindows.map((w) => [w.windowStart, w]));
   const windows: PlacementPlayWindowItem[] = [];
   for (const sim of withTicks) {
     const window = byStart.get(sim.windowStart);
+    const settlement = await playSettlementFields(market, window, sim.result);
     const fallbackY =
+      settlement.finalPrice ??
       window?.rangeTop ??
       window?.rangeBottom ??
-      window?.prevCloseAsset ??
+      settlement.prevCloseAsset ??
       sim.result?.prevCloseAsset ??
       sim.result?.assetPrice;
     const markers = (sim.markers ?? []).map((m) => {
@@ -904,7 +977,9 @@ function playWindowsFromSims(
     windows.push({
       windowStart: sim.windowStart,
       windowEnd: sim.windowEnd,
-      prevCloseAsset: window?.prevCloseAsset ?? sim.result?.prevCloseAsset,
+      prevCloseAsset: settlement.prevCloseAsset,
+      finalPrice: settlement.finalPrice,
+      windowOutcome: settlement.windowOutcome,
       bucket: classifyWindow(sim.result),
       pnl: sim.result?.pl ?? 0,
       plLabel: sim.result?.plLabel ?? "No trade",
@@ -947,7 +1022,39 @@ export async function buildPlacementPlayPayload(
         "replay",
         `Open Replay ${placement._id}: serving ${remembered.windows.length} cached window(s) from last Replay`,
       );
-      return remembered;
+      // Enrich older cache entries that lack official close / outcome.
+      const needsEnrich = remembered.windows.some(
+        (w) => w.windowOutcome == null || w.finalPrice == null || w.prevCloseAsset == null,
+      );
+      if (!needsEnrich) return remembered;
+      const enriched = await Promise.all(
+        remembered.windows.map(async (w) => {
+          if (w.windowOutcome != null && w.finalPrice != null && w.prevCloseAsset != null) {
+            return w;
+          }
+          const settlement = await playSettlementFields(
+            market,
+            {
+              _id: String(w.windowStart),
+              windowStart: w.windowStart,
+              windowEnd: w.windowEnd,
+              savedAt: "",
+              updatedAt: "",
+              tickCount: 0,
+            },
+            null,
+          );
+          return {
+            ...w,
+            windowOutcome: w.windowOutcome ?? settlement.windowOutcome,
+            finalPrice: w.finalPrice ?? settlement.finalPrice,
+            prevCloseAsset: w.prevCloseAsset ?? settlement.prevCloseAsset,
+          };
+        }),
+      );
+      const next = { ...remembered, windows: enriched };
+      rememberPlacementPlay(userId, next);
+      return next;
     }
   }
 
@@ -1047,22 +1154,24 @@ export async function buildPlacementPlayPayload(
   });
 
   // Same set Replay counts toward card stats: every window that had tick files.
-  const windows: PlacementPlayWindowItem[] = sims
-    .filter(({ sim }) => sim.hadTicks)
-    .map(({ window, sim, markers }) => {
-      const result = sim.result;
-      return {
-        windowStart: window.windowStart,
-        windowEnd: window.windowEnd,
-        prevCloseAsset: window.prevCloseAsset ?? result?.prevCloseAsset,
-        bucket: classifyWindow(result),
-        pnl: result?.pl ?? 0,
-        plLabel: result?.plLabel ?? "No trade",
-        sold: Boolean(result?.sold),
-        markers,
-      };
-    })
-    .sort((a, b) => a.windowStart - b.windowStart);
+  const windows: PlacementPlayWindowItem[] = [];
+  for (const { window, sim, markers } of sims.filter(({ sim: s }) => s.hadTicks)) {
+    const result = sim.result;
+    const settlement = await playSettlementFields(market, window, result);
+    windows.push({
+      windowStart: window.windowStart,
+      windowEnd: window.windowEnd,
+      prevCloseAsset: settlement.prevCloseAsset,
+      finalPrice: settlement.finalPrice,
+      windowOutcome: settlement.windowOutcome,
+      bucket: classifyWindow(result),
+      pnl: result?.pl ?? 0,
+      plLabel: result?.plLabel ?? "No trade",
+      sold: Boolean(result?.sold),
+      markers,
+    });
+  }
+  windows.sort((a, b) => a.windowStart - b.windowStart);
 
   logService.info(
     "replay",

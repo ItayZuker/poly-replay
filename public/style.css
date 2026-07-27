@@ -6884,10 +6884,31 @@ body.is-column-resizing * {
   line-height: 1.2;
 }
 
+.schedule-play-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: var(--box-gap);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.schedule-play-metrics .sim-row,
+.schedule-play-metrics .quote-row {
+  flex: 0 0 auto;
+}
+
+.schedule-play-metrics .quote-box.quote-box-disabled {
+  cursor: default;
+}
+
+.schedule-play-modal.is-hits-view .schedule-play-metrics {
+  display: none;
+}
+
 .schedule-play-chart-wrap {
   position: relative;
   width: 100%;
-  height: min(380px, 42vh);
+  height: min(340px, 38vh);
   flex: 0 0 auto;
   background: var(--bg);
   border: 1px solid var(--border);

@@ -180,6 +180,7 @@ function isPublicAuthPath(req: express.Request): boolean {
   if (req.method === "POST" && /^\/api\/internal\/schedule-placements\/[^/]+\/play$/.test(req.path)) {
     return true;
   }
+  if (req.method === "GET" && req.path === "/api/internal/ticks") return true;
   return false;
 }
 
@@ -2004,34 +2005,81 @@ app.get("/api/schedule-placement-stats/stream", async (req, res) => {
 
 app.get("/api/ticks", async (req, res) => {
   try {
-    const series = getDisplaySeries(req);
-    const windowStart = Number(req.query.windowStart);
-    if (!Number.isFinite(windowStart)) {
-      res.status(400).json({ error: "windowStart query param required" });
+    const workerBase = replayWorkerBaseUrl();
+    if (workerBase) {
+      const qs = new URLSearchParams();
+      const series = String(req.query.series ?? "").trim();
+      const windowStart = String(req.query.windowStart ?? "").trim();
+      const stream = String(req.query.stream ?? "").trim();
+      const limit = String(req.query.limit ?? "").trim();
+      if (series) qs.set("series", series);
+      if (windowStart) qs.set("windowStart", windowStart);
+      if (stream) qs.set("stream", stream);
+      if (limit) qs.set("limit", limit);
+      const remoteHeaders: Record<string, string> = { Accept: "application/json" };
+      if (SCHEDULE_REPLAY_WORKER_SECRET) {
+        remoteHeaders["x-replay-worker-secret"] = SCHEDULE_REPLAY_WORKER_SECRET;
+      }
+      const remoteRes = await fetch(`${workerBase}/api/internal/ticks?${qs.toString()}`, {
+        method: "GET",
+        headers: remoteHeaders,
+      });
+      const body = await remoteRes.json().catch(() => ({}));
+      res.status(remoteRes.status).json(body);
       return;
     }
-    const market = await getMarket(series);
-    if (!market) {
-      res.status(404).json({ error: "Market not found" });
-      return;
-    }
-    const limit = Math.min(Number(req.query.limit) || 5000, 50_000);
-    const stream = String(req.query.stream || "merged");
-    let ticks: unknown[];
-    if (stream === "raw") {
-      ticks = await listClobRawTicks(market, windowStart, limit);
-    } else if (stream === "book") {
-      ticks = await listClobBookTicks(market, windowStart, limit);
-    } else if (stream === "chainlink") {
-      ticks = await listChainlinkTicks(market, windowStart, limit);
-    } else {
-      ticks = await listReplayTicks(market, windowStart, limit);
-    }
-    res.json({ series, windowStart, stream, count: ticks.length, ticks });
+
+    const result = await loadTicksPayload(req);
+    res.status(result.status).json(result.body);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
+
+/** Recorder worker: Open Replay / graph ticks from local DATA_DIR. */
+app.get("/api/internal/ticks", async (req, res) => {
+  if (!assertReplayWorkerAuth(req)) {
+    res.status(401).json({ error: "Unauthorized replay worker request" });
+    return;
+  }
+  try {
+    const result = await loadTicksPayload(req);
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+async function loadTicksPayload(req: express.Request): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  const series = getDisplaySeries(req);
+  const windowStart = Number(req.query.windowStart);
+  if (!Number.isFinite(windowStart)) {
+    return { status: 400, body: { error: "windowStart query param required" } };
+  }
+  const market = await getMarket(series);
+  if (!market) {
+    return { status: 404, body: { error: "Market not found" } };
+  }
+  const limit = Math.min(Number(req.query.limit) || 5000, 50_000);
+  const stream = String(req.query.stream || "merged");
+  let ticks: unknown[];
+  if (stream === "raw") {
+    ticks = await listClobRawTicks(market, windowStart, limit);
+  } else if (stream === "book") {
+    ticks = await listClobBookTicks(market, windowStart, limit);
+  } else if (stream === "chainlink") {
+    ticks = await listChainlinkTicks(market, windowStart, limit);
+  } else {
+    ticks = await listReplayTicks(market, windowStart, limit);
+  }
+  return {
+    status: 200,
+    body: { series, windowStart, stream, count: ticks.length, ticks },
+  };
+}
 
 app.get("/api/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -2109,7 +2157,10 @@ async function main(): Promise<void> {
     );
   }
   if (SCHEDULE_REPLAY_SERVICE_URL) {
-    logService.info("server", `Schedule replay proxies to ${SCHEDULE_REPLAY_SERVICE_URL}`);
+    logService.info(
+      "server",
+      `Schedule replay + /api/ticks proxy to ${SCHEDULE_REPLAY_SERVICE_URL}`,
+    );
   } else {
     logService.info("server", "Schedule replay runs in-process (no SCHEDULE_REPLAY_SERVICE_URL)");
   }

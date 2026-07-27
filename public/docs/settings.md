@@ -40,7 +40,7 @@ These are set on the **server**, not in this UI:
 | Variable | Meaning |
 |----------|---------|
 | `TRADING_EXECUTOR` | This process may place real CLOB orders (and will not record) |
-| `SCHEDULE_REPLAY_SERVICE_URL` | On a live process: URL of the recorder’s replay worker |
+| `SCHEDULE_REPLAY_SERVICE_URL` | On a live process: URL of the recorder’s replay worker (also used to proxy Open Replay `/api/ticks`) |
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret between live and recorder |
 
 Per-series **Recording** is a Market → Trade toggle (not an env var). See [Market](doc:market) and [Information flow](doc:data-flow).

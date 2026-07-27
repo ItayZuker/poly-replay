@@ -50,7 +50,7 @@ Without schedule, phases come from the graph setup — [Setups & phases](doc:set
 
 Saved over REST to the database (`trading_setups_real` / `schedual_setups_real` for **Live**; `trading_setups_replay` / `schedual_setups_replay` for **Replay**). The server picks the active **Live** UTC placement each tick. SSE keeps the schedule board updated.
 
-**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill). While each card finishes, the worker keeps that card’s window list + fill markers in memory. Card **Open** posts `POST /api/schedule-placements/:id/play` and returns that cached payload when present (same hits as the card); otherwise it re-simulates. When `SCHEDULE_REPLAY_SERVICE_URL` is set, that call is proxied to the recorder’s `/api/internal/schedule-placements/:id/play`.
+**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill). While each card finishes, the worker keeps that card’s window list + fill markers in memory. Card **Open** posts `POST /api/schedule-placements/:id/play` and returns that cached payload when present (same hits as the card); otherwise it re-simulates. When `SCHEDULE_REPLAY_SERVICE_URL` is set, that call is proxied to the recorder’s `/api/internal/schedule-placements/:id/play`. Open Replay’s graph and metric boxes load ticks via `GET /api/ticks` (`stream=chainlink` / `book`); on live that is proxied to the recorder’s `GET /api/internal/ticks` so Heroku can read the recorder’s `DATA_DIR`.
 
 Live **Fill success** (Market → Trade) tracks CLOB buy/sell outcomes over the rolling 7-day cutoff, broken down by **FAK / FOK / GTD**. Partial match = success. FAK/FOK count on fire/send; GTD counts only after the resting limit is touched while live (then success if any size matched, else miss). Strategy cancels with no touch stay out of the %.
 
@@ -59,6 +59,8 @@ Live **Fill success** (Market → Trade) tracks CLOB buy/sell outcomes over the 
 Browser -> POST /api/schedule-replay -> Live server
 Live server -> POST SCHEDULE_REPLAY_SERVICE_URL -> Recorder worker
 Recorder worker -> SimulatorEngine over DATA_DIR ticks -> SSE stats
+Browser -> GET /api/ticks -> Live server
+Live server -> GET /api/internal/ticks -> Recorder DATA_DIR
 ```
 
 | Control / env | Role |
@@ -66,7 +68,7 @@ Recorder worker -> SimulatorEngine over DATA_DIR ticks -> SSE stats
 | **Recording** (Market → Trade) | Per-series flag in Mongo — `PATCH /api/markets/:series` |
 | `TRADING_EXECUTOR=1` | Live — may place CLOB orders; never runs recorders (toggle still persists) |
 | Non-executor process | Starts/stops `MarketRecorder` for each series with Recording on; writes `DATA_DIR` + Mongo heatmap summaries |
-| `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process |
+| `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process. Same origin is used to proxy Open Replay ticks (`/api/internal/ticks`) and play payloads |
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
 | `DATA_DIR` | Local tick/window files (default `./data`) |
 
