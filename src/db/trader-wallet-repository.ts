@@ -124,6 +124,24 @@ export async function countTraderWallets(): Promise<number> {
   return col.countDocuments();
 }
 
+/**
+ * Delete trader wallets not seen again within `maxAgeDays` (default 30).
+ * Uses `lastSeenAt` (Unix seconds), bumped on each window registration.
+ */
+export async function deleteInactiveTraderWallets(maxAgeDays = 30): Promise<number> {
+  const days = Math.max(1, Math.floor(maxAgeDays));
+  const cutoffSec = Math.floor(Date.now() / 1000) - days * 86_400;
+  const col = await collection();
+  const result = await col.deleteMany({
+    $or: [
+      { lastSeenAt: { $lt: cutoffSec } },
+      // Legacy / incomplete docs without lastSeenAt.
+      { lastSeenAt: { $exists: false }, firstSeenAt: { $lt: cutoffSec } },
+    ],
+  });
+  return result.deletedCount ?? 0;
+}
+
 /** One-time import from legacy data/wallets.json shape. */
 export async function importTraderWalletsFromRegistry(registry: WalletRegistry): Promise<number> {
   const entries = Object.values(registry);

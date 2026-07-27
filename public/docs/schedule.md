@@ -64,3 +64,5 @@ If `SCHEDULE_REPLAY_SERVICE_URL` is empty, Replay runs in-process on this server
 ## Heatmap
 
 Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay (new hour overrides that slot only; missing hours keep the previous week). Flat-price bad recordings are excluded (see above). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Replay are independent toggles. On a recorder process, new windows update the heatmap as they finalize.
+
+The left **color index** cards (Crossings, Range, Wallets, New wallets) can be dragged up/down by their handle — that order is the left→right order of the colored columns in each heatmap hour cell. The order is saved in the browser.

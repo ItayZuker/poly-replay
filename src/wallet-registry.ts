@@ -8,6 +8,7 @@ import {
   importTraderWalletsFromRegistry,
   listAllTraderWallets,
   upsertTraderWalletsForWindow,
+  deleteInactiveTraderWallets,
 } from "./db/trader-wallet-repository.js";
 
 let migratePromise: Promise<void> | null = null;
@@ -86,4 +87,10 @@ export async function getWalletRegistry(): Promise<WalletRegistry> {
 export async function getWalletCount(): Promise<number> {
   await migrateFromDiskIfNeeded();
   return countTraderWallets();
+}
+
+/** Drop wallets whose last sighting is older than `maxAgeDays` (default 30). */
+export async function pruneInactiveWallets(maxAgeDays = 30): Promise<number> {
+  await migrateFromDiskIfNeeded();
+  return deleteInactiveTraderWallets(maxAgeDays);
 }

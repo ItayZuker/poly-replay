@@ -664,7 +664,7 @@
                 <span id="feed-latency-ms" class="header-field-value">—</span>
               </label>
             </div>
-            <p class="settings-page-sub">Account profile and trading credentials</p>
+            <p class="settings-page-sub">Account profile and credentials</p>
           </header>
 
           <section class="settings-card settings-card--inline" aria-label="Documentation">
@@ -672,128 +672,185 @@
             <button type="button" id="settings-open-docs" class="settings-secondary-btn">Open</button>
           </section>
 
-          <section class="settings-card" aria-label="User profile">
-            <h3 class="settings-card-title">User</h3>
-            <p class="settings-card-desc">Profile details stored on your account</p>
-            <div class="settings-form-grid">
-              <div class="settings-field">
-                <label class="settings-field-label" for="settings-user-name">Name</label>
-                <input type="text" id="settings-user-name" class="settings-field-input" autocomplete="name" />
-              </div>
-              <div class="settings-field">
-                <label class="settings-field-label" for="settings-user-email">Email</label>
-                <input type="email" id="settings-user-email" class="settings-field-input" autocomplete="email" />
-              </div>
+          <section class="settings-card settings-card--account" aria-label="Account">
+            <div class="settings-tabs" role="tablist" aria-label="Account sections">
+              <button
+                type="button"
+                class="settings-tab is-active"
+                role="tab"
+                id="settings-tab-user"
+                data-settings-tab="user"
+                aria-selected="true"
+                aria-controls="settings-tab-panel-user"
+              >
+                User
+              </button>
+              <button
+                type="button"
+                class="settings-tab"
+                role="tab"
+                id="settings-tab-session"
+                data-settings-tab="session"
+                aria-selected="false"
+                aria-controls="settings-tab-panel-session"
+                tabindex="-1"
+              >
+                Session
+              </button>
+              <button
+                type="button"
+                class="settings-tab"
+                role="tab"
+                id="settings-tab-credentials"
+                data-settings-tab="credentials"
+                aria-selected="false"
+                aria-controls="settings-tab-panel-credentials"
+                tabindex="-1"
+              >
+                Credentials
+              </button>
             </div>
-            <div class="settings-card-actions">
-              <button type="button" id="settings-user-save" class="settings-primary-btn">Save profile</button>
-              <span id="settings-user-status" class="settings-inline-status" hidden></span>
-            </div>
-          </section>
 
-          <section class="settings-card" aria-label="Session">
-            <h3 class="settings-card-title">Session</h3>
-            <p class="settings-card-desc">Sign out of this browser, or permanently delete your account</p>
-            <div class="settings-card-actions settings-card-actions--stack">
-              <button type="button" id="settings-logout-btn" class="settings-secondary-btn">Log out</button>
-              <button type="button" id="settings-delete-account-btn" class="settings-danger-btn">Delete account</button>
-              <span id="settings-session-status" class="settings-inline-status" hidden></span>
-            </div>
-          </section>
-
-          <section class="settings-card" aria-label="Trading credentials">
-            <h3 class="settings-card-title">Trading credentials</h3>
-            <p class="settings-card-desc">Polymarket funder wallet and signing key used for live orders</p>
-            <div class="settings-form-grid">
-              <div class="settings-field settings-field--wide">
-                <div class="settings-field-label-row">
-                  <button
-                    type="button"
-                    class="settings-info-toggle"
-                    data-settings-info="funder"
-                    aria-expanded="false"
-                    aria-controls="settings-info-funder"
-                    title="About funder address"
-                  >
-                    <span class="settings-info-icon" aria-hidden="true">
-                      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
-                    </span>
-                    <span class="settings-field-label">Funder address</span>
-                  </button>
-                  <span id="settings-wallet-status" class="settings-label-status">—</span>
+            <div
+              class="settings-tab-panel"
+              role="tabpanel"
+              id="settings-tab-panel-user"
+              data-settings-tab-panel="user"
+              aria-labelledby="settings-tab-user"
+            >
+              <p class="settings-card-desc">Profile details stored on your account</p>
+              <div class="settings-form-grid">
+                <div class="settings-field">
+                  <label class="settings-field-label" for="settings-user-name">Name</label>
+                  <input type="text" id="settings-user-name" class="settings-field-input" autocomplete="name" />
                 </div>
-                <div class="settings-secret-row">
+                <div class="settings-field">
+                  <label class="settings-field-label" for="settings-user-email">Email</label>
+                  <input type="email" id="settings-user-email" class="settings-field-input" autocomplete="email" />
+                </div>
+              </div>
+              <div class="settings-card-actions">
+                <button type="button" id="settings-user-save" class="settings-primary-btn">Save profile</button>
+                <span id="settings-user-status" class="settings-inline-status" hidden></span>
+              </div>
+            </div>
+
+            <div
+              class="settings-tab-panel"
+              role="tabpanel"
+              id="settings-tab-panel-session"
+              data-settings-tab-panel="session"
+              aria-labelledby="settings-tab-session"
+              hidden
+            >
+              <p class="settings-card-desc">Sign out of this browser, or permanently delete your account</p>
+              <div class="settings-card-actions settings-card-actions--stack">
+                <button type="button" id="settings-logout-btn" class="settings-secondary-btn">Log out</button>
+                <button type="button" id="settings-delete-account-btn" class="settings-danger-btn">Delete account</button>
+                <span id="settings-session-status" class="settings-inline-status" hidden></span>
+              </div>
+            </div>
+
+            <div
+              class="settings-tab-panel"
+              role="tabpanel"
+              id="settings-tab-panel-credentials"
+              data-settings-tab-panel="credentials"
+              aria-labelledby="settings-tab-credentials"
+              hidden
+            >
+              <p class="settings-card-desc">Polymarket funder wallet and signing key used for live orders</p>
+              <div class="settings-form-grid">
+                <div class="settings-field settings-field--wide">
+                  <div class="settings-field-label-row">
+                    <button
+                      type="button"
+                      class="settings-info-toggle"
+                      data-settings-info="funder"
+                      aria-expanded="false"
+                      aria-controls="settings-info-funder"
+                      title="About funder address"
+                    >
+                      <span class="settings-info-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
+                      </span>
+                      <span class="settings-field-label">Funder address</span>
+                    </button>
+                    <span id="settings-wallet-status" class="settings-label-status">—</span>
+                  </div>
+                  <div class="settings-secret-row">
+                    <input
+                      type="password"
+                      id="settings-funder-input"
+                      class="settings-field-input settings-field-mono"
+                      placeholder="0x…"
+                      spellcheck="false"
+                      autocomplete="off"
+                    />
+                    <button type="button" id="settings-funder-toggle" class="settings-reveal-btn" aria-pressed="false">
+                      Show
+                    </button>
+                  </div>
+                  <div class="settings-field-actions">
+                    <button type="button" id="settings-funder-save" class="settings-primary-btn">Save funder</button>
+                  </div>
+                  <div id="settings-info-funder" class="settings-info-panel" data-settings-info-panel="funder" aria-hidden="true">
+                    <div class="settings-info-panel-body">
+                      <p><strong>What it is:</strong> Your Polymarket proxy / profile wallet — the address that holds USDC and positions. Usually different from the signing wallet address tied to your private key.</p>
+                      <p><strong>Where to get it:</strong></p>
+                      <ul>
+                        <li><strong>Polymarket.com</strong> — open your profile / settings; copy the wallet address shown there</li>
+                        <li>Often labeled as your Polymarket address or proxy wallet (not the signing-wallet address)</li>
+                      </ul>
+                      <p>Paste the full <code>0x…</code> address here.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-field settings-field--wide">
+                  <div class="settings-field-label-row">
+                    <button
+                      type="button"
+                      class="settings-info-toggle"
+                      data-settings-info="privateKey"
+                      aria-expanded="false"
+                      aria-controls="settings-info-privateKey"
+                      title="About private key"
+                    >
+                      <span class="settings-info-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
+                      </span>
+                      <span class="settings-field-label">Private key</span>
+                    </button>
+                    <span id="settings-signer" class="settings-label-signer settings-field-mono">—</span>
+                  </div>
                   <input
                     type="password"
-                    id="settings-funder-input"
+                    id="settings-key-input"
                     class="settings-field-input settings-field-mono"
-                    placeholder="0x…"
+                    placeholder="Paste key to set / change"
                     spellcheck="false"
-                    autocomplete="off"
+                    autocomplete="new-password"
                   />
-                  <button type="button" id="settings-funder-toggle" class="settings-reveal-btn" aria-pressed="false">
-                    Show
-                  </button>
-                </div>
-                <div class="settings-field-actions">
-                  <button type="button" id="settings-funder-save" class="settings-primary-btn">Save funder</button>
-                </div>
-                <div id="settings-info-funder" class="settings-info-panel" data-settings-info-panel="funder" aria-hidden="true">
-                  <div class="settings-info-panel-body">
-                    <p><strong>What it is:</strong> Your Polymarket proxy / profile wallet — the address that holds USDC and positions. Usually different from the signing wallet address tied to your private key.</p>
-                    <p><strong>Where to get it:</strong></p>
-                    <ul>
-                      <li><strong>Polymarket.com</strong> — open your profile / settings; copy the wallet address shown there</li>
-                      <li>Often labeled as your Polymarket address or proxy wallet (not the signing-wallet address)</li>
-                    </ul>
-                    <p>Paste the full <code>0x…</code> address here.</p>
+                  <div class="settings-field-actions">
+                    <button type="button" id="settings-key-save" class="settings-primary-btn">Save private key</button>
+                  </div>
+                  <div id="settings-info-privateKey" class="settings-info-panel" data-settings-info-panel="privateKey" aria-hidden="true">
+                    <div class="settings-info-panel-body">
+                      <p><strong>What it is:</strong> The signing key for your wallet (EOA). The app derives the Signer address from it and uses it to place Polymarket orders. It is stored encrypted — never shown again after save.</p>
+                      <p><strong>Where to get it</strong> (any wallet that can export a private key):</p>
+                      <ul>
+                        <li><strong>MetaMask</strong> — Account details → Show private key</li>
+                        <li><strong>Rabby</strong> — Account / Address management → Export private key</li>
+                        <li><strong>Phantom / other EVM wallets</strong> — Settings → Export private key (if supported)</li>
+                        <li><strong>Dedicated bot wallet</strong> — generate a new key and fund only what you’re willing to risk</li>
+                      </ul>
+                      <p>Any exportable EOA key works. Hardware wallets usually cannot export a key for server bots.</p>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div class="settings-field settings-field--wide">
-                <div class="settings-field-label-row">
-                  <button
-                    type="button"
-                    class="settings-info-toggle"
-                    data-settings-info="privateKey"
-                    aria-expanded="false"
-                    aria-controls="settings-info-privateKey"
-                    title="About private key"
-                  >
-                    <span class="settings-info-icon" aria-hidden="true">
-                      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
-                    </span>
-                    <span class="settings-field-label">Private key</span>
-                  </button>
-                  <span id="settings-signer" class="settings-label-signer settings-field-mono">—</span>
-                </div>
-                <input
-                  type="password"
-                  id="settings-key-input"
-                  class="settings-field-input settings-field-mono"
-                  placeholder="Paste key to set / change"
-                  spellcheck="false"
-                  autocomplete="new-password"
-                />
-                <div class="settings-field-actions">
-                  <button type="button" id="settings-key-save" class="settings-primary-btn">Save private key</button>
-                </div>
-                <div id="settings-info-privateKey" class="settings-info-panel" data-settings-info-panel="privateKey" aria-hidden="true">
-                  <div class="settings-info-panel-body">
-                    <p><strong>What it is:</strong> The signing key for your wallet (EOA). The app derives the Signer address from it and uses it to place Polymarket orders. It is stored encrypted — never shown again after save.</p>
-                    <p><strong>Where to get it</strong> (any wallet that can export a private key):</p>
-                    <ul>
-                      <li><strong>MetaMask</strong> — Account details → Show private key</li>
-                      <li><strong>Rabby</strong> — Account / Address management → Export private key</li>
-                      <li><strong>Phantom / other EVM wallets</strong> — Settings → Export private key (if supported)</li>
-                      <li><strong>Dedicated bot wallet</strong> — generate a new key and fund only what you’re willing to risk</li>
-                    </ul>
-                    <p>Any exportable EOA key works. Hardware wallets usually cannot export a key for server bots.</p>
-                  </div>
-                </div>
-              </div>
+              <p id="settings-wallet-error" class="settings-inline-status settings-inline-status--error" hidden></p>
             </div>
-            <p id="settings-wallet-error" class="settings-inline-status settings-inline-status--error" hidden></p>
           </section>
         </div>
       </div>

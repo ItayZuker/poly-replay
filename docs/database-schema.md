@@ -170,6 +170,8 @@ Top-level object keyed by wallet address (lowercase `0x…`). Each value is a `W
 
 Updated **once per completed window** when traders are registered. Live UI polls do not write here.
 
+Wallets with `lastSeenAt` older than **30 days** are deleted by the hourly retention scheduler (must be seen at least once per month to stay in the registry).
+
 **Example entry:**
 ```json
 {

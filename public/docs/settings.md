@@ -1,10 +1,18 @@
 # Settings & wallet
 
-## Profile
+## Account tabs
 
-Display name, log out, or delete account.
+**User**, **Session**, and **Credentials** share one Settings card (tab switcher).
 
-## Trading credentials
+### User
+
+Display name and email for your account.
+
+### Session
+
+Log out, or permanently delete your account.
+
+### Credentials
 
 Both are required to unlock Market and Schedule:
 

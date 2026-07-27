@@ -1330,7 +1330,61 @@ function bindSettingsEnterToSave() {
   }
 }
 
+function bindSettingsTabs() {
+  const card = document.querySelector(".settings-card--account");
+  if (!card || card.dataset.tabsBound === "1") return;
+  card.dataset.tabsBound = "1";
+
+  const tabs = [...card.querySelectorAll("[data-settings-tab]")];
+  const panels = [...card.querySelectorAll("[data-settings-tab-panel]")];
+  if (tabs.length === 0) return;
+
+  const activate = (nextId) => {
+    const id = String(nextId || "user");
+    for (const tab of tabs) {
+      const active = tab.getAttribute("data-settings-tab") === id;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+      tab.tabIndex = active ? 0 : -1;
+    }
+    for (const panel of panels) {
+      const active = panel.getAttribute("data-settings-tab-panel") === id;
+      panel.hidden = !active;
+    }
+  };
+
+  card.querySelector(".settings-tabs")?.addEventListener("click", (event) => {
+    const tab = event.target.closest?.("[data-settings-tab]");
+    if (!tab || !card.contains(tab)) return;
+    activate(tab.getAttribute("data-settings-tab"));
+  });
+
+  card.querySelector(".settings-tabs")?.addEventListener("keydown", (event) => {
+    const current = event.target.closest?.("[data-settings-tab]");
+    if (!current || !card.contains(current)) return;
+    const idx = tabs.indexOf(current);
+    if (idx < 0) return;
+    let nextIdx = idx;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIdx = (idx + 1) % tabs.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    } else if (event.key === "Home") {
+      nextIdx = 0;
+    } else if (event.key === "End") {
+      nextIdx = tabs.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const next = tabs[nextIdx];
+    activate(next.getAttribute("data-settings-tab"));
+    next.focus();
+  });
+}
+
 function bindSettingsEditors() {
+  bindSettingsTabs();
   bindSettingsInfoTips();
   bindSettingsFunderReveal();
   bindSettingsEnterToSave();
@@ -1472,7 +1526,7 @@ function bindWalletBalanceRefresh() {
   });
 }
 
-const HEATMAP_METRICS = [
+const HEATMAP_METRIC_DEFS = [
   {
     key: "crossings",
     label: "Crossings",
@@ -1499,8 +1553,52 @@ const HEATMAP_METRICS = [
   },
 ];
 
+const HEATMAP_METRIC_ORDER_KEY = "poly-real:heatmap-metric-order";
+const HEATMAP_METRIC_BY_KEY = Object.fromEntries(HEATMAP_METRIC_DEFS.map((m) => [m.key, m]));
+
+function loadHeatmapMetricOrder() {
+  const defaults = HEATMAP_METRIC_DEFS.map((m) => m.key);
+  try {
+    const raw = localStorage.getItem(HEATMAP_METRIC_ORDER_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return defaults;
+    const seen = new Set();
+    const ordered = [];
+    for (const key of parsed) {
+      if (typeof key !== "string" || !HEATMAP_METRIC_BY_KEY[key] || seen.has(key)) continue;
+      seen.add(key);
+      ordered.push(key);
+    }
+    for (const key of defaults) {
+      if (!seen.has(key)) ordered.push(key);
+    }
+    return ordered;
+  } catch {
+    return defaults;
+  }
+}
+
+let heatmapMetricOrder = loadHeatmapMetricOrder();
+
+function getHeatmapMetrics() {
+  return heatmapMetricOrder
+    .map((key) => HEATMAP_METRIC_BY_KEY[key])
+    .filter(Boolean);
+}
+
+function persistHeatmapMetricOrder(order) {
+  heatmapMetricOrder = [...order];
+  try {
+    localStorage.setItem(HEATMAP_METRIC_ORDER_KEY, JSON.stringify(heatmapMetricOrder));
+  } catch {
+    // ignore
+  }
+}
+
 let heatmapCellEls = new Map();
 let lastHeatmapState = null;
+let heatmapLegendDrag = null;
 
 function formatLogTime(date = new Date()) {
   return date.toLocaleTimeString("en-GB", { hour12: false });
@@ -2267,9 +2365,17 @@ function initLeftRowSplitter() {
         t *= scale;
         p *= scale;
         l *= scale;
-      } else if (l > 0 && total < maxContent) {
-        // Keep the open log pinned to the column bottom (same as drag math).
-        l = maxContent - t - p;
+      } else if (total < maxContent) {
+        // Fill leftover column space into an open content body (not as a gap
+        // below Positions that looks like an empty section).
+        const slack = maxContent - total;
+        if (l > 0) {
+          l += slack;
+        } else if (p > 0) {
+          p += slack;
+        } else if (t > 0) {
+          t += slack;
+        }
       }
     }
 
@@ -2279,7 +2385,9 @@ function initLeftRowSplitter() {
 
     if (layoutReady) {
       const stackHeight = chrome + t + p + l;
-      const margin = l <= 0 ? Math.max(0, colRect.height - stackHeight) : 0;
+      // Only pin Log with margin when every content body is collapsed.
+      const margin =
+        t <= 0 && p <= 0 && l <= 0 ? Math.max(0, colRect.height - stackHeight) : 0;
       leftColumn.style.setProperty("--log-margin-top", `${margin}px`);
     }
 
@@ -4219,7 +4327,7 @@ function initScheduleDaySlots() {
 
       const row = document.createElement("div");
       row.className = "schedule-heatmap-row";
-      for (const metric of HEATMAP_METRICS) {
+      for (const metric of getHeatmapMetrics()) {
         const cell = document.createElement("div");
         cell.className = "schedule-heatmap-cell";
         cell.dataset.metric = metric.key;
@@ -4283,7 +4391,7 @@ function renderHeatmap(state) {
   if (!state?.cells || !state?.max) return;
   lastHeatmapState = state;
 
-  for (const metric of HEATMAP_METRICS) {
+  for (const metric of getHeatmapMetrics()) {
     const max = state.max[metric.key] ?? 0;
     const rgb = metric.rgb;
 
@@ -4320,6 +4428,129 @@ async function loadHeatmap() {
   }
 }
 
+function syncHeatmapColumnOrder() {
+  const metrics = getHeatmapMetrics();
+  document.querySelectorAll(".schedule-heatmap-row").forEach((row) => {
+    for (const metric of metrics) {
+      const cell = row.querySelector(
+        `.schedule-heatmap-cell[data-metric="${CSS.escape(metric.key)}"]`,
+      );
+      if (cell) row.appendChild(cell);
+    }
+  });
+}
+
+function applyHeatmapMetricOrderFromLegend(legend) {
+  if (!legend) return;
+  const next = [...legend.querySelectorAll(".heatmap-legend-item")]
+    .map((el) => el.dataset.metric)
+    .filter((key) => Boolean(HEATMAP_METRIC_BY_KEY[key]));
+  if (next.length === 0) return;
+  persistHeatmapMetricOrder(next);
+  syncHeatmapColumnOrder();
+  if (lastHeatmapState) renderHeatmap(lastHeatmapState);
+}
+
+function endHeatmapLegendDrag(commit) {
+  if (!heatmapLegendDrag) return;
+  const { item, legend, placeholder, originOrder } = heatmapLegendDrag;
+  heatmapLegendDrag = null;
+  document.body.classList.remove("is-heatmap-legend-reordering");
+  window.removeEventListener("pointermove", onHeatmapLegendPointerMove);
+  window.removeEventListener("pointerup", onHeatmapLegendPointerUp);
+  window.removeEventListener("pointercancel", onHeatmapLegendPointerUp);
+
+  item.classList.remove("is-legend-reordering");
+  item.style.width = "";
+  item.style.left = "";
+  item.style.top = "";
+  item.style.zIndex = "";
+
+  if (placeholder?.parentNode) {
+    placeholder.parentNode.insertBefore(item, placeholder);
+    placeholder.remove();
+  } else if (item.parentNode !== legend) {
+    legend.appendChild(item);
+  }
+
+  if (commit) {
+    applyHeatmapMetricOrderFromLegend(legend);
+  } else {
+    // Restore original DOM order.
+    const byKey = new Map(
+      [...legend.querySelectorAll(".heatmap-legend-item")].map((el) => [el.dataset.metric, el]),
+    );
+    for (const key of originOrder) {
+      const el = byKey.get(key);
+      if (el) legend.appendChild(el);
+    }
+  }
+}
+
+function onHeatmapLegendPointerMove(e) {
+  if (!heatmapLegendDrag) return;
+  const { item, legend, placeholder, offsetX, offsetY } = heatmapLegendDrag;
+  item.style.left = `${e.clientX - offsetX}px`;
+  item.style.top = `${e.clientY - offsetY}px`;
+
+  const siblings = [...legend.querySelectorAll(".heatmap-legend-item")].filter((el) => el !== item);
+  let inserted = false;
+  for (const sibling of siblings) {
+    const rect = sibling.getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    if (e.clientY < mid) {
+      if (placeholder.nextElementSibling !== sibling) {
+        legend.insertBefore(placeholder, sibling);
+      }
+      inserted = true;
+      break;
+    }
+  }
+  if (!inserted && placeholder.parentNode === legend) {
+    legend.appendChild(placeholder);
+  }
+}
+
+function onHeatmapLegendPointerUp() {
+  endHeatmapLegendDrag(true);
+}
+
+function startHeatmapLegendDrag(e, item, legend) {
+  if (e.button != null && e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (heatmapLegendDrag) endHeatmapLegendDrag(false);
+
+  const rect = item.getBoundingClientRect();
+  const placeholder = document.createElement("div");
+  placeholder.className = "heatmap-legend-reorder-placeholder";
+  placeholder.style.height = `${rect.height}px`;
+  legend.insertBefore(placeholder, item);
+
+  heatmapLegendDrag = {
+    item,
+    legend,
+    placeholder,
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+    originOrder: [...legend.querySelectorAll(".heatmap-legend-item")]
+      .map((el) => el.dataset.metric)
+      .filter(Boolean),
+  };
+
+  item.classList.add("is-legend-reordering");
+  item.style.width = `${rect.width}px`;
+  item.style.left = `${rect.left}px`;
+  item.style.top = `${rect.top}px`;
+  item.style.zIndex = "40";
+  document.body.appendChild(item);
+  document.body.classList.add("is-heatmap-legend-reordering");
+
+  window.addEventListener("pointermove", onHeatmapLegendPointerMove);
+  window.addEventListener("pointerup", onHeatmapLegendPointerUp);
+  window.addEventListener("pointercancel", onHeatmapLegendPointerUp);
+}
+
 function initHeatmapLegend() {
   const panel = $("schedule-heatmap-panel");
   if (!panel) return;
@@ -4329,9 +4560,21 @@ function initHeatmapLegend() {
   legend.className = "heatmap-legend";
   legend.setAttribute("aria-label", "Heatmap color index");
 
-  for (const metric of HEATMAP_METRICS) {
+  for (const metric of getHeatmapMetrics()) {
     const item = document.createElement("div");
     item.className = "heatmap-legend-item";
+    item.dataset.metric = metric.key;
+
+    const handle = document.createElement("div");
+    handle.className = "heatmap-legend-drag-handle";
+    handle.setAttribute("aria-label", `Drag to reorder ${metric.label}`);
+    handle.title = "Drag to reorder color columns";
+    handle.innerHTML =
+      '<svg viewBox="0 0 8 14" aria-hidden="true"><circle cx="2" cy="2" r="1.2" fill="currentColor"/><circle cx="6" cy="2" r="1.2" fill="currentColor"/><circle cx="2" cy="7" r="1.2" fill="currentColor"/><circle cx="6" cy="7" r="1.2" fill="currentColor"/><circle cx="2" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/></svg>';
+    handle.addEventListener("pointerdown", (e) => startHeatmapLegendDrag(e, item, legend));
+
+    const body = document.createElement("div");
+    body.className = "heatmap-legend-item-body";
 
     const head = document.createElement("div");
     head.className = "heatmap-legend-head";
@@ -4350,11 +4593,13 @@ function initHeatmapLegend() {
     desc.textContent = metric.tip;
 
     head.append(swatch, label);
-    item.append(head, desc);
+    body.append(head, desc);
+    item.append(handle, body);
     legend.appendChild(item);
   }
 
   panel.appendChild(legend);
+  syncHeatmapColumnOrder();
 }
 
 function bindScheduleViewToggle() {

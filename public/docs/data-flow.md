@@ -72,6 +72,8 @@ Recorder worker -> SimulatorEngine over DATA_DIR ticks -> SSE stats
 
 Heatmap and Replay load ~**14 days** of `recorded_windows`, then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than ~14 days are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
 
+**Trader wallets** (Mongo `trader_wallets`, used for heatmap Wallets / New wallets): each completed window refreshes `lastSeenAt`. The hourly retention job deletes any wallet not seen again within **30 days** (must be active at least once a month to stay in the registry).
+
 **Recording recovery (recorder process):** If Chainlink for an asset goes silent (~20s), RTDS reconnects and the active window for that asset is discarded. Separately, a health watchdog watches for ~**60s** with no book or Chainlink ticks into an active window (after a short grace at window open): it discards that window, force-reconnects Chainlink + CLOB feeds, and restarts the stuck series’ recorder so the next window can start clean.
 
 Wallet credentials in [Settings](doc:settings) unlock Market/Schedule and live signing.

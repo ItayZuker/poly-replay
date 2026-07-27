@@ -4,9 +4,9 @@
 
 **Sign up** with email and password. Wallet is not required yet.
 
-## 2. Trading credentials
+## 2. Credentials
 
-In **Settings**, save both:
+In **Settings → Credentials**, save both:
 
 1. **Funder address** — Polymarket proxy / profile wallet (holds USDC)
 2. **Private key** — EOA signer (encrypted; not shown again after save)

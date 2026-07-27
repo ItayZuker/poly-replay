@@ -1681,13 +1681,74 @@ body {
 
 .heatmap-legend-item {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: stretch;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 0;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--panel);
+  overflow: hidden;
+}
+
+.heatmap-legend-drag-handle {
+  flex: 0 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #161b22;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.heatmap-legend-drag-handle:hover {
+  color: var(--text);
+  background: #21262d;
+}
+
+.heatmap-legend-drag-handle:active,
+.heatmap-legend-item.is-legend-reordering .heatmap-legend-drag-handle {
+  cursor: grabbing;
+}
+
+.heatmap-legend-drag-handle svg {
+  width: 8px;
+  height: 14px;
+  display: block;
+}
+
+.heatmap-legend-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.heatmap-legend-item.is-legend-reordering {
+  position: fixed;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 40;
+}
+
+.heatmap-legend-reorder-placeholder {
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-sizing: border-box;
+}
+
+body.is-heatmap-legend-reordering {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
+  cursor: grabbing;
 }
 
 .heatmap-legend-head {
@@ -3215,6 +3276,64 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   flex-shrink: 0;
 }
 
+.settings-card--account {
+  gap: 14px;
+  padding-top: 14px;
+}
+
+.settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 70%, #000);
+  box-sizing: border-box;
+}
+
+.settings-tab {
+  appearance: none;
+  margin: 0;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.settings-tab:hover:not(.is-active) {
+  color: var(--text);
+}
+
+.settings-tab.is-active {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  color: var(--text);
+}
+
+.settings-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.settings-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-tab-panel[hidden] {
+  display: none;
+}
+
 .settings-card-title {
   margin: 0;
   font-size: 0.95rem;
@@ -4574,7 +4693,11 @@ body.is-row-resizing .panel-header-drag-handle {
 
 .positions-body {
   flex: 0 0 var(--prev-content-height);
-  min-height: 0;
+  height: var(--prev-content-height);
+  min-height: var(--prev-content-height);
+  max-height: var(--prev-content-height);
+  box-sizing: border-box;
+  min-width: 0;
   overflow: hidden;
   padding: 0;
   background: var(--bg);
@@ -4585,6 +4708,7 @@ body.is-row-resizing .panel-header-drag-handle {
 .positions-body.is-collapsed {
   flex: 0 0 0;
   height: 0;
+  min-height: 0;
   max-height: 0;
   border: none;
 }
