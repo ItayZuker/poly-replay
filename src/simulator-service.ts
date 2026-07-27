@@ -20,7 +20,7 @@ function normalizeSetup(input: SimSetup, durationSec?: number): SimSetup {
   const phases = input.phases.map((p) => normalizePhaseConfig(p)) as SimSetup["phases"];
 
   const split = clampPhaseSplits(input.phaseSplit[0], input.phaseSplit[1], durationSec);
-  const latencyMs = Math.max(0, Math.min(2000, Math.floor(input.latencyMs ?? 150)));
+  const latencyMs = Math.max(0, Math.min(10000, Math.floor(input.latencyMs ?? 150)));
   const rawPct = input.fillSuccessPct;
   const fillSuccessPct =
     typeof rawPct === "number" && Number.isFinite(rawPct)

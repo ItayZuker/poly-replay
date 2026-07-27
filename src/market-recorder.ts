@@ -18,9 +18,11 @@ import { classifyWindowTraders } from "./wallet-registry.js";
 import {
   createWindowDynamicsTracker,
   finalizeWindowDynamics,
+  isFlatPriceWindow,
   updateWindowDynamics,
   type WindowDynamicsTracker,
 } from "./window-dynamics.js";
+import { discardBadRecording } from "./bad-recording-cleanup.js";
 import { logService } from "./log-service.js";
 import type {
   ChainlinkTickDocument,
@@ -640,6 +642,18 @@ export class MarketRecorder {
 
     try {
       await this.flushTicks();
+
+      if (isFlatPriceWindow(record)) {
+        await discardBadRecording(
+          this.market._id,
+          windowStart,
+          "flat asset price through the window",
+        );
+        this.finalizedWindowStarts.add(windowStart);
+        this.onStateChange?.(this.market._id);
+        return;
+      }
+
       record = await enrichWindowWithUniqueTraders(record, this.market._id, { force: true });
 
       const savedAt = record.savedAt ?? new Date().toISOString();
@@ -681,6 +695,9 @@ export class MarketRecorder {
         uniqueTraders: recordedDoc.uniqueTraders,
         newWallets: recordedDoc.newWallets,
         windowOutcome: recordedDoc.windowOutcome,
+        minAssetPrice: recordedDoc.minAssetPrice,
+        maxAssetPrice: recordedDoc.maxAssetPrice,
+        assetRange: recordedDoc.assetRange,
       }).catch((err) => {
         logService.warn(
           "recorder",
@@ -701,7 +718,6 @@ export class MarketRecorder {
       };
 
       this.finalizedWindowStarts.add(windowStart);
-      const { timeframe } = parseMarketSeries(this.market._id);
       logService.success(
         "recorder",
         `Window saved ${new Date(windowStart * 1000).toLocaleTimeString()} (${this.clobRawCount} raw, ${this.clobBookCount} book, ${this.chainlinkCount} chainlink, ${record.newWallets ?? 0} new wallets)`,

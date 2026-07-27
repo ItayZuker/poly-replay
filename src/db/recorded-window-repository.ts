@@ -7,6 +7,7 @@ import {
 } from "../window-compact.js";
 import { marketWindowsDir } from "./data-dir.js";
 import { deleteWindowFilesBefore, listWindowFiles, readJsonFile, writeJsonFile } from "./file-store.js";
+import fs from "fs/promises";
 import path from "path";
 
 /**
@@ -69,6 +70,20 @@ export async function pruneRecordedWindows(
   cutoff: number,
 ): Promise<number> {
   return deleteWindowFilesBefore(marketWindowsDir(market._id), cutoff);
+}
+
+/** Delete one local window JSON (series id, not MarketDocument). */
+export async function deleteRecordedWindowFile(
+  series: string,
+  windowStart: number,
+): Promise<void> {
+  const filePath = path.join(marketWindowsDir(series), `${windowStart}.json`);
+  try {
+    await fs.unlink(filePath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw err;
+  }
 }
 
 export { WK };

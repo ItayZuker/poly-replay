@@ -3,9 +3,10 @@ import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.
 import { getTradingSetupById } from "./db/trading-setup-repository.js";
 import type { SchedulePlacementListItem } from "./db/schedule-placement-repository.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
+import { listChainlinkTicks } from "./db/tick-repository.js";
 import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
 import { selectLatestDayHourWindows } from "./day-hour-slots.js";
-import { recordAskSamples } from "./phase-config.js";
+import { defaultPhaseConfig, recordAskSamples } from "./phase-config.js";
 import { SimulatorEngine } from "./simulator-engine.js";
 import { phaseSetupToSimSetup } from "./simulator-service.js";
 import {
@@ -14,8 +15,11 @@ import {
   rollingCutoffDayUtc,
   flushPlacementStatsCache,
 } from "./schedule-backtest-cache.js";
+import { discardBadRecording } from "./bad-recording-cleanup.js";
 import { logService } from "./log-service.js";
+import { isFlatPriceFromTicks, isFlatPriceWindow } from "./window-dynamics.js";
 import type {
+  ChainlinkTickDocument,
   LiveWindowState,
   MarketDocument,
   RecordedWindowDocument,
@@ -102,6 +106,34 @@ export interface BacktestScheduleOptions {
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
+
+/** In-process cache: last Replay window list per user/placement (for Open Replay). */
+const rememberedPlayByUser = new Map<string, Map<string, PlacementPlayPayload>>();
+
+export function rememberPlacementPlay(userId: string, payload: PlacementPlayPayload): void {
+  let byPlacement = rememberedPlayByUser.get(userId);
+  if (!byPlacement) {
+    byPlacement = new Map();
+    rememberedPlayByUser.set(userId, byPlacement);
+  }
+  byPlacement.set(payload.placementId, payload);
+}
+
+export function getRememberedPlacementPlay(
+  userId: string,
+  placementId: string,
+): PlacementPlayPayload | null {
+  return rememberedPlayByUser.get(userId)?.get(placementId) ?? null;
+}
+
+export function clearRememberedPlacementPlay(userId: string, placementId: string): void {
+  rememberedPlayByUser.get(userId)?.delete(placementId);
+}
+
+type WindowSimCacheEntry = {
+  result: SimLastWindow | null;
+  markers: SimMarker[];
+};
 
 function simSetupCacheKey(setup: SimSetup): string {
   return JSON.stringify(setup);
@@ -246,18 +278,18 @@ export async function simulateRecordedWindow(
   window: RecordedWindowDocument,
   setup: SimSetup,
   tickCache?: Map<number, ReplayTickDocument[]>,
-  simResultCache?: Map<string, SimLastWindow | null>,
+  simResultCache?: Map<string, WindowSimCacheEntry>,
 ): Promise<RecordedWindowSimulation> {
   const simCacheKey = simResultCache ? windowSimCacheKey(window.windowStart, setup) : null;
   if (simCacheKey && simResultCache!.has(simCacheKey)) {
-    const cached = simResultCache!.get(simCacheKey) ?? null;
+    const cached = simResultCache!.get(simCacheKey)!;
     return {
-      result: cached,
-      markers: [],
+      result: cached.result,
+      markers: cached.markers.map((m) => ({ ...m })),
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
       // Cached entries were only stored after a tickful sim.
-      hadTicks: cached != null,
+      hadTicks: true,
     };
   }
 
@@ -280,57 +312,78 @@ export async function simulateRecordedWindow(
     };
   }
 
-  const engine = new SimulatorEngine();
-  const priceHistory: Array<{ t: number; price: number }> = [];
-  let bookTickSequence = 0;
+  // Stuck/flat Chainlink for the whole window — discard and skip Replay.
+  if (isFlatPriceWindow(window) || isFlatPriceFromTicks(ticks)) {
+    tickCache?.delete(windowStart);
+    await discardBadRecording(series, windowStart, "flat asset price (replay)");
+    return {
+      result: null,
+      markers: [],
+      windowStart,
+      windowEnd,
+      hadTicks: false,
+    };
+  }
 
-  for (const tick of ticks) {
-    if (tick.tMs >= windowEnd * 1000) break;
-    // Same series as live heatmap: append on each Chainlink sample (incl. same $).
-    if (
-      tick.source === "chainlink-tick" &&
-      tick.assetPrice != null &&
-      Number.isFinite(tick.assetPrice)
-    ) {
-      priceHistory.push({ t: tick.t, price: tick.assetPrice });
-      if (priceHistory.length > 2000) {
-        priceHistory.splice(0, priceHistory.length - 2000);
+  // Mute per-fill/GTD spam — otherwise Replay floods SSE/console and freezes the UI.
+  return logService.runWithMutedSources(["sim"], () => {
+    const engine = new SimulatorEngine();
+    const priceHistory: Array<{ t: number; price: number }> = [];
+    let bookTickSequence = 0;
+
+    for (const tick of ticks) {
+      if (tick.tMs >= windowEnd * 1000) break;
+      // Same series as live heatmap: append on each Chainlink sample (incl. same $).
+      if (
+        tick.source === "chainlink-tick" &&
+        tick.assetPrice != null &&
+        Number.isFinite(tick.assetPrice)
+      ) {
+        priceHistory.push({ t: tick.t, price: tick.assetPrice });
+        if (priceHistory.length > 2000) {
+          priceHistory.splice(0, priceHistory.length - 2000);
+        }
       }
+      const state = replayTickToState(tick, series, windowStart, windowEnd, priceHistory);
+      state.bookTickSequence = bookTickSequence;
+      if (tick.source === "clob-book") {
+        recordAskSamples(state);
+        bookTickSequence = state.bookTickSequence ?? bookTickSequence;
+      }
+      engine.tick(state, setup, tick.tMs);
     }
-    const state = replayTickToState(tick, series, windowStart, windowEnd, priceHistory);
-    state.bookTickSequence = bookTickSequence;
-    if (tick.source === "clob-book") {
-      recordAskSamples(state);
-      bookTickSequence = state.bookTickSequence ?? bookTickSequence;
+
+    const lastInWindow =
+      [...ticks].reverse().find((t) => t.tMs < windowEnd * 1000) ?? ticks[ticks.length - 1];
+    const endMs = windowEnd * 1000 - 1;
+    const endState = replayTickToState(lastInWindow, series, windowStart, windowEnd, priceHistory);
+    endState.bookTickSequence = bookTickSequence;
+    if (lastInWindow.source === "clob-book") {
+      recordAskSamples(endState);
     }
-    engine.tick(state, setup, tick.tMs);
-  }
+    engine.tick({ ...endState, lastTickMs: endMs }, setup, endMs);
 
-  const lastInWindow = [...ticks].reverse().find((t) => t.tMs < windowEnd * 1000) ?? ticks[ticks.length - 1];
-  const endMs = windowEnd * 1000 - 1;
-  const endState = replayTickToState(lastInWindow, series, windowStart, windowEnd, priceHistory);
-  endState.bookTickSequence = bookTickSequence;
-  if (lastInWindow.source === "clob-book") {
-    recordAskSamples(endState);
-  }
-  engine.tick({ ...endState, lastTickMs: endMs }, setup, endMs);
+    // Settle from stored Polymarket outcome in window JSON (backfilled / recorded at finalize).
+    const result = engine.finalizeWindow(
+      window.windowOutcome ? { outcome: window.windowOutcome } : undefined,
+    );
+    const markers = engine.getMarkers();
 
-  // Settle from stored Polymarket outcome in window JSON (backfilled / recorded at finalize).
-  const result = engine.finalizeWindow(
-    window.windowOutcome ? { outcome: window.windowOutcome } : undefined,
-  );
+    if (simCacheKey) {
+      simResultCache!.set(simCacheKey, {
+        result: result ?? null,
+        markers: markers.map((m) => ({ ...m })),
+      });
+    }
 
-  if (simCacheKey) {
-    simResultCache!.set(simCacheKey, result ?? null);
-  }
-
-  return {
-    result,
-    markers: engine.getMarkers(),
-    windowStart,
-    windowEnd,
-    hadTicks: true,
-  };
+    return {
+      result,
+      markers,
+      windowStart,
+      windowEnd,
+      hadTicks: true,
+    };
+  });
 }
 
 function emptyStats(placementId: string): PlacementBacktestStats {
@@ -492,8 +545,9 @@ export async function backtestSchedulePlacements(
   const cutoffDay = rollingCutoffDayUtc();
   // Same Mongo window index as the heatmap — keep ~2 weeks, then for each
   // weekday×hour keep only the latest calendar day (missed hours keep last week).
+  const listed = await listRecordedWindowsSince(cutoffUtc, series);
   const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
-    await listRecordedWindowsSince(cutoffUtc, series),
+    listed.filter((w) => !isFlatPriceWindow(w)),
   ).map((w) => ({
     _id: String(w.windowStart),
     windowStart: w.windowStart,
@@ -506,6 +560,9 @@ export async function backtestSchedulePlacements(
     rangeBottom: w.rangeBottom,
     uniqueTraders: w.uniqueTraders,
     newWallets: w.newWallets,
+    minAssetPrice: w.minAssetPrice,
+    maxAssetPrice: w.maxAssetPrice,
+    assetRange: w.assetRange,
     tickCount: 0,
   }));
   const heatmapVersion = await getWindowDataVersion(market, allWindows);
@@ -593,7 +650,7 @@ export async function backtestSchedulePlacements(
     );
   }
 
-  const simResultCache = new Map<string, SimLastWindow | null>();
+  const simResultCache = new Map<string, WindowSimCacheEntry>();
   const tickUseRemaining = countSimOpsPerWindow(plans);
   const totalUnits = plans.reduce((sum, plan) => sum + workUnitsForPlan(plan), 0);
   let completedUnits = 0;
@@ -634,6 +691,7 @@ export async function backtestSchedulePlacements(
     if (plan.kind === "empty") {
       const computed = emptyStats(plan.placement._id);
       statsById.set(plan.placement._id, computed);
+      clearRememberedPlacementPlay(userId, plan.placement._id);
       if (allowCached) {
         cacheUpdates.push({ placementId: plan.placement._id, cacheKey: plan.cacheKey, stats: computed });
       }
@@ -705,6 +763,7 @@ export async function backtestSchedulePlacements(
     if (withTicks.length === 0) {
       const computed = emptyStats(plan.placement._id);
       statsById.set(plan.placement._id, computed);
+      clearRememberedPlacementPlay(userId, plan.placement._id);
       if (allowCached) {
         cacheUpdates.push({
           placementId: plan.placement._id,
@@ -727,6 +786,21 @@ export async function backtestSchedulePlacements(
           stats: computed,
         });
       }
+      const phaseSetup = setupCache.get(plan.placement.setupId);
+      if (phaseSetup) {
+        rememberPlacementPlay(userId, {
+          placementId: plan.placement._id,
+          setupId: plan.placement.setupId,
+          title: plan.placement.title,
+          day: plan.placement.day,
+          startHour: plan.placement.startHour,
+          durationHours: plan.placement.durationHours,
+          setup: phaseSetup,
+          latencyMs,
+          fillSuccessPct,
+          windows: playWindowsFromSims(withTicks, plan.slotWindows),
+        });
+      }
       logService.info(
         "replay",
         `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue}/gray${computed.gray} pnl ${computed.pnl.toFixed(2)}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
@@ -734,6 +808,8 @@ export async function backtestSchedulePlacements(
       options.onPlacementComplete?.(computed);
     }
 
+    // Let SSE/progress flush between cards (Node otherwise stays CPU-bound).
+    await new Promise<void>((resolve) => setImmediate(resolve));
     if (options.shouldAbort?.()) break;
   }
 
@@ -746,4 +822,267 @@ export async function backtestSchedulePlacements(
   return placements
     .map((placement) => statsById.get(placement._id))
     .filter((stats): stats is PlacementBacktestStats => stats != null);
+}
+
+export type PlayOutcomeBucket = OutcomeBucket;
+
+export interface PlacementPlayWindowItem {
+  windowStart: number;
+  windowEnd: number;
+  prevCloseAsset?: number;
+  bucket: PlayOutcomeBucket;
+  pnl: number;
+  plLabel: string;
+  sold: boolean;
+  markers: SimMarker[];
+}
+
+export interface PlacementPlayPayload {
+  placementId: string;
+  setupId: string;
+  title: string;
+  day: ScheduleDayId;
+  startHour: number;
+  durationHours: number;
+  setup: TradingPhaseSetup;
+  latencyMs: number;
+  fillSuccessPct: number;
+  windows: PlacementPlayWindowItem[];
+}
+
+/** Nearest chainlink spot at-or-before tMs (fallback: first later tick). */
+function assetPriceAtMs(chainlink: ChainlinkTickDocument[], tMs: number): number | null {
+  if (!chainlink.length) return null;
+  let best: number | null = null;
+  for (const tick of chainlink) {
+    if (tick.tMs > tMs) break;
+    if (tick.assetPrice != null && Number.isFinite(tick.assetPrice)) {
+      best = tick.assetPrice;
+    }
+  }
+  if (best != null) return best;
+  for (const tick of chainlink) {
+    if (tick.assetPrice != null && Number.isFinite(tick.assetPrice)) return tick.assetPrice;
+  }
+  return null;
+}
+
+function enrichMarkersWithAssetPrice(
+  markers: SimMarker[],
+  chainlink: ChainlinkTickDocument[],
+  fallbackPrice?: number,
+): SimMarker[] {
+  if (!markers.length) return markers;
+  return markers.map((m) => {
+    if (m.y != null && Number.isFinite(m.y)) return m;
+    const fromChain = assetPriceAtMs(chainlink, Math.round(m.t * 1000));
+    const y =
+      fromChain ?? (fallbackPrice != null && Number.isFinite(fallbackPrice) ? fallbackPrice : null);
+    return y == null ? m : { ...m, y };
+  });
+}
+
+/** Convert Replay sims into Open Replay windows (no disk I/O — keep Replay responsive). */
+function playWindowsFromSims(
+  withTicks: RecordedWindowSimulation[],
+  slotWindows: RecordedWindowDocument[],
+): PlacementPlayWindowItem[] {
+  const byStart = new Map(slotWindows.map((w) => [w.windowStart, w]));
+  const windows: PlacementPlayWindowItem[] = [];
+  for (const sim of withTicks) {
+    const window = byStart.get(sim.windowStart);
+    const fallbackY =
+      window?.rangeTop ??
+      window?.rangeBottom ??
+      window?.prevCloseAsset ??
+      sim.result?.prevCloseAsset ??
+      sim.result?.assetPrice;
+    const markers = (sim.markers ?? []).map((m) => {
+      if (m.y != null && Number.isFinite(m.y)) return m;
+      return fallbackY != null && Number.isFinite(fallbackY) ? { ...m, y: fallbackY } : m;
+    });
+    windows.push({
+      windowStart: sim.windowStart,
+      windowEnd: sim.windowEnd,
+      prevCloseAsset: window?.prevCloseAsset ?? sim.result?.prevCloseAsset,
+      bucket: classifyWindow(sim.result),
+      pnl: sim.result?.pl ?? 0,
+      plLabel: sim.result?.plLabel ?? "No trade",
+      sold: Boolean(sim.result?.sold),
+      markers,
+    });
+  }
+  return windows.sort((a, b) => a.windowStart - b.windowStart);
+}
+
+export interface BuildPlacementPlayOptions {
+  latencyMs: number;
+  fillSuccessPct?: number;
+  /** Prefer this setup over Mongo (e.g. in-memory Replay editor state). */
+  phaseSetup?: TradingPhaseSetup | null;
+  /** When true, ignore last-Replay cache and re-simulate (fresh random fills). */
+  forceResimulate?: boolean;
+}
+
+/** Build window list + sim markers for the schedule Open Replay popup. */
+export async function buildPlacementPlayPayload(
+  userId: string,
+  market: MarketDocument,
+  placement: SchedulePlacementListItem,
+  options: BuildPlacementPlayOptions,
+): Promise<PlacementPlayPayload> {
+  const series = market._id;
+  const latencyMs = Math.max(0, Math.min(10000, Math.floor(options.latencyMs)));
+  const rawFill = options.fillSuccessPct;
+  const fillSuccessPct =
+    typeof rawFill === "number" && Number.isFinite(rawFill)
+      ? Math.max(0, Math.min(100, rawFill))
+      : 100;
+
+  // Prefer the exact windows/markers from the last Replay that painted this card.
+  if (!options.forceResimulate) {
+    const remembered = getRememberedPlacementPlay(userId, placement._id);
+    if (remembered?.windows?.length) {
+      logService.info(
+        "replay",
+        `Open Replay ${placement._id}: serving ${remembered.windows.length} cached window(s) from last Replay`,
+      );
+      return remembered;
+    }
+  }
+
+  let phaseSetup = options.phaseSetup ?? null;
+  if (!phaseSetup) {
+    const setupDoc = await getTradingSetupById(userId, placement.setupId, "replay");
+    phaseSetup = setupDoc?.setup ?? null;
+  }
+
+  const empty: PlacementPlayPayload = {
+    placementId: placement._id,
+    setupId: placement.setupId,
+    title: placement.title,
+    day: placement.day,
+    startHour: placement.startHour,
+    durationHours: placement.durationHours,
+    setup: phaseSetup ?? {
+      phaseSplit: [1 / 3, 2 / 3],
+      phases: [defaultPhaseConfig(), defaultPhaseConfig(), defaultPhaseConfig()],
+    },
+    latencyMs,
+    fillSuccessPct,
+    windows: [],
+  };
+
+  if (!phaseSetup || !Array.isArray(phaseSetup.phases) || phaseSetup.phases.length !== 3) {
+    logService.warn(
+      "replay",
+      `Open Replay ${placement._id}: missing/invalid setup (setupId=${placement.setupId})`,
+    );
+    return empty;
+  }
+
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  const listed = await listRecordedWindowsSince(cutoffUtc, series);
+  const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
+    listed.filter((w) => !isFlatPriceWindow(w)),
+  ).map((w) => ({
+    _id: String(w.windowStart),
+    windowStart: w.windowStart,
+    windowEnd: w.windowEnd,
+    savedAt: w.savedAt,
+    updatedAt: w.savedAt,
+    windowOutcome: w.windowOutcome,
+    ptbCrossings: w.ptbCrossings,
+    rangeTop: w.rangeTop,
+    rangeBottom: w.rangeBottom,
+    uniqueTraders: w.uniqueTraders,
+    newWallets: w.newWallets,
+    minAssetPrice: w.minAssetPrice,
+    maxAssetPrice: w.maxAssetPrice,
+    assetRange: w.assetRange,
+    tickCount: 0,
+  }));
+
+  const slotWindows = allWindows.filter((w) =>
+    windowMatchesPlacementSlot(
+      w.windowStart,
+      placement.day,
+      placement.startHour,
+      placement.durationHours,
+    ),
+  );
+
+  if (slotWindows.length === 0) {
+    logService.warn(
+      "replay",
+      `Open Replay ${placement._id}: no slot windows (${placement.day} @ ${placement.startHour}h × ${placement.durationHours}h, series=${series}, pool=${allWindows.length})`,
+    );
+    return { ...empty, setup: phaseSetup };
+  }
+
+  const windowDuration =
+    slotWindows[0]?.windowEnd && slotWindows[0]?.windowStart
+      ? slotWindows[0].windowEnd - slotWindows[0].windowStart
+      : undefined;
+  const simSetup = phaseSetupToSimSetup(phaseSetup, latencyMs, windowDuration, fillSuccessPct);
+  const tickCache = new Map<number, ReplayTickDocument[]>();
+
+  logService.info(
+    "replay",
+    `Open Replay ${placement._id}: simulating ${slotWindows.length} window(s) (${placement.day} @ ${placement.startHour}h, latency ${latencyMs} ms, fill ${fillSuccessPct}%)`,
+  );
+
+  const sims = await mapWithConcurrency(slotWindows, WINDOW_SIM_CONCURRENCY, async (window) => {
+    const sim = await simulateRecordedWindow(market, series, window, simSetup, tickCache);
+    let markers = sim.markers ?? [];
+    if (markers.some((m) => m.y == null || !Number.isFinite(m.y))) {
+      const chainlink = await listChainlinkTicks(market, window.windowStart, 20_000);
+      markers = enrichMarkersWithAssetPrice(
+        markers,
+        chainlink,
+        window.rangeTop ?? window.rangeBottom ?? window.prevCloseAsset,
+      );
+    }
+    return { window, sim, markers };
+  });
+
+  // Same set Replay counts toward card stats: every window that had tick files.
+  const windows: PlacementPlayWindowItem[] = sims
+    .filter(({ sim }) => sim.hadTicks)
+    .map(({ window, sim, markers }) => {
+      const result = sim.result;
+      return {
+        windowStart: window.windowStart,
+        windowEnd: window.windowEnd,
+        prevCloseAsset: window.prevCloseAsset ?? result?.prevCloseAsset,
+        bucket: classifyWindow(result),
+        pnl: result?.pl ?? 0,
+        plLabel: result?.plLabel ?? "No trade",
+        sold: Boolean(result?.sold),
+        markers,
+      };
+    })
+    .sort((a, b) => a.windowStart - b.windowStart);
+
+  logService.info(
+    "replay",
+    `Open Replay ${placement._id}: ${windows.length}/${slotWindows.length} window(s) with ticks (re-simulated; run Replay first for card-matching hits)`,
+  );
+
+  const payload: PlacementPlayPayload = {
+    placementId: placement._id,
+    setupId: placement.setupId,
+    title: placement.title,
+    day: placement.day,
+    startHour: placement.startHour,
+    durationHours: placement.durationHours,
+    setup: phaseSetup,
+    latencyMs,
+    fillSuccessPct,
+    windows,
+  };
+  if (windows.length > 0) {
+    rememberPlacementPlay(userId, payload);
+  }
+  return payload;
 }

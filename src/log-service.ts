@@ -16,6 +16,8 @@ class LogService {
   private readonly listeners = new Set<LogListener>();
   private currentWindowStart: number | null = null;
   private previousWindowStart: number | null = null;
+  /** Sources silenced while Replay/Open re-simulates (avoids flooding SSE + UI). */
+  private readonly mutedSources = new Set<string>();
 
   info(source: string, message: string): void {
     this.emit("info", source, message);
@@ -31,6 +33,25 @@ class LogService {
 
   error(source: string, message: string): void {
     this.emit("error", source, message);
+  }
+
+  /** Run `fn` with one or more log sources fully suppressed. */
+  runWithMutedSources<T>(sources: string[], fn: () => T): T {
+    for (const source of sources) this.mutedSources.add(source);
+    try {
+      return fn();
+    } finally {
+      for (const source of sources) this.mutedSources.delete(source);
+    }
+  }
+
+  async runWithMutedSourcesAsync<T>(sources: string[], fn: () => Promise<T>): Promise<T> {
+    for (const source of sources) this.mutedSources.add(source);
+    try {
+      return await fn();
+    } finally {
+      for (const source of sources) this.mutedSources.delete(source);
+    }
   }
 
   /** Track display window rolls — buffer keeps current + previous window only. */
@@ -67,6 +88,8 @@ class LogService {
   }
 
   private emit(level: LogLevel, source: string, message: string): void {
+    if (this.mutedSources.has(source)) return;
+
     const entry: LogEntry = {
       tMs: Date.now(),
       level,

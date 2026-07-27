@@ -5899,3 +5899,691 @@ body.is-column-resizing * {
 .sim-marker-tooltip-value {
   font-variant-numeric: tabular-nums;
 }
+
+/* Open Replay popup (ported from poly-recorder) */
+.modal-card.modal-card-play {
+  width: min(1100px, calc(100vw - 24px));
+  max-width: min(1100px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.schedule-play-modal-header {
+  position: relative;
+}
+
+.schedule-play-header-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+  background: rgba(48, 54, 61, 0.55);
+}
+
+.schedule-play-header-progress[hidden] {
+  display: none;
+}
+
+.schedule-play-header-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+.modal-card.modal-card-play .modal-body {
+  min-height: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.modal-body.schedule-play-body {
+  display: block;
+  position: relative;
+  padding: 14px 14px 14px 288px;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.schedule-play-sidebar {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 14px;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.schedule-play-sidebar.is-disabled {
+  pointer-events: none;
+  user-select: none;
+}
+
+.schedule-play-sidebar.is-disabled .schedule-play-list-nav {
+  color: #484f58;
+  opacity: 0.35;
+  cursor: default;
+}
+
+.schedule-play-sidebar.is-disabled .schedule-play-item {
+  border-color: #30363d;
+  color: #6e7681;
+  cursor: default;
+  opacity: 0.35 !important;
+}
+
+.schedule-play-sidebar.is-disabled .schedule-play-item.is-active {
+  border-color: #3d444d;
+  opacity: 0.45 !important;
+}
+
+.schedule-play-sidebar.is-disabled .schedule-play-dot {
+  background: #484f58 !important;
+  opacity: 0.7;
+}
+
+.schedule-play-sidebar.is-disabled .schedule-play-item-title,
+.schedule-play-sidebar.is-disabled .schedule-play-item-sub {
+  color: #6e7681;
+}
+
+.schedule-play-list-nav {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.schedule-play-list-nav svg {
+  width: 10px;
+  height: 7px;
+}
+
+.schedule-play-list-nav:hover:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+}
+
+.schedule-play-list-nav:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.schedule-play-list-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.schedule-play-list-frame {
+  display: none;
+}
+
+.schedule-play-status {
+  color: var(--muted);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+  flex-shrink: 1;
+}
+
+.schedule-play-list {
+  --schedule-play-item-h: 52px;
+  --schedule-play-item-gap: 4px;
+  /* Fade over ~⅔ of a card so the outermost card stays partially visible. */
+  --schedule-play-edge-fade: calc(var(--schedule-play-item-h) * 0.7);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 4px;
+  position: relative;
+  scrollbar-width: none;
+  background: transparent;
+  outline: none;
+  touch-action: none;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--schedule-play-edge-fade),
+    #000 calc(100% - var(--schedule-play-edge-fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--schedule-play-edge-fade),
+    #000 calc(100% - var(--schedule-play-edge-fade)),
+    transparent 100%
+  );
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.schedule-play-list-track {
+  --schedule-play-item-gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--schedule-play-item-gap);
+  will-change: transform;
+  transition: transform 0.28s ease;
+}
+
+.schedule-play-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 var(--schedule-play-item-h);
+  height: var(--schedule-play-item-h);
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0.12;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.schedule-play-item:hover {
+  background: transparent;
+}
+
+.schedule-play-item.is-active {
+  border-color: var(--accent);
+  background: transparent;
+  opacity: 1;
+}
+
+.schedule-play-item.is-slot-item {
+  justify-content: flex-start;
+  cursor: default;
+  pointer-events: none;
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+.schedule-play-item.is-slot-item.is-active {
+  border-color: var(--accent);
+}
+
+.schedule-play-item-slot-label {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  letter-spacing: 0.12em;
+  user-select: none;
+}
+
+.schedule-play-list-track.is-slot-spinning {
+  transition: none !important;
+  will-change: transform;
+}
+
+.schedule-play-list-track.is-slot-spinning .schedule-play-item {
+  transition: none !important;
+}
+
+.schedule-play-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 0;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #6e7681;
+}
+
+.schedule-play-dot.is-green { background: #3fb950; }
+.schedule-play-dot.is-red { background: #f85149; }
+.schedule-play-dot.is-blue { background: #58a6ff; }
+.schedule-play-dot.is-none { background: #6e7681; }
+
+.schedule-play-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.schedule-play-item-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.schedule-play-item-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.schedule-play-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.schedule-play-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 1.2em;
+}
+
+.schedule-play-meta {
+  font-size: 0.82rem;
+  color: var(--muted);
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-play-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.schedule-play-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.schedule-play-view-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.schedule-play-view-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.schedule-play-view-btn.is-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.schedule-play-transport {
+  display: block;
+  flex: 0 0 auto;
+  min-height: 56px;
+  box-sizing: border-box;
+}
+
+.schedule-play-transport-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  box-sizing: border-box;
+}
+
+.schedule-play-transport-panel[hidden] {
+  display: none;
+}
+
+.schedule-play-hits-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+}
+
+.schedule-play-hits-stats-dots {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.schedule-play-hits-stat {
+  appearance: none;
+  margin: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.schedule-play-hits-stat:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.schedule-play-hits-stat:not(:disabled):hover,
+.schedule-play-hits-stat.is-hits-highlight-pinned {
+  border-color: color-mix(in srgb, currentColor 35%, var(--border));
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.schedule-play-hits-stat[data-bucket="green"]:not(:disabled):hover,
+.schedule-play-hits-stat[data-bucket="green"].is-hits-highlight-pinned {
+  border-color: color-mix(in srgb, var(--up) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--up) 35%, transparent);
+}
+
+.schedule-play-hits-stat[data-bucket="red"]:not(:disabled):hover,
+.schedule-play-hits-stat[data-bucket="red"].is-hits-highlight-pinned {
+  border-color: color-mix(in srgb, var(--down) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--down) 35%, transparent);
+}
+
+.schedule-play-hits-stat[data-bucket="blue"]:not(:disabled):hover,
+.schedule-play-hits-stat[data-bucket="blue"].is-hits-highlight-pinned {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.schedule-play-hits-pnl {
+  font-size: 0.9rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.schedule-play-hits-pnl.is-positive {
+  color: var(--up);
+}
+
+.schedule-play-hits-pnl.is-negative {
+  color: var(--down);
+}
+
+.schedule-play-hits-markers {
+  font-size: 0.78rem;
+  color: var(--muted);
+  min-height: 18px;
+  line-height: 1.2;
+}
+
+.schedule-play-chart-wrap {
+  position: relative;
+  width: 100%;
+  height: min(380px, 42vh);
+  flex: 0 0 auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.schedule-play-chart-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  pointer-events: none;
+}
+
+.schedule-play-chart-loading[hidden] {
+  display: none;
+}
+
+.schedule-play-chart-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: schedule-placement-spin 0.7s linear infinite;
+}
+
+.schedule-play-chart-loading-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+#schedule-play-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.schedule-play-view-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.schedule-play-view-btn:disabled:hover {
+  color: inherit;
+  background: transparent;
+}
+
+.schedule-play-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.schedule-play-ctrl-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.schedule-play-ctrl-btn.schedule-play-step-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+}
+
+.schedule-play-ctrl-btn.schedule-play-step-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.schedule-play-ctrl-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.schedule-play-ctrl-btn:disabled {
+  color: #484f58;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.schedule-play-toggle {
+  min-width: 64px;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  font-weight: 650;
+}
+
+.schedule-play-toggle:disabled {
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  color: #484f58;
+  font-weight: 600;
+}
+
+.schedule-play-speed-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.schedule-play-speed-wrap.is-disabled {
+  color: #484f58;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.schedule-play-speed-wrap select {
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 0 6px;
+}
+
+.schedule-play-speed-wrap select:disabled {
+  color: #484f58;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  cursor: not-allowed;
+}
+
+.schedule-play-scrubber {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  width: 24px;
+  height: calc(100% - 32px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  transform: translateX(-50%);
+  cursor: grab;
+  touch-action: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  outline: none;
+}
+
+.schedule-play-scrubber.is-dragging {
+  cursor: grabbing;
+}
+
+.schedule-play-scrubber[hidden] {
+  display: none !important;
+}
+
+.schedule-play-scrubber:focus-visible .schedule-play-scrubber-handle {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--accent),
+    0 1px 6px rgba(0, 0, 0, 0.45);
+}
+
+.schedule-play-scrubber-line {
+  flex: 1 1 auto;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+  box-shadow: 0 0 0 1px rgba(1, 4, 9, 0.55);
+  pointer-events: none;
+}
+
+.schedule-play-scrubber-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #f0f6fc;
+  background: var(--accent);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.schedule-play-scrubber.is-dragging .schedule-play-scrubber-handle {
+  width: 16px;
+  height: 16px;
+}
+
+.schedule-play-transport-panel.is-disabled {
+  pointer-events: none;
+}
+
+@media (max-width: 820px) {
+  .modal-body.schedule-play-body {
+    padding: 14px;
+  }
+
+  .schedule-play-sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    max-height: 180px;
+    margin-bottom: 12px;
+    background: transparent;
+    border: none;
+  }
+
+  .schedule-play-list {
+    max-height: 140px;
+  }
+
+  .schedule-play-chart-wrap {
+    height: 260px;
+  }
+}
+
+

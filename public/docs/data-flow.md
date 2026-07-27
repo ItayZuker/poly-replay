@@ -50,7 +50,7 @@ Without schedule, phases come from the graph setup — [Setups & phases](doc:set
 
 Saved over REST to the database (`trading_setups_real` / `schedual_setups_real` for **Live**; `trading_setups_replay` / `schedual_setups_replay` for **Replay**). The server picks the active **Live** UTC placement each tick. SSE keeps the schedule board updated.
 
-**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill).
+**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill). While each card finishes, the worker keeps that card’s window list + fill markers in memory. Card **Open** posts `POST /api/schedule-placements/:id/play` and returns that cached payload when present (same hits as the card); otherwise it re-simulates. When `SCHEDULE_REPLAY_SERVICE_URL` is set, that call is proxied to the recorder’s `/api/internal/schedule-placements/:id/play`.
 
 Live **Fill success** (Market → Trade) tracks CLOB buy/sell outcomes over the rolling 7-day cutoff, broken down by **FAK / FOK / GTD**. Partial match = success. FAK/FOK count on fire/send; GTD counts only after the resting limit is touched while live (then success if any size matched, else miss). Strategy cancels with no touch stay out of the %.
 
@@ -70,6 +70,6 @@ Recorder worker -> SimulatorEngine over DATA_DIR ticks -> SSE stats
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
 | `DATA_DIR` | Local tick/window files (default `./data`) |
 
-Heatmap and Replay load ~**14 days** of `recorded_windows`, then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than ~14 days are deleted on the recorder.
+Heatmap and Replay load ~**14 days** of `recorded_windows`, then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than ~14 days are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
 
 Wallet credentials in [Settings](doc:settings) unlock Market/Schedule and live signing.

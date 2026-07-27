@@ -2353,6 +2353,35 @@
         ev.stopPropagation();
         void removePlacement(placement._id);
       });
+
+      const showValues = cardShowsStats(placement._id);
+      const stats = placementStats.get(placement._id);
+      const canPlay = isReplayWorkspace() && showValues && stats?.hasData === true;
+      if (canPlay) {
+        const playMenuBtn = document.createElement("button");
+        playMenuBtn.type = "button";
+        playMenuBtn.className = "schedule-placement-menu-item";
+        playMenuBtn.setAttribute("role", "menuitem");
+        playMenuBtn.textContent = "Open";
+        playMenuBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeMenus();
+          const hint =
+            (stats?.green ?? 0) +
+            (stats?.red ?? 0) +
+            (stats?.blue ?? 0) +
+            (stats?.gray ?? 0);
+          const setupDoc = window.getScheduleSetupById?.(placement.setupId);
+          window.SchedulePlay?.open?.(placement._id, {
+            windowCountHint: hint,
+            latencyMs: readReplayLatencyMs(),
+            fillSuccessPct: readReplayFillSuccessPct(),
+            series: placement.series || selectedSeries(),
+            setup: setupDoc?.setup ?? null,
+          });
+        });
+        menu.appendChild(playMenuBtn);
+      }
       menu.appendChild(removeBtn);
       document.body.appendChild(menu);
       positionPlacementMenu(menu, menuBtn);
@@ -3376,7 +3405,7 @@
     const input = document.getElementById("schedule-replay-latency-input");
     const raw = input ? Number(input.value) : Number.NaN;
     if (!Number.isFinite(raw)) return DEFAULT_REPLAY_LATENCY_MS;
-    return Math.max(0, Math.min(2000, Math.floor(raw)));
+    return Math.max(0, Math.min(10000, Math.floor(raw)));
   }
 
   function persistReplayLatencyMs(ms) {
@@ -3414,7 +3443,7 @@
     if (latencyInput && latencyInput.dataset.userEdited !== "1") {
       const liveMs = window.getSimLatencyMs?.();
       if (Number.isFinite(liveMs)) {
-        const ms = Math.max(0, Math.min(2000, Math.floor(liveMs)));
+        const ms = Math.max(0, Math.min(10000, Math.floor(liveMs)));
         if (latencyInput.value !== String(ms)) {
           latencyInput.value = String(ms);
           persistReplayLatencyMs(ms);
@@ -3442,7 +3471,7 @@
       try {
         const stored = Number(localStorage.getItem(REPLAY_LATENCY_STORAGE_KEY));
         if (Number.isFinite(stored)) {
-          latencyInput.value = String(Math.max(0, Math.min(2000, Math.floor(stored))));
+          latencyInput.value = String(Math.max(0, Math.min(10000, Math.floor(stored))));
         }
       } catch {
         // keep default
@@ -3760,6 +3789,7 @@
     bindHeaderSummaryRange();
     bindGlobalPointer();
     initReplayLatencyInput();
+    window.SchedulePlay?.init?.();
     syncNowHighlights();
     syncHeaderSummaryControls();
     syncReplayRunButton();

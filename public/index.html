@@ -849,7 +849,7 @@
                       class="schedule-replay-latency-input"
                       type="number"
                       min="0"
-                      max="2000"
+                      max="10000"
                       step="10"
                       value="150"
                       inputmode="numeric"
@@ -1122,10 +1122,157 @@
     </div>
   </div>
 
+  <div id="schedule-play-modal" class="modal-overlay" hidden>
+    <div class="modal-card modal-card-play" role="dialog" aria-labelledby="schedule-play-title">
+      <div class="modal-header schedule-play-modal-header">
+        <h2 id="schedule-play-title">Open Replay</h2>
+        <button type="button" id="schedule-play-close" class="modal-close" aria-label="Close">×</button>
+        <div
+          id="schedule-play-header-progress"
+          class="schedule-play-header-progress"
+          hidden
+          aria-hidden="true"
+        >
+          <div class="schedule-play-header-progress-bar"></div>
+        </div>
+      </div>
+      <div class="modal-body schedule-play-body">
+        <aside class="schedule-play-sidebar">
+          <button
+            type="button"
+            id="schedule-play-list-up"
+            class="schedule-play-list-nav"
+            aria-label="Previous window"
+            title="Previous window"
+          >
+            <svg viewBox="0 0 12 8" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M6 0 0 8h12z" />
+            </svg>
+          </button>
+          <div class="schedule-play-list-shell">
+            <div class="schedule-play-list-frame" aria-hidden="true"></div>
+            <div id="schedule-play-list" class="schedule-play-list" role="listbox" aria-label="Recorded windows" tabindex="0">
+              <div id="schedule-play-list-track" class="schedule-play-list-track"></div>
+            </div>
+          </div>
+          <button
+            type="button"
+            id="schedule-play-list-down"
+            class="schedule-play-list-nav"
+            aria-label="Next window"
+            title="Next window"
+          >
+            <svg viewBox="0 0 12 8" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M6 8 0 0h12z" />
+            </svg>
+          </button>
+        </aside>
+        <section class="schedule-play-main">
+          <div class="schedule-play-meta-row">
+            <div id="schedule-play-meta" class="schedule-play-meta">—</div>
+            <span id="schedule-play-status" class="schedule-play-status" aria-live="polite">—</span>
+            <div class="schedule-play-view-toggle" role="group" aria-label="Chart view">
+              <button
+                type="button"
+                id="schedule-play-view-play"
+                class="schedule-play-view-btn is-active"
+                title="Graph view"
+                aria-label="Graph view"
+                aria-pressed="true"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                  <path fill="currentColor" d="M6.4 5.1v5.8c0 .35.38.57.68.4l4.7-2.9a.47.47 0 0 0 0-.8L7.08 4.7a.47.47 0 0 0-.68.4z"/>
+                </svg>
+              </button>
+              <button
+                type="button"
+                id="schedule-play-view-hits"
+                class="schedule-play-view-btn"
+                title="Hits view"
+                aria-label="Hits view"
+                aria-pressed="false"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                  <circle cx="8" cy="8" r="1.6" fill="currentColor"/>
+                  <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div id="schedule-play-chart-wrap" class="schedule-play-chart-wrap">
+            <canvas id="schedule-play-chart"></canvas>
+            <div id="schedule-play-phase-hover" class="sim-phase-hover" hidden></div>
+            <div
+              id="schedule-play-chart-loading"
+              class="schedule-play-chart-loading"
+              hidden
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <span class="schedule-play-chart-spinner" aria-hidden="true"></span>
+              <span class="schedule-play-chart-loading-label">Loading windows…</span>
+            </div>
+            <div id="schedule-play-hit-tooltip" class="sim-marker-tooltip" hidden></div>
+            <div
+              id="schedule-play-scrubber"
+              class="schedule-play-scrubber"
+              role="slider"
+              tabindex="0"
+              aria-label="Scrub playback"
+              aria-valuemin="0"
+              aria-valuemax="300"
+              aria-valuenow="0"
+              hidden
+            >
+              <div class="schedule-play-scrubber-line" aria-hidden="true"></div>
+              <div class="schedule-play-scrubber-handle" aria-hidden="true"></div>
+            </div>
+          </div>
+          <div id="schedule-play-transport" class="schedule-play-transport">
+            <div id="schedule-play-transport-play" class="schedule-play-transport-panel">
+              <div class="schedule-play-controls">
+                <button type="button" id="schedule-play-step-back" class="schedule-play-ctrl-btn schedule-play-step-btn" title="Previous frame" aria-label="Previous frame">
+                  <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M8.2 1.4 3.6 6l4.6 4.6-.9.9L1.8 6 7.3.5z"/>
+                  </svg>
+                </button>
+                <button type="button" id="schedule-play-toggle" class="schedule-play-ctrl-btn schedule-play-toggle" aria-pressed="false">Play</button>
+                <button type="button" id="schedule-play-step-fwd" class="schedule-play-ctrl-btn schedule-play-step-btn" title="Next frame" aria-label="Next frame">
+                  <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M3.8 1.4 8.4 6l-4.6 4.6.9.9L10.2 6 4.7.5z"/>
+                  </svg>
+                </button>
+                <label class="schedule-play-speed-wrap" title="Playback speed">
+                  <span>Speed</span>
+                  <select id="schedule-play-speed">
+                    <option value="0.5">0.5×</option>
+                    <option value="1">1×</option>
+                    <option value="2">2×</option>
+                    <option value="4" selected>4×</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div id="schedule-play-transport-hits" class="schedule-play-transport-panel" hidden>
+              <div id="schedule-play-hits-stats" class="schedule-play-hits-stats">
+                <div class="schedule-play-hits-stats-dots"></div>
+                <span id="schedule-play-hits-pnl" class="schedule-play-hits-pnl">—</span>
+              </div>
+              <div id="schedule-play-hits-markers" class="schedule-play-hits-markers">—</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <script src="/markdown.js?v=1.5.2"></script>
-  <script src="/simulator.js?v=1.5.2"></script>
+  <script src="/simulator.js?v=1.5.5"></script>
   <script src="/setup-editor.js?v=1.5.2"></script>
-  <script src="/schedule.js?v=1.5.2"></script>
-  <script src="/app.js?v=1.5.2"></script>
+  <script src="/schedule.js?v=1.5.3"></script>
+  <script src="/schedule-play.js?v=1.5.5"></script>
+  <script src="/app.js?v=1.5.5"></script>
 </body>
 </html>

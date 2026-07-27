@@ -681,9 +681,16 @@
     }
 
     if (options.markers !== false) {
+      const usingOverride = Array.isArray(options.markersOverride);
+      const revealUntil =
+        options.revealUntil != null && Number.isFinite(options.revealUntil)
+          ? Number(options.revealUntil)
+          : null;
       for (const m of markerList) {
         if (!state?.windowStart) continue;
-        if (m.windowKey && m.windowKey !== key) continue;
+        // Caller-scoped overrides (Open Replay) already match this window.
+        if (!usingOverride && m.windowKey && m.windowKey !== key) continue;
+        if (revealUntil != null && Number(m.t) > revealUntil) continue;
         const x = xAt(m.t);
         let y = padding.top + plotH / 2;
         if (m.y != null && Number.isFinite(m.y) && layout.yAt) {

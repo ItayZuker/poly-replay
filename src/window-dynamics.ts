@@ -122,3 +122,42 @@ export function getWindowAssetRange(window: WindowHitRecord): number | null {
   }
   return null;
 }
+
+/** True when the window’s asset price never moved (bad / stuck Chainlink recording). */
+export function isFlatPriceWindow(window: {
+  minAssetPrice?: number | null;
+  maxAssetPrice?: number | null;
+  assetRange?: number | null;
+}): boolean {
+  if (
+    window.minAssetPrice != null &&
+    window.maxAssetPrice != null &&
+    Number.isFinite(window.minAssetPrice) &&
+    Number.isFinite(window.maxAssetPrice)
+  ) {
+    return window.maxAssetPrice === window.minAssetPrice;
+  }
+  if (window.assetRange != null && Number.isFinite(window.assetRange)) {
+    return window.assetRange === 0;
+  }
+  return false;
+}
+
+/** Flat when every Chainlink sample in the tick stream shares one price. */
+export function isFlatPriceFromTicks(
+  ticks: Array<{ source?: string; assetPrice?: number | null }>,
+): boolean {
+  let min: number | null = null;
+  let max: number | null = null;
+  let count = 0;
+  for (const tick of ticks) {
+    if (tick.source !== "chainlink-tick") continue;
+    const price = tick.assetPrice;
+    if (price == null || !Number.isFinite(price)) continue;
+    count += 1;
+    min = min == null ? price : Math.min(min, price);
+    max = max == null ? price : Math.max(max, price);
+  }
+  if (count === 0 || min == null || max == null) return false;
+  return min === max;
+}

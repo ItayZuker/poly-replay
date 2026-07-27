@@ -83,8 +83,10 @@ import { recordingManager } from "./recording-manager.js";
 import { startArchiveScheduler, stopArchiveScheduler } from "./archive-service.js";
 import {
   backtestSchedulePlacements,
+  buildPlacementPlayPayload,
   type PlacementBacktestStats,
 } from "./schedule-backtest-service.js";
+import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
 import { ensureWalletRegistryReady } from "./wallet-registry.js";
 import { traderRegistryService } from "./trader-registry-service.js";
 import {
@@ -168,6 +170,9 @@ function isPublicAuthPath(req: express.Request): boolean {
   if (req.method === "GET" && req.path === "/api/auth/me") return true;
   // Live→recorder worker; gated by SCHEDULE_REPLAY_WORKER_SECRET when set.
   if (req.method === "POST" && req.path === "/api/internal/schedule-replay") return true;
+  if (req.method === "POST" && /^\/api\/internal\/schedule-placements\/[^/]+\/play$/.test(req.path)) {
+    return true;
+  }
   return false;
 }
 
@@ -522,7 +527,7 @@ async function runScheduleReplaySse(
 
   const latencyMs =
     typeof input.latencyMs === "number" && Number.isFinite(input.latencyMs)
-      ? Math.max(0, Math.min(2000, Math.floor(input.latencyMs)))
+      ? Math.max(0, Math.min(10000, Math.floor(input.latencyMs)))
       : simulatorService.getSetup().latencyMs;
   const fillSuccessPct =
     typeof input.fillSuccessPct === "number" && Number.isFinite(input.fillSuccessPct)
@@ -1491,6 +1496,153 @@ app.delete("/api/schedule-placements/:id", async (req, res) => {
   }
 });
 
+function replayWorkerBaseUrl(): string | null {
+  if (!SCHEDULE_REPLAY_SERVICE_URL) return null;
+  try {
+    return new URL(SCHEDULE_REPLAY_SERVICE_URL).origin;
+  } catch {
+    return null;
+  }
+}
+
+async function runPlacementPlay(
+  userId: string,
+  placementId: string,
+  input: {
+    series?: string;
+    latencyMs?: number;
+    fillSuccessPct?: number;
+    phaseSetup?: unknown;
+  },
+) {
+  const placement = await getSchedulePlacementById(userId, placementId, "replay");
+  if (!placement) {
+    return { status: 404 as const, body: { error: "Placement not found" } };
+  }
+  // Prefer the placement's own series so Open matches the card, not a stale selector.
+  const series =
+    String(placement.series ?? "").trim() ||
+    (typeof input.series === "string" && input.series.trim() ? input.series.trim() : "");
+  const market = await getMarket(series);
+  if (!market) {
+    return { status: 404 as const, body: { error: "Market not found" } };
+  }
+  const latencyMs =
+    typeof input.latencyMs === "number" && Number.isFinite(input.latencyMs)
+      ? Math.max(0, Math.min(10000, Math.floor(input.latencyMs)))
+      : simulatorService.getSetup().latencyMs;
+  const fillSuccessPct =
+    typeof input.fillSuccessPct === "number" && Number.isFinite(input.fillSuccessPct)
+      ? Math.max(0, Math.min(100, input.fillSuccessPct))
+      : 100;
+  const phaseSetup = normalizePhaseSetup(input.phaseSetup as never) ?? undefined;
+  const payload = await buildPlacementPlayPayload(userId, market, placement, {
+    latencyMs,
+    fillSuccessPct,
+    phaseSetup: phaseSetup ?? null,
+  });
+  return { status: 200 as const, body: payload };
+}
+
+function parsePlayRequestBody(req: express.Request): {
+  series?: string;
+  latencyMs?: number;
+  fillSuccessPct?: number;
+  phaseSetup?: unknown;
+} {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const q = req.query;
+  const series =
+    typeof body.series === "string"
+      ? body.series
+      : typeof q.series === "string"
+        ? q.series
+        : undefined;
+  const latencyRaw = Number(body.latencyMs ?? q.latencyMs);
+  const fillRaw = Number(body.fillSuccessPct ?? q.fillSuccessPct);
+  const rawSetup = body.setup ?? body.phaseSetup;
+  const phaseSetup =
+    rawSetup && typeof rawSetup === "object"
+      ? rawSetup.setup && typeof rawSetup.setup === "object"
+        ? rawSetup.setup
+        : rawSetup
+      : undefined;
+  return {
+    series,
+    latencyMs: Number.isFinite(latencyRaw) ? latencyRaw : undefined,
+    fillSuccessPct: Number.isFinite(fillRaw) ? fillRaw : undefined,
+    phaseSetup,
+  };
+}
+
+/** Open Replay popup payload: per-window sim markers for a Replay schedule card. */
+app.post("/api/schedule-placements/:id/play", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const id = String(req.params.id);
+    const parsed = parsePlayRequestBody(req);
+
+    const workerBase = replayWorkerBaseUrl();
+    if (workerBase) {
+      const remoteHeaders: Record<string, string> = {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      };
+      if (SCHEDULE_REPLAY_WORKER_SECRET) {
+        remoteHeaders["x-replay-worker-secret"] = SCHEDULE_REPLAY_WORKER_SECRET;
+      }
+      const remoteRes = await fetch(
+        `${workerBase}/api/internal/schedule-placements/${encodeURIComponent(id)}/play`,
+        {
+          method: "POST",
+          headers: remoteHeaders,
+          body: JSON.stringify({
+            userId,
+            series: parsed.series,
+            latencyMs: parsed.latencyMs,
+            fillSuccessPct: parsed.fillSuccessPct,
+            setup: parsed.phaseSetup,
+          }),
+        },
+      );
+      const body = await remoteRes.json().catch(() => ({}));
+      res.status(remoteRes.status).json(body);
+      return;
+    }
+
+    const result = await runPlacementPlay(userId, id, parsed);
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    const message = String(err);
+    if (message.includes("MONGODB_URI")) {
+      res.status(503).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Recorder worker: Open Replay payload (live proxy → ticks on DATA_DIR). */
+app.post("/api/internal/schedule-placements/:id/play", async (req, res) => {
+  if (!assertReplayWorkerAuth(req)) {
+    res.status(401).json({ error: "Unauthorized replay worker request" });
+    return;
+  }
+  try {
+    const userId = String(req.body?.userId ?? req.query.userId ?? "").trim();
+    if (!userId) {
+      res.status(400).json({ error: "userId is required" });
+      return;
+    }
+    const id = String(req.params.id);
+    const parsed = parsePlayRequestBody(req);
+    const result = await runPlacementPlay(userId, id, parsed);
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 /**
  * Replay the current Replay-mode schedule over historical windows.
  * Streams per-placement stats (event: placement) then event: done.
@@ -1850,6 +2002,10 @@ async function main(): Promise<void> {
 
   setHeatmapUpdateListener((state) => {
     broadcast("heatmap", state);
+  });
+  // Drop stuck/flat Chainlink windows before the heatmap/Replay indexes load.
+  await purgeFlatPriceRecordings().catch((err) => {
+    logService.warn("recorder", `Flat-price purge failed: ${String(err)}`);
   });
   await loadAllHeatmapWindows();
   const heatmapRefreshTimer = setInterval(() => {

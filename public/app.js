@@ -2487,10 +2487,15 @@ function resizeChartCanvasFor(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const width = wrap?.clientWidth ?? canvas.clientWidth;
   const height = wrap?.clientHeight ?? canvas.clientHeight;
-  canvas.width = Math.max(1, Math.floor(width * dpr));
-  canvas.height = Math.max(1, Math.floor(height * dpr));
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
+  const nextW = Math.max(1, Math.floor(width * dpr));
+  const nextH = Math.max(1, Math.floor(height * dpr));
+  // Only mutate when size changes — avoids ResizeObserver ↔ canvas.style loops.
+  if (canvas.width !== nextW) canvas.width = nextW;
+  if (canvas.height !== nextH) canvas.height = nextH;
+  const styleW = `${width}px`;
+  const styleH = `${height}px`;
+  if (canvas.style.width !== styleW) canvas.style.width = styleW;
+  if (canvas.style.height !== styleH) canvas.style.height = styleH;
   const ctx = canvas.getContext("2d");
   if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, width, height };
@@ -2596,6 +2601,10 @@ function drawPriceChart(state, options = {}) {
   const overlayOpts = {};
   if (options.setupOverride) overlayOpts.setupOverride = options.setupOverride;
   if (options.markers === false) overlayOpts.markers = false;
+  if (Array.isArray(options.markersOverride)) overlayOpts.markersOverride = options.markersOverride;
+  if (options.revealUntil != null && Number.isFinite(options.revealUntil)) {
+    overlayOpts.revealUntil = Number(options.revealUntil);
+  }
   if (options.hoverLine !== undefined) overlayOpts.hoverLine = options.hoverLine;
   if (options.dragLine !== undefined) overlayOpts.dragLine = options.dragLine;
   const trading = state?.trading;
@@ -2620,8 +2629,20 @@ function drawPriceChart(state, options = {}) {
         (cfg?.autoTrade && !cfg.useSchedule ? state.sim?.setup : null);
       if (setup) overlayOpts.setupOverride = setup;
     }
-    if (Array.isArray(trading.markers)) overlayOpts.markersOverride = trading.markers;
+    if (!Array.isArray(options.markersOverride) && Array.isArray(trading.markers)) {
+      overlayOpts.markersOverride = trading.markers;
+    }
+  } else if (options.setupOverride && options.canvas) {
+    // Open Replay / custom canvas: show phase bands with the setup override.
+    overlayOpts.phasesVisible = true;
   }
+
+  const revealUntil =
+    options.revealUntil != null && Number.isFinite(options.revealUntil)
+      ? Number(options.revealUntil)
+      : null;
+  const drawPoints =
+    revealUntil == null ? points : points.filter((p) => p.t <= revealUntil);
 
   ctx.strokeStyle = "#21262d";
   ctx.lineWidth = 1;
@@ -2682,29 +2703,57 @@ function drawPriceChart(state, options = {}) {
     ctx.fillText(ptbLabel, padding.left + 4, ptbY - 2);
   }
 
-  const last = points[points.length - 1];
+  if (drawPoints.length === 0) {
+    if (window.Simulator) window.Simulator.drawOverlay(ctx, layout, state, overlayOpts);
+    return layout;
+  }
+
+  const last = drawPoints[drawPoints.length - 1];
   const lineColor =
     ptb != null && last.price >= ptb ? "#2ea043" : "#f85149";
+  const playheadT =
+    revealUntil == null
+      ? last.t
+      : Math.min(layout.windowEnd, Math.max(layout.windowStart, revealUntil));
 
   ctx.strokeStyle = lineColor;
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.beginPath();
-  points.forEach((point, index) => {
+  drawPoints.forEach((point, index) => {
     const x = xAt(point.t);
     const y = yAt(point.price);
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
+  // Hold last price out to the scrubber so the line meets the vertical bar.
+  if (revealUntil != null && playheadT > last.t) {
+    ctx.lineTo(xAt(playheadT), yAt(last.price));
+  }
   ctx.stroke();
 
-  const endX = xAt(last.t);
+  const endX = xAt(revealUntil != null ? playheadT : last.t);
   const endY = yAt(last.price);
   ctx.fillStyle = lineColor;
   ctx.beginPath();
   ctx.arc(endX, endY, 3.5, 0, Math.PI * 2);
   ctx.fill();
+
+  if (
+    options.showPlayhead !== false &&
+    revealUntil != null &&
+    layout.windowStart &&
+    layout.windowEnd
+  ) {
+    const playX = xAt(playheadT);
+    ctx.strokeStyle = "rgba(201, 209, 217, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(playX, padding.top);
+    ctx.lineTo(playX, padding.top + plotH);
+    ctx.stroke();
+  }
 
   if (window.Simulator) {
     window.Simulator.drawOverlay(ctx, layout, state, overlayOpts);

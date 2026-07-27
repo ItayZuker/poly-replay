@@ -11,6 +11,7 @@ import {
 } from "./day-hour-slots.js";
 import { logService } from "./log-service.js";
 import type { RecordedWindowDocument } from "./types.js";
+import { isFlatPriceWindow } from "./window-dynamics.js";
 
 export type HeatmapDayId = WeekDayId;
 export type HeatmapMetric = "crossings" | "range" | "wallets" | "newWallets";
@@ -207,6 +208,10 @@ export function getHeatmapState(series?: string | null): HeatmapPublicState {
   return rebuildState(series);
 }
 
+export function forgetRecordedWindow(series: string, windowStart: number): void {
+  windowStore.delete(windowKey(series, windowStart));
+}
+
 export function ingestRecordedWindow(
   series: string,
   window: RecordedWindowDocument,
@@ -215,6 +220,15 @@ export function ingestRecordedWindow(
   if (!isInHistoryWindow(window.windowStart, cutoffUtc)) {
     pruneExpiredWindows();
     return rebuildState();
+  }
+
+  // Flat-price windows are bad recordings — never keep them in heatmap memory.
+  if (isFlatPriceWindow(window)) {
+    forgetRecordedWindow(series, window.windowStart);
+    pruneExpiredWindows();
+    const state = rebuildState();
+    updateListener?.(state);
+    return state;
   }
 
   windowStore.set(windowKey(series, window.windowStart), toStoredWindow(series, window));
@@ -232,14 +246,24 @@ export async function loadAllHeatmapWindows(): Promise<HeatmapPublicState> {
   try {
     const windows = await listRecordedWindowsSince(cutoffUtc);
     windowStore.clear();
+    let skippedFlat = 0;
     for (const window of windows) {
       if (!isInHistoryWindow(window.windowStart, cutoffUtc)) continue;
+      if (isFlatPriceWindow(window)) {
+        skippedFlat += 1;
+        continue;
+      }
       windowStore.set(
         windowKey(window.series, window.windowStart),
         toStoredWindow(window.series, window),
       );
     }
-    logService.info("heatmap", `Loaded ${windowStore.size} recorded windows from Mongo (since ${cutoffUtc})`);
+    logService.info(
+      "heatmap",
+      `Loaded ${windowStore.size} recorded windows from Mongo (since ${cutoffUtc})${
+        skippedFlat ? `; skipped ${skippedFlat} flat-price` : ""
+      }`,
+    );
   } catch (err) {
     logService.warn(
       "heatmap",
