@@ -1603,9 +1603,9 @@ let walletsListLoadToken = 0;
 /** @type {any[]} */
 let walletsListCache = [];
 let walletsListSeries = "";
-/** @type {{ key: "sightings" | "iWin" | "iLost", dir: "desc" | "asc" }} */
+/** @type {{ key: "sightings" | "iWin" | "iLost" | "pnl", dir: "desc" | "asc" }} */
 let walletsListSort = { key: "sightings", dir: "desc" };
-/** @type {"sightings" | "iWin" | "iLost" | null} */
+/** @type {"sightings" | "iWin" | "iLost" | "pnl" | null} */
 let walletsListSortLoadingKey = null;
 const WALLETS_LIST_LIMIT = 100;
 let heatmapLegendDrag = null;
@@ -4528,6 +4528,13 @@ function onHeatmapLegendPointerUp() {
 
 function startHeatmapLegendDrag(e, item, legend) {
   if (e.button != null && e.button !== 0) return;
+  if (
+    walletsListOpen ||
+    item.classList.contains("is-disabled") ||
+    item.getAttribute("aria-disabled") === "true"
+  ) {
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
   if (heatmapLegendDrag) endHeatmapLegendDrag(false);
@@ -4632,11 +4639,21 @@ function createWalletsSortHeader(options) {
 }
 
 function refreshWalletsSortHeaders() {
-  const headTable = document.querySelector(".schedule-wallets-table--head");
+  const headTable = document.querySelector(".schedule-wallets-table thead");
   if (!headTable) return;
-  const sightingsTh = headTable.querySelector("thead th:nth-child(2)");
-  const winTh = headTable.querySelector("thead th:nth-child(3)");
-  const lostTh = headTable.querySelector("thead th:nth-child(4)");
+  const pnlTh = headTable.querySelector("th:nth-child(2)");
+  const sightingsTh = headTable.querySelector("th:nth-child(3)");
+  const winTh = headTable.querySelector("th:nth-child(4)");
+  const lostTh = headTable.querySelector("th:nth-child(5)");
+  if (pnlTh) {
+    pnlTh.replaceChildren(
+      createWalletsSortHeader({
+        key: "pnl",
+        label: "P/L",
+        className: "is-pnl",
+      }),
+    );
+  }
   if (sightingsTh) {
     sightingsTh.replaceChildren(
       createWalletsSortHeader({ key: "sightings", label: "Sightings", className: "is-sightings" }),
@@ -4647,7 +4664,7 @@ function refreshWalletsSortHeaders() {
       createWalletsSortHeader({
         key: "iWin",
         label: "I WON",
-        className: "schedule-wallets-stat-label is-win",
+        className: "is-win",
       }),
     );
   }
@@ -4656,7 +4673,7 @@ function refreshWalletsSortHeaders() {
       createWalletsSortHeader({
         key: "iLost",
         label: "I LOST",
-        className: "schedule-wallets-stat-label is-lost",
+        className: "is-lost",
       }),
     );
   }
@@ -4664,7 +4681,7 @@ function refreshWalletsSortHeaders() {
 
 function buildWalletsColgroup() {
   const colgroup = document.createElement("colgroup");
-  for (const width of ["46%", "18%", "18%", "18%"]) {
+  for (const width of ["36%", "16%", "16%", "16%", "16%"]) {
     const col = document.createElement("col");
     col.style.width = width;
     colgroup.appendChild(col);
@@ -4672,14 +4689,19 @@ function buildWalletsColgroup() {
   return colgroup;
 }
 
-function buildWalletsHeadTable() {
-  const table = document.createElement("table");
-  table.className = "schedule-wallets-table schedule-wallets-table--head";
-  table.appendChild(buildWalletsColgroup());
+function buildWalletsThead() {
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   const addressTh = document.createElement("th");
   addressTh.textContent = "Address";
+  const pnlTh = document.createElement("th");
+  pnlTh.appendChild(
+    createWalletsSortHeader({
+      key: "pnl",
+      label: "P/L",
+      className: "is-pnl",
+    }),
+  );
   const sightingsTh = document.createElement("th");
   sightingsTh.appendChild(
     createWalletsSortHeader({ key: "sightings", label: "Sightings", className: "is-sightings" }),
@@ -4689,7 +4711,7 @@ function buildWalletsHeadTable() {
     createWalletsSortHeader({
       key: "iWin",
       label: "I WON",
-      className: "schedule-wallets-stat-label is-win",
+      className: "is-win",
     }),
   );
   const lostTh = document.createElement("th");
@@ -4697,28 +4719,55 @@ function buildWalletsHeadTable() {
     createWalletsSortHeader({
       key: "iLost",
       label: "I LOST",
-      className: "schedule-wallets-stat-label is-lost",
+      className: "is-lost",
     }),
   );
-  headRow.append(addressTh, sightingsTh, winTh, lostTh);
+  headRow.append(addressTh, pnlTh, sightingsTh, winTh, lostTh);
   thead.appendChild(headRow);
-  table.appendChild(thead);
-  return table;
+  return thead;
 }
+
+function formatWalletPnl(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return { text: "$0.00", sign: 0 };
+  const abs = Math.abs(n);
+  const text =
+    abs >= 1000
+      ? `${n >= 0 ? "+" : "-"}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+      : `${n >= 0 ? "+" : "-"}$${abs.toFixed(2)}`;
+  const sign = n > 1e-9 ? 1 : n < -1e-9 ? -1 : 0;
+  return { text, sign };
+}
+
+const WALLETS_OPEN_ICON_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3H3v10h10v-3"/><path d="M9 3h4v4"/><path d="M7 9l6-6"/></svg>';
+const WALLETS_CLOSE_ICON_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4L4 12"/></svg>';
 
 function syncWalletsListOpenUi() {
   const page = $("page-schedule-heatmap");
   const week = document.querySelector(".schedule-week-layout");
   const panel = $("schedule-wallets-panel");
+  const legend = document.querySelector(".heatmap-legend");
   const open = walletsListOpen && isHeatmapViewActive();
   walletsListOpen = open;
   page?.classList.toggle("is-wallets-list-view", open);
+  legend?.classList.toggle("is-wallets-list-open", open);
   if (week) week.hidden = open;
   if (panel) panel.hidden = !open;
+
+  document.querySelectorAll(".heatmap-legend-item").forEach((item) => {
+    const isWallets = item.dataset.metric === "wallets";
+    item.classList.toggle("is-wallets-open", open && isWallets);
+    item.classList.toggle("is-disabled", open && !isWallets);
+    item.setAttribute("aria-disabled", open && !isWallets ? "true" : "false");
+  });
+
   document.querySelectorAll(".heatmap-legend-open-btn").forEach((btn) => {
     btn.setAttribute("aria-pressed", open ? "true" : "false");
-    btn.title = open ? "Back to heatmap" : "Open wallet list";
-    btn.closest(".heatmap-legend-item")?.classList.toggle("is-wallets-open", open);
+    btn.setAttribute("aria-label", open ? "Close wallet list" : "Open wallet list");
+    btn.title = open ? "Close wallet list" : "Open wallet list";
+    btn.innerHTML = open ? WALLETS_CLOSE_ICON_SVG : WALLETS_OPEN_ICON_SVG;
   });
 }
 
@@ -4733,13 +4782,13 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
   const cols = $("schedule-wallets-cols");
   const countEl = $("schedule-wallets-count");
   if (!body) return;
+  if (cols) {
+    cols.hidden = true;
+    cols.replaceChildren();
+  }
 
   if (errorMessage) {
     walletsListCache = [];
-    if (cols) {
-      cols.hidden = true;
-      cols.replaceChildren();
-    }
     body.innerHTML = "";
     const err = document.createElement("div");
     err.className = "schedule-wallets-error";
@@ -4762,23 +4811,15 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
   }
 
   if (list.length === 0) {
-    if (cols) {
-      cols.hidden = true;
-      cols.replaceChildren();
-    }
     body.innerHTML =
       '<div class="schedule-wallets-empty">No wallets recorded for this market yet.</div>';
     return;
   }
 
-  if (cols) {
-    cols.hidden = false;
-    cols.replaceChildren(buildWalletsHeadTable());
-  }
-
   const table = document.createElement("table");
-  table.className = "schedule-wallets-table schedule-wallets-table--body";
+  table.className = "schedule-wallets-table";
   table.appendChild(buildWalletsColgroup());
+  table.appendChild(buildWalletsThead());
 
   const tbody = document.createElement("tbody");
   for (const wallet of list) {
@@ -4793,8 +4834,15 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
       link.href = profileUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      link.textContent = addr;
       link.title = "Open Polymarket profile";
+      const addrText = document.createElement("span");
+      addrText.className = "schedule-wallets-address-text";
+      addrText.textContent = addr;
+      const linkIcon = document.createElement("span");
+      linkIcon.className = "schedule-wallets-address-link-icon";
+      linkIcon.setAttribute("aria-hidden", "true");
+      linkIcon.innerHTML = WALLETS_OPEN_ICON_SVG;
+      link.append(addrText, linkIcon);
       address.appendChild(link);
     } else {
       address.textContent = addr || "—";
@@ -4802,6 +4850,15 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
     const sightings = document.createElement("td");
     const count = walletSightingsForSeries(wallet, series);
     sightings.textContent = count == null ? "—" : String(count);
+    const pnlTd = document.createElement("td");
+    const pnlBadge = document.createElement("span");
+    const { text: pnlText, sign: pnlSign } = formatWalletPnl(wallet.pnl);
+    pnlBadge.className = "schedule-wallets-stat-value is-pnl";
+    if (pnlSign > 0) pnlBadge.classList.add("is-positive");
+    else if (pnlSign < 0) pnlBadge.classList.add("is-negative");
+    else pnlBadge.classList.add("is-neutral");
+    pnlBadge.textContent = pnlText;
+    pnlTd.appendChild(pnlBadge);
     const iWin = document.createElement("td");
     const iWinBadge = document.createElement("span");
     iWinBadge.className = "schedule-wallets-stat-value is-win";
@@ -4812,7 +4869,7 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
     iLostBadge.className = "schedule-wallets-stat-value is-lost";
     iLostBadge.textContent = Number.isFinite(Number(wallet.iLost)) ? String(wallet.iLost) : "0";
     iLost.appendChild(iLostBadge);
-    tr.append(address, sightings, iWin, iLost);
+    tr.append(address, pnlTd, sightings, iWin, iLost);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
@@ -4829,11 +4886,6 @@ async function loadTraderWalletsList() {
   const dir = walletsListSort.dir || "desc";
   const sorting = Boolean(walletsListSortLoadingKey);
   if (!sorting) {
-    const cols = $("schedule-wallets-cols");
-    if (cols) {
-      cols.hidden = true;
-      cols.replaceChildren();
-    }
     body.innerHTML = '<div class="schedule-wallets-empty">Loading…</div>';
     if (countEl) countEl.textContent = "";
   }
@@ -4852,7 +4904,12 @@ async function loadTraderWalletsList() {
     }
     const data = await res.json();
     if (token !== walletsListLoadToken) return;
-    if (data?.sort === "sightings" || data?.sort === "iWin" || data?.sort === "iLost") {
+    if (
+      data?.sort === "sightings" ||
+      data?.sort === "iWin" ||
+      data?.sort === "iLost" ||
+      data?.sort === "pnl"
+    ) {
       walletsListSort = {
         key: data.sort,
         dir: data.dir === "asc" ? "asc" : "desc",
@@ -4926,8 +4983,7 @@ function initHeatmapLegend() {
       openBtn.setAttribute("aria-label", "Open wallet list");
       openBtn.setAttribute("aria-pressed", "false");
       openBtn.title = "Open wallet list";
-      openBtn.innerHTML =
-        '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3H3v10h10v-3"/><path d="M9 3h4v4"/><path d="M7 9l6-6"/></svg>';
+      openBtn.innerHTML = WALLETS_OPEN_ICON_SVG;
       openBtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();

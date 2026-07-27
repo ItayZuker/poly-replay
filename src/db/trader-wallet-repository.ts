@@ -10,6 +10,10 @@ export interface TraderWalletDocument {
   lastSeenAt: number;
   markets: Record<string, number>;
   totalSightings: number;
+  /** Cached Polymarket all-time leaderboard PnL (USD). */
+  polymarketPnl?: number;
+  /** Unix seconds when polymarketPnl was last refreshed. */
+  polymarketPnlUpdatedAt?: number;
 }
 
 async function collection() {
@@ -49,6 +53,43 @@ export async function findTraderWalletsByAddresses(
     out.set(doc._id, toEntry(doc));
   }
   return out;
+}
+
+export async function getTraderWalletPnlCache(
+  addresses: string[],
+): Promise<Map<string, { pnl: number; updatedAt: number }>> {
+  const unique = [...new Set(addresses.map(normalizeAddress).filter(Boolean))];
+  const out = new Map<string, { pnl: number; updatedAt: number }>();
+  if (unique.length === 0) return out;
+  const col = await collection();
+  const docs = await col
+    .find({ _id: { $in: unique } })
+    .project({ _id: 1, polymarketPnl: 1, polymarketPnlUpdatedAt: 1 })
+    .toArray();
+  for (const doc of docs) {
+    const pnl = Number(doc.polymarketPnl);
+    const updatedAt = Number(doc.polymarketPnlUpdatedAt);
+    if (!Number.isFinite(pnl) || !Number.isFinite(updatedAt)) continue;
+    out.set(String(doc._id), { pnl, updatedAt });
+  }
+  return out;
+}
+
+export async function setTraderWalletPnl(address: string, pnl: number): Promise<void> {
+  const addr = normalizeAddress(address);
+  if (!addr) return;
+  const value = Number(pnl);
+  if (!Number.isFinite(value)) return;
+  const col = await collection();
+  await col.updateOne(
+    { _id: addr },
+    {
+      $set: {
+        polymarketPnl: value,
+        polymarketPnlUpdatedAt: Math.floor(Date.now() / 1000),
+      },
+    },
+  );
 }
 
 export async function upsertTraderWalletsForWindow(

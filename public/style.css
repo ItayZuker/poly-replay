@@ -1700,6 +1700,56 @@ body {
   overflow: hidden;
 }
 
+.heatmap-legend-item.is-wallets-open {
+  border-color: var(--accent);
+}
+
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-disabled {
+  opacity: 0.42;
+  filter: grayscale(0.45);
+  pointer-events: none;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--panel) 70%, var(--bg));
+}
+
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-disabled .heatmap-legend-label,
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-disabled .heatmap-legend-desc {
+  color: color-mix(in srgb, var(--muted) 75%, transparent);
+}
+
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-disabled .heatmap-legend-swatch {
+  opacity: 0.45;
+}
+
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-disabled .heatmap-legend-drag-handle {
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+  background: color-mix(in srgb, #161b22 70%, var(--bg));
+  cursor: default;
+}
+
+/* Accent ring stays outside the handle fill; drag disabled while wallets list is open. */
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-wallets-open {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 0;
+  padding: 1px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-wallets-open .heatmap-legend-drag-handle {
+  border-radius: 2px 0 0 2px;
+  cursor: default;
+  pointer-events: none;
+}
+
+.heatmap-legend.is-wallets-list-open .heatmap-legend-item.is-wallets-open .heatmap-legend-item-body {
+  border-radius: 0 2px 2px 0;
+  background: var(--panel);
+}
+
 .heatmap-legend-drag-handle {
   flex: 0 0 22px;
   display: flex;
@@ -1806,6 +1856,11 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   color: var(--accent);
 }
 
+.heatmap-legend-item.is-wallets-open .heatmap-legend-open-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, #21262d);
+}
+
 .heatmap-legend-open-btn svg {
   width: 14px;
   height: 14px;
@@ -1862,9 +1917,7 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 }
 
 .schedule-wallets-cols {
-  flex-shrink: 0;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  display: none;
 }
 
 .schedule-wallets-cols[hidden] {
@@ -1878,7 +1931,6 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   padding: 0;
   scrollbar-width: thin;
   scrollbar-color: #484f58 transparent;
-  scrollbar-gutter: stable;
 }
 
 .schedule-wallets-empty,
@@ -1907,26 +1959,33 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   vertical-align: middle;
 }
 
-.schedule-wallets-table--head th {
-  position: static;
-  top: auto;
-  z-index: auto;
+/* Spinner gutter: titles + values share the same left edge; spinner sits left of that. */
+.schedule-wallets-table th:nth-child(n + 2),
+.schedule-wallets-table td:nth-child(n + 2) {
+  padding-left: 28px;
+}
+
+.schedule-wallets-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   background: var(--panel);
   color: var(--muted);
   font-weight: 500;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  border-bottom: none;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border);
 }
 
-.schedule-wallets-table--body td {
+.schedule-wallets-table tbody td {
   color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: left;
 }
 
-.schedule-wallets-table--body tr:last-child td {
+.schedule-wallets-table tbody tr:last-child td {
   border-bottom: none;
 }
 
@@ -1937,15 +1996,43 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 }
 
 .schedule-wallets-address-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
   color: var(--accent);
   text-decoration: none;
+}
+
+.schedule-wallets-address-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.schedule-wallets-address-link-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.schedule-wallets-address-link-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 
 .schedule-wallets-address-link:hover {
   text-decoration: underline;
 }
 
+.schedule-wallets-address-link:hover .schedule-wallets-address-link-icon {
+  text-decoration: none;
+}
+
 .schedule-wallets-sort-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
@@ -1962,16 +2049,21 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   text-align: left;
 }
 
-.schedule-wallets-sort-btn.is-sightings {
+.schedule-wallets-sort-btn.is-sightings,
+.schedule-wallets-sort-btn.is-pnl {
   color: var(--muted);
 }
 
-.schedule-wallets-sort-btn.is-sightings:hover {
+.schedule-wallets-sort-btn.is-sightings:hover,
+.schedule-wallets-sort-btn.is-pnl:hover {
   color: var(--text);
 }
 
-.schedule-wallets-sort-btn.schedule-wallets-stat-label {
-  display: inline-flex;
+.schedule-wallets-sort-btn.is-win .schedule-wallets-sort-label,
+.schedule-wallets-sort-btn.is-lost .schedule-wallets-sort-label,
+.schedule-wallets-stat-value.is-win,
+.schedule-wallets-stat-value.is-lost {
+  display: inline-block;
   font-size: 0.68rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1984,16 +2076,38 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   letter-spacing: 0;
 }
 
-.schedule-wallets-stat-label.is-win,
+.schedule-wallets-sort-btn.is-win .schedule-wallets-sort-label,
 .schedule-wallets-stat-value.is-win {
   background: var(--up);
-  color: #fff;
 }
 
-.schedule-wallets-stat-label.is-lost,
+.schedule-wallets-sort-btn.is-lost .schedule-wallets-sort-label,
 .schedule-wallets-stat-value.is-lost {
   background: var(--down);
-  color: #fff;
+}
+
+.schedule-wallets-stat-value.is-pnl {
+  display: inline;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.schedule-wallets-stat-value.is-pnl.is-positive {
+  color: var(--up);
+}
+
+.schedule-wallets-stat-value.is-pnl.is-negative {
+  color: var(--down);
+}
+
+.schedule-wallets-stat-value.is-pnl.is-neutral {
+  color: var(--muted);
 }
 
 .schedule-wallets-stat-value {
@@ -2021,15 +2135,21 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 }
 
 .schedule-wallets-sort-spinner {
+  position: absolute;
+  left: -16px;
+  top: 0;
+  bottom: 0;
   width: 10px;
   height: 10px;
-  flex-shrink: 0;
+  margin-top: auto;
+  margin-bottom: auto;
   box-sizing: border-box;
   border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
   border-top-color: currentColor;
   border-radius: 50%;
   animation: schedule-placement-spin 0.7s linear infinite;
   visibility: visible;
+  pointer-events: none;
 }
 
 .schedule-wallets-sort-spinner.is-idle {
@@ -2043,6 +2163,8 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 }
 
 .schedule-wallets-table th:has(.schedule-wallets-sort-btn) {
+  position: sticky;
+  overflow: visible;
   text-transform: none;
   letter-spacing: 0;
 }

@@ -67,7 +67,12 @@ import {
   loadAllHeatmapWindows,
   setHeatmapUpdateListener,
 } from "./heatmap-service.js";
-import type { EnrichedLiveWindowState, SimSetup, TradingPhaseSetup } from "./types.js";
+import type {
+  EnrichedLiveWindowState,
+  SimSetup,
+  TradingPhaseSetup,
+  WalletRegistryEntry,
+} from "./types.js";
 import {
   dropTradingClient,
   getTradingAccountStatus,
@@ -89,6 +94,7 @@ import {
 import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
 import { ensureWalletRegistryReady, listWalletsForSeries, countWalletsForSeries } from "./wallet-registry.js";
 import { computeWalletWinLossForUser } from "./db/wallet-win-loss.js";
+import { resolvePolymarketPnls } from "./wallet-pnl.js";
 import { traderRegistryService } from "./trader-registry-service.js";
 import {
   authenticateUser,
@@ -1255,7 +1261,12 @@ app.get("/api/trader-wallets", async (req, res) => {
     const series = parseSeriesParam(req);
     const sortRaw = typeof req.query.sort === "string" ? req.query.sort.trim() : "sightings";
     const sort =
-      sortRaw === "iWin" || sortRaw === "iLost" || sortRaw === "sightings" ? sortRaw : "sightings";
+      sortRaw === "iWin" ||
+      sortRaw === "iLost" ||
+      sortRaw === "pnl" ||
+      sortRaw === "sightings"
+        ? sortRaw
+        : "sightings";
     const dir = req.query.dir === "asc" ? "asc" : "desc";
     const limitRaw = Number(req.query.limit);
     const limit =
@@ -1266,28 +1277,64 @@ app.get("/api/trader-wallets", async (req, res) => {
       countWalletsForSeries(series),
     ]);
 
-    const attachStats = <T extends { address: string }>(wallet: T) => {
+    const attachUserStats = <T extends { address: string }>(wallet: T) => {
       const stats = winLoss.get(String(wallet.address).toLowerCase()) ?? {
         iWin: 0,
         iLost: 0,
       };
-      return { ...wallet, iWin: stats.iWin, iLost: stats.iLost };
+      return {
+        ...wallet,
+        iWin: stats.iWin,
+        iLost: stats.iLost,
+      };
     };
 
-    let rows;
+    type TraderWalletApiRow = WalletRegistryEntry & {
+      iWin: number;
+      iLost: number;
+      pnl: number;
+    };
+    let rows: TraderWalletApiRow[];
     if (sort === "sightings") {
       const wallets = await listWalletsForSeries(series, {
         sortBy: "sightings",
         dir,
         limit,
       });
-      rows = wallets.map(attachStats);
-    } else {
-      const wallets = await listWalletsForSeries(series);
-      rows = wallets.map(attachStats);
-      const metric = sort === "iWin" ? "iWin" : "iLost";
+      const withUser = wallets.map(attachUserStats);
+      const pnlMap = await resolvePolymarketPnls(withUser.map((w) => w.address));
+      rows = withUser.map((wallet) => ({
+        ...wallet,
+        pnl: Math.round((pnlMap.get(String(wallet.address).toLowerCase()) ?? 0) * 100) / 100,
+      }));
+    } else if (sort === "pnl") {
+      // Rank among the most-seen wallets in this series (refresh PnL, then top/bottom 100).
+      const candidates = await listWalletsForSeries(series, {
+        sortBy: "sightings",
+        dir: "desc",
+        limit: Math.max(limit, 300),
+      });
+      const withUser = candidates.map(attachUserStats);
+      const pnlMap = await resolvePolymarketPnls(withUser.map((w) => w.address));
+      rows = withUser.map((wallet) => ({
+        ...wallet,
+        pnl: Math.round((pnlMap.get(String(wallet.address).toLowerCase()) ?? 0) * 100) / 100,
+      }));
       const dirMul = dir === "asc" ? 1 : -1;
       rows.sort((a, b) => {
+        if (a.pnl !== b.pnl) return a.pnl < b.pnl ? -dirMul : dirMul;
+        const as = Number(a.markets?.[series]) || 0;
+        const bs = Number(b.markets?.[series]) || 0;
+        if (as !== bs) return bs - as;
+        return String(a.address).localeCompare(String(b.address));
+      });
+      rows = rows.slice(0, limit);
+    } else {
+      const wallets = await listWalletsForSeries(series);
+      const withUser = wallets.map(attachUserStats);
+      const metric = sort === "iWin" ? "iWin" : "iLost";
+      const dirMul = dir === "asc" ? 1 : -1;
+      withUser.sort((a, b) => {
         const av = Number(a[metric]) || 0;
         const bv = Number(b[metric]) || 0;
         if (av !== bv) return av < bv ? -dirMul : dirMul;
@@ -1296,7 +1343,12 @@ app.get("/api/trader-wallets", async (req, res) => {
         if (as !== bs) return bs - as;
         return String(a.address).localeCompare(String(b.address));
       });
-      rows = rows.slice(0, limit);
+      const page = withUser.slice(0, limit);
+      const pnlMap = await resolvePolymarketPnls(page.map((w) => w.address));
+      rows = page.map((wallet) => ({
+        ...wallet,
+        pnl: Math.round((pnlMap.get(String(wallet.address).toLowerCase()) ?? 0) * 100) / 100,
+      }));
     }
 
     res.json({
