@@ -52,7 +52,7 @@ Saved over REST to the database (`trading_setups_real` / `schedual_setups_real` 
 
 **Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill).
 
-Live **Fill success** (Market → Trade) counts CLOB buy/sell attempts over the rolling 7-day cutoff and updates whenever an order is placed or later matches any size.
+Live **Fill success** (Market → Trade) tracks CLOB buy/sell outcomes over the rolling 7-day cutoff, broken down by **FAK / FOK / GTD**. Partial match = success. FAK/FOK count on fire/send; GTD counts only after the resting limit is touched while live (then success if any size matched, else miss). Strategy cancels with no touch stay out of the %.
 
 ```flow
 # Replay roles
@@ -69,5 +69,7 @@ Recorder worker -> SimulatorEngine over DATA_DIR ticks -> SSE stats
 | `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process |
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
 | `DATA_DIR` | Local tick/window files (default `./data`) |
+
+Heatmap and Replay load ~**14 days** of `recorded_windows`, then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than ~14 days are deleted on the recorder.
 
 Wallet credentials in [Settings](doc:settings) unlock Market/Schedule and live signing.

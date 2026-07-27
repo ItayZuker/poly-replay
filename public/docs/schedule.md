@@ -40,13 +40,15 @@ In **Replay** (**Simulator** on the switcher), a blue border frames the whole sc
 | Control | Meaning |
 |---------|---------|
 | **Latency (ms)** | Simulated delay for FAK fills and before GTD limits become live. Prefills from live feed latency (Market → Trade / Settings). |
-| **Fill success (%)** | Chance each would-be fill succeeds after latency (random per attempt). **100%** = always fill when the book allows; **0%** = never. Prefills from live **Fill success** (last 7 days). |
+| **Fill success (%)** | Chance each would-be fill succeeds after latency (random per attempt). **100%** = always fill when the book allows; **0%** = never. Prefills from live **Fill success** total % (last 7 days). |
 
 It sends the placed cards (and their setups) for the areas they cover on the week grid. For each card it loads recorded ticks in that day/hour slot and runs the same simulation engine as demo trading. Cards are processed **top-left first** (Monday → Sunday, then earlier UTC hour). Results stream back **one card at a time** (green / red / blue / gray + PnL). Gray is Replay-only: windows that ran with ticks but never triggered a buy. The top summary shows the **total**. Cards with **no windows/ticks** in their slot stay full color after Replay and show a centered **No Data** label; cards that ran over recordings use the completed stats look (including zeros if nothing hit).
 
 Replay schedule cards stay **editable** (move, resize, remove, place) — they are never locked like Live cards after a trade. Replay setups can also be edited in the setup editor while placed; on **Live**, phases stay locked until you remove the setup’s placements. While Replay is running, the button switches to **Stop** (stop icon, same style with a color pulse); click it to cancel. Changing a card on the Replay schedule also stops the run. Switching between **Live** and **Simulator** does **not** stop a running Replay — progress keeps applying and is restored when you return to Simulator.
 
-Replay uses the same simulation engine as demo trading. Window times/outcomes come from Mongo (`recorded_windows`, same as the heatmap); the engine still needs **local tick files** under `DATA_DIR` (book + Chainlink) for each window. If ticks were pruned or Dropbox only kept recent files locally, those day/hour cards stay empty even though the heatmap still shows activity. Turn **Recording** on per series under Market → Trade, and keep `DATA_DIR` fully available on disk for the rolling week.
+Replay uses the same simulation engine as demo trading. Window times/outcomes come from Mongo (`recorded_windows`, same as the heatmap); the engine still needs **local tick files** under `DATA_DIR` (book + Chainlink) for each window. If ticks were pruned or Dropbox only kept recent files locally, those day/hour cards stay empty even though the heatmap still shows activity. Turn **Recording** on per series under Market → Trade, and keep `DATA_DIR` fully available on disk.
+
+**Week grid history (Replay + Heatmap):** each UTC weekday×hour slot keeps the **latest** recording for that slot. A new day does **not** wipe last week’s whole column — new windows **override only the hour being recorded**. Hours not re-recorded yet still show last week’s data for that slot. Disk/Mongo retention is ~**14 days** so previous weekday hours can survive until replaced.
 
 | Role | Env | Behavior |
 |------|-----|----------|
@@ -57,4 +59,4 @@ If `SCHEDULE_REPLAY_SERVICE_URL` is empty, Replay runs in-process on this server
 
 ## Heatmap
 
-Day × hour intensity from recorded windows (e.g. crossings, range). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Simulator are independent toggles. On a recorder process, new windows update the heatmap as they finalize.
+Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay (new hour overrides that slot only; missing hours keep the previous week). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Simulator are independent toggles. On a recorder process, new windows update the heatmap as they finalize.

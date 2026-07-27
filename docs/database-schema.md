@@ -76,7 +76,7 @@ Logical names in this doc map to those keys. When reading raw JSON files, transl
 - A window spans `[windowStart, windowEnd)` in unix seconds (`windowEnd - windowStart` = 300 for 5m, 900 for 15m).
 - Ticks are recorded only while the window is active.
 - On window end: ticks are flushed, trader stats fetched, `windows/{windowStart}.json` written, `wallets.json` updated.
-- Files older than **7 days** (hardcoded) are **deleted** (ticks, local window JSON, and Mongo heatmap summaries). No zip archive. Pruning runs every hour on the recorder process and after each window finalizes.
+- Files older than **14 days** (hardcoded) are **deleted** (ticks, local window JSON, and Mongo heatmap summaries). No zip archive. Pruning runs every hour on the recorder process and after each window finalizes. Heatmap/Replay then keep the **latest** UTC weekday×hour only (new hour overrides that slot; missing hours keep the prior week).
 
 ---
 
@@ -88,7 +88,7 @@ data/
   wallets.json                 # global wallet registry (normal field names)
   btc_5m/
     ticks/
-      {windowStart}/          # last 7 days only
+      {windowStart}/          # last ~14 days only
         clob-raw.jsonl
         clob-book.jsonl
         chainlink.jsonl

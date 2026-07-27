@@ -67,4 +67,4 @@ data/
     windows/{windowStart}.json
 ```
 
-Only the last ~7 days are kept. Older ticks/windows are deleted hourly on the recorder process (no zip archive).
+Only the last ~14 days are kept (so previous weekday hours remain until re-recorded). Older ticks/windows are deleted hourly on the recorder process (no zip archive).

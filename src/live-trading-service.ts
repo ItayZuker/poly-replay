@@ -54,12 +54,16 @@ import {
   type TradingStatEvent,
 } from "./db/trading-session-memory-repository.js";
 import {
+  closeFillAttempt,
   markFillAttemptSuccess,
+  markFillAttemptTouched,
   recordFillAttempt,
   summarizeFillSuccess,
+  type FillOrderKind,
   type FillSuccessStats,
 } from "./db/fill-attempt-repository.js";
 import { getRollingCutoffUtcSec } from "./heatmap-service.js";
+import { clobMarketFeed } from "./clob-market-feed.js";
 import {
   getUserById,
   listUsersForLiveTrading,
@@ -109,6 +113,8 @@ interface RestingBuyOrder {
   cardId?: string;
   /** Schedule card that owned this order when it was placed. */
   placementId?: string;
+  /** Limit was touched while live (fill-success GTD opportunity). */
+  levelTouched?: boolean;
 }
 
 /** Live optimize (FAK) arm/hunt state — independent of SimulatorEngine. */
@@ -139,6 +145,7 @@ interface PendingBuyCancel {
     slug?: string;
     cardId?: string;
     placementId?: string;
+    levelTouched?: boolean;
   };
   reason: string;
   attempts: number;
@@ -175,6 +182,8 @@ interface RestingSellOrder {
   limitPrice: number;
   sizeMatched: number;
   phaseIdx: number;
+  /** Limit was touched while live (fill-success GTD opportunity). */
+  levelTouched?: boolean;
   tokenId?: string;
   conditionId?: string;
   slug?: string;
@@ -551,6 +560,40 @@ function isRoutineGtdCancelReason(reason: string): boolean {
   return reason.startsWith("gap filter");
 }
 
+function emptyFillSuccessStats(cutoffUtc = getRollingCutoffUtcSec()): FillSuccessStats {
+  const emptyKind = { attempts: 0, successes: 0, ratePct: null as number | null };
+  return {
+    attempts: 0,
+    successes: 0,
+    ratePct: null,
+    cutoffUtc,
+    byKind: { FAK: { ...emptyKind }, FOK: { ...emptyKind }, GTD: { ...emptyKind } },
+  };
+}
+
+/** True when the book/trade reached a resting GTD limit (opportunity to fill). */
+function gtdLimitTouched(
+  state: LiveWindowState,
+  side: "up" | "down",
+  leg: "buy" | "sell",
+  limitPrice: number,
+  tokenId?: string,
+): boolean {
+  if (!Number.isFinite(limitPrice) || limitPrice <= 0) return false;
+  const ask = side === "up" ? state.yesAsk : state.noAsk;
+  const bid = side === "up" ? state.yesBid : state.noBid;
+  if (leg === "buy") {
+    if (ask != null && ask <= limitPrice + 1e-9) return true;
+  } else if (bid != null && bid >= limitPrice - 1e-9) {
+    return true;
+  }
+  const id = String(tokenId ?? "").trim();
+  if (!id) return false;
+  const last = clobMarketFeed.getCachedMarketInfo(id)?.lastTradePrice;
+  if (last == null || !Number.isFinite(last)) return false;
+  return leg === "buy" ? last <= limitPrice + 1e-9 : last >= limitPrice - 1e-9;
+}
+
 function isBalanceAllowanceError(err: string): boolean {
   return /not enough balance|allowance/i.test(err);
 }
@@ -677,13 +720,8 @@ export class LiveTradingService {
   private settlementRecheckedIds = new Set<string>();
   /** Market this engine's config/schedule/resting orders are bound to. */
   private boundSeries: string = DEFAULT_MARKET_SERIES;
-  /** Rolling ~7-day CLOB fill success (buys + sells). */
-  private fillSuccessStats: FillSuccessStats = {
-    attempts: 0,
-    successes: 0,
-    ratePct: null,
-    cutoffUtc: getRollingCutoffUtcSec(),
-  };
+  /** Rolling ~7-day CLOB fill success (buys + sells) by order kind. */
+  private fillSuccessStats: FillSuccessStats = emptyFillSuccessStats();
 
   constructor(private readonly userId: string) {}
 
@@ -715,6 +753,10 @@ export class LiveTradingService {
     side?: "up" | "down";
     series?: string;
     orderId?: string;
+    orderKind: FillOrderKind;
+    limitPrice?: number;
+    countable?: boolean;
+    touched?: boolean;
     success?: boolean;
   }): Promise<void> {
     if (!isTradingExecutor()) return;
@@ -725,6 +767,10 @@ export class LiveTradingService {
         side: input.side,
         series: input.series ?? this.boundSeries,
         orderId: input.orderId,
+        orderKind: input.orderKind,
+        limitPrice: input.limitPrice,
+        countable: input.countable,
+        touched: input.touched,
         success: input.success,
       });
       this.applyFillSuccessStats(stats);
@@ -746,8 +792,68 @@ export class LiveTradingService {
     }
   }
 
+  /** GTD: book/trade reached the limit while the order was live. */
+  private async noteFillTouched(orderId: string | undefined): Promise<void> {
+    if (!isTradingExecutor()) return;
+    const id = String(orderId ?? "").trim();
+    if (!id) return;
+    try {
+      const stats = await markFillAttemptTouched(this.userId, id);
+      this.applyFillSuccessStats(stats);
+    } catch (err) {
+      logService.warn("trading", `Failed to mark fill touch: ${String(err)}`);
+    }
+  }
+
+  /**
+   * GTD left the book without a further fill. Countable only if touched while live.
+   */
+  private async noteFillClose(orderId: string | undefined): Promise<void> {
+    if (!isTradingExecutor()) return;
+    const id = String(orderId ?? "").trim();
+    if (!id) return;
+    try {
+      const stats = await closeFillAttempt(this.userId, id);
+      this.applyFillSuccessStats(stats);
+    } catch (err) {
+      logService.warn("trading", `Failed to close fill attempt: ${String(err)}`);
+    }
+  }
+
+  private async maybeNoteGtdTouch(
+    state: LiveWindowState,
+    resting: {
+      orderId: string;
+      side: "up" | "down";
+      limitPrice: number;
+      tokenId?: string;
+      levelTouched?: boolean;
+    },
+    leg: "buy" | "sell",
+  ): Promise<boolean> {
+    if (resting.levelTouched) return true;
+    if (
+      !gtdLimitTouched(state, resting.side, leg, resting.limitPrice, resting.tokenId)
+    ) {
+      return false;
+    }
+    resting.levelTouched = true;
+    await this.noteFillTouched(resting.orderId);
+    return true;
+  }
+
   getFillSuccessStats(): FillSuccessPublicStats {
-    return { ...this.fillSuccessStats };
+    const stats = this.fillSuccessStats?.byKind
+      ? this.fillSuccessStats
+      : emptyFillSuccessStats(this.fillSuccessStats?.cutoffUtc);
+    return {
+      ...stats,
+      byKind: {
+        FAK: { ...stats.byKind.FAK },
+        FOK: { ...stats.byKind.FOK },
+        GTD: { ...stats.byKind.GTD },
+      },
+    };
   }
 
   getConfig(): TradingConfig {
@@ -2240,7 +2346,7 @@ export class LiveTradingService {
       await this.cancelAllRestingBuys("startTrading off");
     }
     if (this.restingSell && !this.config.startTrading) {
-      await this.cancelRestingSell("startTrading off");
+      await this.cancelRestingSell("startTrading off", state);
     }
   }
 
@@ -2511,7 +2617,10 @@ export class LiveTradingService {
     await this.cancelRestingBuySide(other, "first fill — cancel other", nowMs, state);
   }
 
-  private async cancelRestingSell(reason: string): Promise<void> {
+  private async cancelRestingSell(
+    reason: string,
+    state?: LiveWindowState,
+  ): Promise<void> {
     const resting = this.restingSell;
     if (!resting) return;
     this.restingSell = null;
@@ -2519,7 +2628,30 @@ export class LiveTradingService {
     this.unlockQuote(resting.side, "sell");
     logService.info("trading", `Cancel resting GTD sell (${reason})`);
     if (!isTradingExecutor()) return;
+    if (state) {
+      await this.maybeNoteGtdTouch(state, resting, "sell");
+    }
     await cancelOpenOrder(this.userId, resting.orderId);
+    const snap = await fetchOpenOrder(this.userId, resting.orderId);
+    const matched = Math.max(0, snap?.sizeMatched ?? 0);
+    if (matched > resting.sizeMatched + 1e-9 && state) {
+      const delta = matched - resting.sizeMatched;
+      const fillPrice =
+        snap && snap.price > 0 ? snap.price : resting.limitPrice;
+      await this.noteFillSuccess(resting.orderId);
+      await this.recordSellFill(
+        state,
+        resting.side,
+        delta,
+        fillPrice,
+        delta * fillPrice,
+        resting.tokenId ?? snap?.assetId,
+        resting.conditionId ?? snap?.market,
+        undefined,
+      );
+      return;
+    }
+    await this.noteFillClose(resting.orderId);
   }
 
   /**
@@ -2527,12 +2659,15 @@ export class LiveTradingService {
    * queue retries so a phase-1 5¢ GTD cannot silently fill in phase 2.
    */
   private async finishBuyCancel(
-    resting: PendingBuyCancel["resting"],
+    resting: PendingBuyCancel["resting"] & { levelTouched?: boolean },
     reason: string,
     state: LiveWindowState | undefined,
     nowMs?: number,
   ): Promise<void> {
     const now = nowMs ?? Date.now();
+    if (state) {
+      await this.maybeNoteGtdTouch(state, resting, "buy");
+    }
     if (state && (await this.harvestBuyCancelFill(resting, state))) {
       return;
     }
@@ -2555,7 +2690,9 @@ export class LiveTradingService {
           `GTD buy cancel queued for retry (${reason}): ${result.error ?? "still open"}`,
         );
       }
+      return;
     }
+    await this.noteFillClose(resting.orderId);
   }
 
   private enqueueBuyCancel(
@@ -2639,6 +2776,7 @@ export class LiveTradingService {
     this.pendingBuyCancels = remaining;
 
     for (const item of due) {
+      await this.maybeNoteGtdTouch(state, item.resting, "buy");
       if (await this.harvestBuyCancelFill(item.resting, state)) {
         continue;
       }
@@ -2649,6 +2787,7 @@ export class LiveTradingService {
         );
         // Last-ditch cancel; confirm any race fill via pending buy poll.
         void cancelOpenOrder(this.userId, item.resting.orderId, { quiet: true });
+        await this.noteFillClose(item.resting.orderId);
         if (!this.positions.up && !this.positions.down) {
           this.beginPendingBuyConfirm(state, {
             side: item.resting.side,
@@ -2684,6 +2823,8 @@ export class LiveTradingService {
           now + Math.min(5_000, 400 * item.attempts),
           item.attempts + 1,
         );
+      } else {
+        await this.noteFillClose(item.resting.orderId);
       }
     }
   }
@@ -2802,12 +2943,7 @@ export class LiveTradingService {
           logTag: `phase ${phaseIdx + 1}`,
         });
         if (!result.success || !result.orderId) {
-          await this.noteFillAttempt({
-            leg: "buy",
-            side,
-            series: state.series,
-            success: false,
-          });
+          // Place never rested — not a GTD fill opportunity.
           if (this.restingBuys.size === 0) this.autoEngine.setExternalBuyPaused(false);
           const err = result.error ?? "";
           if (/expiration/i.test(err)) {
@@ -2827,6 +2963,10 @@ export class LiveTradingService {
           side,
           series: state.series,
           orderId: result.orderId,
+          orderKind: "GTD",
+          limitPrice,
+          countable: immediateFill,
+          touched: immediateFill,
           success: immediateFill,
         });
 
@@ -2891,6 +3031,7 @@ export class LiveTradingService {
       );
       return;
     }
+    await this.maybeNoteGtdTouch(state, resting, "buy");
     const snap = await fetchOpenOrder(this.userId, resting.orderId);
     // Transient fetch failures — keep tracking so we don't double-place.
     if (!snap) return;
@@ -2899,6 +3040,7 @@ export class LiveTradingService {
     if (matched > resting.sizeMatched + 1e-9) {
       const delta = matched - resting.sizeMatched;
       const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
+      resting.levelTouched = true;
       await this.noteFillSuccess(resting.orderId);
       await this.recordBuyFill(
         state,
@@ -2927,6 +3069,7 @@ export class LiveTradingService {
         still.sizeMatched = matched;
         still.tokenId = still.tokenId ?? snap.assetId;
         still.conditionId = still.conditionId ?? snap.market;
+        still.levelTouched = true;
       }
     }
 
@@ -2945,6 +3088,9 @@ export class LiveTradingService {
         await this.cancelRestingBuySide(side, "PTB crossing abort", nowMs, state);
       } else {
         this.restingBuys.delete(side);
+        if (matched <= current.sizeMatched + 1e-9) {
+          await this.noteFillClose(current.orderId);
+        }
         this.notify();
       }
       return;
@@ -2955,6 +3101,9 @@ export class LiveTradingService {
 
     // Matched, cancelled, expired, unmatched, etc.
     this.restingBuys.delete(side);
+    if (matched <= 1e-9) {
+      await this.noteFillClose(current.orderId);
+    }
     if (!this.positions.up && !this.positions.down && this.restingBuys.size === 0) {
       this.autoEngine.setExternalBuyPaused(false);
     }
@@ -2968,7 +3117,7 @@ export class LiveTradingService {
   ): Promise<void> {
     const heldSides = SIDES_ORDER.filter((s) => this.positions[s]);
     if (heldSides.length === 0) {
-      if (this.restingSell) await this.cancelRestingSell("no position");
+      if (this.restingSell) await this.cancelRestingSell("no position", state);
       return;
     }
     const nowSec = Math.floor((nowMs ?? state.lastTickMs ?? Date.now()) / 1000);
@@ -2976,14 +3125,14 @@ export class LiveTradingService {
     const phaseIdx = phaseIndexForState(state, setup.phaseSplit, nowSec);
     const phase = setup.phases[phaseIdx] ?? setup.phases[0];
     if (!sellEnabledForPhase(phase)) {
-      if (this.restingSell) await this.cancelRestingSell("sell disabled");
+      if (this.restingSell) await this.cancelRestingSell("sell disabled", state);
       return;
     }
     if (this.restingSell) {
       const sellSide = this.restingSell.side;
       const pos = this.positions[sellSide];
       if (!pos) {
-        await this.cancelRestingSell("no position");
+        await this.cancelRestingSell("no position", state);
       } else {
         const wantLimit = Math.min(
           0.99,
@@ -2993,7 +3142,7 @@ export class LiveTradingService {
           this.restingSell.phaseIdx !== phaseIdx ||
           Math.abs(this.restingSell.limitPrice - wantLimit) > 1e-9;
         if (stalePhase) {
-          await this.cancelRestingSell("phase sell settings change");
+          await this.cancelRestingSell("phase sell settings change", state);
         } else {
           if (this.orderInFlight) return;
           await this.pollRestingSell(state);
@@ -3043,7 +3192,7 @@ export class LiveTradingService {
     }
 
     if (this.restingSell) {
-      await this.cancelRestingSell("resize sell");
+      await this.cancelRestingSell("resize sell", state);
     }
 
     const windowEnd = state.windowEnd ?? nowSec + 300;
@@ -3060,12 +3209,7 @@ export class LiveTradingService {
         state,
       });
       if (!result.success || !result.orderId) {
-        await this.noteFillAttempt({
-          leg: "sell",
-          side,
-          series: state.series,
-          success: false,
-        });
+        // Place never rested — not a GTD fill opportunity.
         const err = result.error ?? "";
         if (/expiration/i.test(err)) {
           this.gtdSellBlockedWindowKey = key;
@@ -3092,6 +3236,10 @@ export class LiveTradingService {
         side,
         series: state.series,
         orderId: result.orderId,
+        orderKind: "GTD",
+        limitPrice,
+        countable: immediateSellFill,
+        touched: immediateSellFill,
         success: immediateSellFill,
       });
 
@@ -3132,6 +3280,7 @@ export class LiveTradingService {
     const resting = this.restingSell;
     if (!resting) return;
 
+    await this.maybeNoteGtdTouch(state, resting, "sell");
     const snap = await fetchOpenOrder(this.userId, resting.orderId);
     if (!snap) return;
 
@@ -3139,6 +3288,7 @@ export class LiveTradingService {
     if (matched > resting.sizeMatched + 1e-9) {
       const delta = matched - resting.sizeMatched;
       const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
+      resting.levelTouched = true;
       await this.noteFillSuccess(resting.orderId);
       await this.recordSellFill(
         state,
@@ -3157,6 +3307,9 @@ export class LiveTradingService {
     if (status === "live" || status === "delayed") return;
 
     this.restingSell = null;
+    if (matched <= 1e-9) {
+      await this.noteFillClose(resting.orderId);
+    }
     this.notify();
   }
 
@@ -3423,7 +3576,7 @@ export class LiveTradingService {
       if (!this.isLiveArmed()) this.autoEngine.setExternalBuyPaused(true);
       await this.cancelAllRestingBuys("manual buy");
     } else {
-      await this.cancelRestingSell("manual sell");
+      await this.cancelRestingSell("manual sell", state);
     }
 
     try {
@@ -3871,6 +4024,7 @@ export class LiveTradingService {
         maxPrice: leg === "buy" ? maxPrice : undefined,
         state,
       });
+      const fillKind: FillOrderKind = leg === "buy" ? orderType : "FOK";
       if (!result.success || result.fillPrice == null || result.fillShares == null) {
         if (leg === "buy" && result.ambiguous) {
           const reason = result.error ?? "ambiguous buy response";
@@ -3879,6 +4033,7 @@ export class LiveTradingService {
             side,
             series: state.series,
             orderId: result.orderId,
+            orderKind: fillKind,
             success: false,
           });
           this.beginPendingBuyConfirm(state, {
@@ -3903,6 +4058,7 @@ export class LiveTradingService {
             side,
             series: state.series,
             orderId: result.orderId,
+            orderKind: fillKind,
             success: false,
           });
         }
@@ -3914,6 +4070,7 @@ export class LiveTradingService {
         side,
         series: state.series,
         orderId: result.orderId,
+        orderKind: fillKind,
         success: true,
       });
 

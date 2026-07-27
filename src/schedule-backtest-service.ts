@@ -3,7 +3,8 @@ import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.
 import { getTradingSetupById } from "./db/trading-setup-repository.js";
 import type { SchedulePlacementListItem } from "./db/schedule-placement-repository.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
-import { getRollingCutoffUtcSec } from "./heatmap-service.js";
+import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
+import { selectLatestDayHourWindows } from "./day-hour-slots.js";
 import { recordAskSamples } from "./phase-config.js";
 import { SimulatorEngine } from "./simulator-engine.js";
 import { phaseSetupToSimSetup } from "./simulator-service.js";
@@ -162,7 +163,7 @@ function releaseWindowTicks(
 /**
  * True when a recorded window belongs on this schedule card:
  * same UTC weekday as the column, and start time inside the card’s hour span.
- * Uses every matching day in the rolling cutoff (not only the latest weekday).
+ * Caller should already have selected latest day-per-hour windows.
  */
 function windowMatchesPlacementSlot(
   windowStart: number,
@@ -487,12 +488,12 @@ export async function backtestSchedulePlacements(
   options.onProgress?.({ completed: 0, total: 0, indeterminate: true });
 
   const series = market._id;
-  const cutoffUtc = getRollingCutoffUtcSec();
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
   const cutoffDay = rollingCutoffDayUtc();
-  // Same Mongo window index as the heatmap — local windows/*.json may be gone
-  // after Dropbox/retention while summaries remain in recorded_windows.
-  const allWindows: RecordedWindowDocument[] = (
-    await listRecordedWindowsSince(cutoffUtc, series)
+  // Same Mongo window index as the heatmap — keep ~2 weeks, then for each
+  // weekday×hour keep only the latest calendar day (missed hours keep last week).
+  const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
+    await listRecordedWindowsSince(cutoffUtc, series),
   ).map((w) => ({
     _id: String(w.windowStart),
     windowStart: w.windowStart,

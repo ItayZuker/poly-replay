@@ -26,7 +26,7 @@ export async function runRetentionForAllMarkets(): Promise<void> {
 
 export function startArchiveScheduler(): void {
   if (retentionTimer) return;
-  logService.info("retention", "Scheduler started (delete data older than 7 days)");
+  logService.info("retention", "Scheduler started (delete data older than 14 days)");
   void runRetentionForAllMarkets();
   retentionTimer = setInterval(() => {
     void runRetentionForAllMarkets();

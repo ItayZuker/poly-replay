@@ -3,10 +3,16 @@ import {
   listRecordedWindowsSince,
   type HeatmapRecordedWindow,
 } from "./db/recorded-window-mongo-repository.js";
+import {
+  dayHourFromWindowStart,
+  getWeekHistoryCutoffUtcSec,
+  selectLatestDayHourWindows,
+  type WeekDayId,
+} from "./day-hour-slots.js";
 import { logService } from "./log-service.js";
 import type { RecordedWindowDocument } from "./types.js";
 
-export type HeatmapDayId = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export type HeatmapDayId = WeekDayId;
 export type HeatmapMetric = "crossings" | "range" | "wallets" | "newWallets";
 
 export interface HeatmapCellValues {
@@ -24,14 +30,13 @@ export interface HeatmapPublicState {
   seriesDataVersions: Record<string, string>;
 }
 
-const UTC_DAY_TO_ID: HeatmapDayId[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
 interface StoredHeatmapWindow {
   series: string;
   windowStart: number;
   savedAt: string;
   day: HeatmapDayId;
   hour: number;
+  dayKey: string;
   metrics: HeatmapCellValues;
 }
 
@@ -58,6 +63,10 @@ export function setHeatmapUpdateListener(listener: ((state: HeatmapPublicState) 
   updateListener = listener;
 }
 
+/**
+ * @deprecated Prefer getWeekHistoryCutoffUtcSec — kept for fill-success 7-day stats.
+ * Start of UTC today − 6 days.
+ */
 export function getRollingCutoffUtcSec(now = new Date()): number {
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
@@ -87,15 +96,7 @@ function metricsFromWindow(window: HeatmapMetricSource): HeatmapCellValues {
   };
 }
 
-function dayHourFromWindowStart(windowStart: number): { day: HeatmapDayId; hour: number } {
-  const date = new Date(windowStart * 1000);
-  return {
-    day: UTC_DAY_TO_ID[date.getUTCDay()] ?? "sun",
-    hour: date.getUTCHours(),
-  };
-}
-
-function isInRollingWindow(windowStart: number, cutoffUtc: number): boolean {
+function isInHistoryWindow(windowStart: number, cutoffUtc: number): boolean {
   return windowStart >= cutoffUtc;
 }
 
@@ -103,23 +104,35 @@ function toStoredWindow(
   series: string,
   window: HeatmapMetricSource & { windowStart: number; savedAt?: string },
 ): StoredHeatmapWindow {
-  const { day, hour } = dayHourFromWindowStart(window.windowStart);
+  const { day, hour, dayKey } = dayHourFromWindowStart(window.windowStart);
   return {
     series,
     windowStart: window.windowStart,
     savedAt: window.savedAt ?? String(window.windowStart),
     day,
     hour,
+    dayKey,
     metrics: metricsFromWindow(window),
   };
 }
 
+/** Windows used for display: latest calendar day per weekday×hour only. */
+function activeStoredWindows(seriesFilter?: string): StoredHeatmapWindow[] {
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  const filter = seriesFilter ? String(seriesFilter).trim() : "";
+  const candidates: StoredHeatmapWindow[] = [];
+  for (const stored of windowStore.values()) {
+    if (filter && stored.series !== filter) continue;
+    if (!isInHistoryWindow(stored.windowStart, cutoffUtc)) continue;
+    candidates.push(stored);
+  }
+  return selectLatestDayHourWindows(candidates);
+}
+
 function seriesDataVersionsFromStore(): Record<string, string> {
-  const cutoffUtc = getRollingCutoffUtcSec();
   const latestBySeries = new Map<string, StoredHeatmapWindow>();
 
-  for (const stored of windowStore.values()) {
-    if (!isInRollingWindow(stored.windowStart, cutoffUtc)) continue;
+  for (const stored of activeStoredWindows()) {
     const prev = latestBySeries.get(stored.series);
     if (!prev || stored.windowStart > prev.windowStart) {
       latestBySeries.set(stored.series, stored);
@@ -138,13 +151,11 @@ function seriesDataVersionsFromStore(): Record<string, string> {
 }
 
 function rebuildState(seriesFilter?: string | null): HeatmapPublicState {
-  const cutoffUtc = getRollingCutoffUtcSec();
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
   const buckets = new Map<string, BucketAccumulator>();
   const filter = seriesFilter ? String(seriesFilter).trim() : "";
 
-  for (const stored of windowStore.values()) {
-    if (filter && stored.series !== filter) continue;
-    if (!isInRollingWindow(stored.windowStart, cutoffUtc)) continue;
+  for (const stored of activeStoredWindows(filter || undefined)) {
     const key = bucketKey(stored.day, stored.hour);
     const bucket = buckets.get(key) ?? {
       crossingsSum: 0,
@@ -183,9 +194,9 @@ function rebuildState(seriesFilter?: string | null): HeatmapPublicState {
 }
 
 function pruneExpiredWindows(): void {
-  const cutoffUtc = getRollingCutoffUtcSec();
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
   for (const [key, stored] of windowStore) {
-    if (!isInRollingWindow(stored.windowStart, cutoffUtc)) {
+    if (!isInHistoryWindow(stored.windowStart, cutoffUtc)) {
       windowStore.delete(key);
     }
   }
@@ -200,8 +211,8 @@ export function ingestRecordedWindow(
   series: string,
   window: RecordedWindowDocument,
 ): HeatmapPublicState {
-  const cutoffUtc = getRollingCutoffUtcSec();
-  if (!isInRollingWindow(window.windowStart, cutoffUtc)) {
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  if (!isInHistoryWindow(window.windowStart, cutoffUtc)) {
     pruneExpiredWindows();
     return rebuildState();
   }
@@ -217,12 +228,12 @@ export function ingestRecordedWindow(
 export const ingestHeatmapWindow = ingestRecordedWindow;
 
 export async function loadAllHeatmapWindows(): Promise<HeatmapPublicState> {
-  const cutoffUtc = getRollingCutoffUtcSec();
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
   try {
     const windows = await listRecordedWindowsSince(cutoffUtc);
     windowStore.clear();
     for (const window of windows) {
-      if (!isInRollingWindow(window.windowStart, cutoffUtc)) continue;
+      if (!isInHistoryWindow(window.windowStart, cutoffUtc)) continue;
       windowStore.set(
         windowKey(window.series, window.windowStart),
         toStoredWindow(window.series, window),
@@ -241,4 +252,4 @@ export async function loadAllHeatmapWindows(): Promise<HeatmapPublicState> {
   return state;
 }
 
-export { getWindowDataVersion };
+export { getWindowDataVersion, getWeekHistoryCutoffUtcSec };

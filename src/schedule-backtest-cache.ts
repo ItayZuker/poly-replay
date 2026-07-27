@@ -3,7 +3,7 @@ import type { SchedulePlacementListItem } from "./db/schedule-placement-reposito
 import type { PlacementBacktestStats } from "./schedule-backtest-service.js";
 
 /** Bump when simulator/backtest rules change. */
-export const SCHEDULE_BACKTEST_CACHE_VERSION = "7";
+export const SCHEDULE_BACKTEST_CACHE_VERSION = "8";
 
 export function rollingCutoffDayUtc(now = new Date()): string {
   return now.toISOString().slice(0, 10);

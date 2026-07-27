@@ -3271,21 +3271,52 @@ function syncLatencyDisplay(state) {
   if (tradeEl) tradeEl.textContent = text;
 }
 
+function formatFillSuccessPct(rate) {
+  if (typeof rate !== "number" || !Number.isFinite(rate)) return "—";
+  return `${rate % 1 === 0 ? String(rate) : rate.toFixed(1)}%`;
+}
+
+function formatFillSuccessKind(kind) {
+  if (!kind || !(kind.attempts > 0)) return "—";
+  const pct = formatFillSuccessPct(kind.ratePct);
+  return `${kind.successes}/${kind.attempts} · ${pct}`;
+}
+
 function syncFillSuccessDisplay(trading) {
   const el = $("trade-fill-success");
   if (!el) return;
-  const rate = trading?.fillSuccess?.ratePct;
-  const attempts = trading?.fillSuccess?.attempts;
+  const fs = trading?.fillSuccess;
+  const rate = fs?.ratePct;
+  const attempts = fs?.attempts;
+  const byKind = fs?.byKind;
   if (typeof rate === "number" && Number.isFinite(rate)) {
-    el.textContent = `${rate % 1 === 0 ? String(rate) : rate.toFixed(1)}%`;
+    el.textContent = formatFillSuccessPct(rate);
     el.title =
       attempts > 0
-        ? `${trading.fillSuccess.successes}/${attempts} orders matched any size (last 7 days)`
-        : "Share of buy/sell orders that matched any size in the last 7 days";
+        ? `${fs.successes}/${attempts} countable orders matched any size (last 7 days). GTD: only when limit was touched while live.`
+        : "Share of countable buy/sell orders that matched any size in the last 7 days";
   } else {
     el.textContent = "—";
-    el.title = "No fill attempts in the last 7 days";
+    el.title =
+      "No countable fill attempts in the last 7 days (GTD needs a touched limit; FAK/FOK count on fire)";
   }
+
+  const breakdown = $("trade-fill-success-breakdown");
+  const fakEl = $("trade-fill-success-fak");
+  const fokEl = $("trade-fill-success-fok");
+  const gtdEl = $("trade-fill-success-gtd");
+  if (fakEl) fakEl.textContent = formatFillSuccessKind(byKind?.FAK);
+  if (fokEl) fokEl.textContent = formatFillSuccessKind(byKind?.FOK);
+  if (gtdEl) gtdEl.textContent = formatFillSuccessKind(byKind?.GTD);
+  if (breakdown) {
+    const hasAny =
+      (byKind?.FAK?.attempts ?? 0) +
+        (byKind?.FOK?.attempts ?? 0) +
+        (byKind?.GTD?.attempts ?? 0) >
+      0;
+    breakdown.hidden = !hasAny;
+  }
+
   window.__liveFillSuccessPct =
     typeof rate === "number" && Number.isFinite(rate) ? rate : null;
   window.SchedulePlacements?.syncReplayInputsFromLive?.();

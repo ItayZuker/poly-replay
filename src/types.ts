@@ -428,12 +428,26 @@ export interface PlacementLiveStats {
   locked: boolean;
 }
 
+/** Per CLOB order style inside Market → Trade fill success. */
+export interface FillSuccessKindPublicStats {
+  attempts: number;
+  successes: number;
+  /** 0–100; null when there are no attempts for this kind. */
+  ratePct: number | null;
+}
+
 export interface FillSuccessPublicStats {
   attempts: number;
   successes: number;
-  /** 0–100; null when there are no attempts in the rolling window. */
+  /** 0–100; null when there are no countable attempts in the rolling window. */
   ratePct: number | null;
   cutoffUtc: number;
+  /** FAK / FOK / GTD breakdown (partial fill = success). */
+  byKind: {
+    FAK: FillSuccessKindPublicStats;
+    FOK: FillSuccessKindPublicStats;
+    GTD: FillSuccessKindPublicStats;
+  };
 }
 
 export interface TradingPublicState {
@@ -463,7 +477,10 @@ export interface TradingPublicState {
   scheduleSetupId: string | null;
   quotesEnabled: boolean;
   previewMode: boolean;
-  /** Rolling ~7-day CLOB fill success (buys + sells; any size = success). */
+  /**
+   * Rolling ~7-day CLOB fill success by order kind (buys + sells; any size = success).
+   * GTD counts only when the limit was touched while live.
+   */
   fillSuccess: FillSuccessPublicStats;
 }
 

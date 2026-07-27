@@ -1,5 +1,8 @@
-/** Unzipped tick/window data kept for live sim and replay. */
-export const HOT_RETENTION_DAYS = 7;
+/**
+ * Tick/window data kept on disk + Mongo summaries.
+ * ~14 days so previous weekday hours remain until the same hour is re-recorded.
+ */
+export const HOT_RETENTION_DAYS = 14;
 
 const SECONDS_PER_DAY = 86_400;
 

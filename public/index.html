@@ -457,12 +457,28 @@
                   <span id="trade-feed-latency-ms" class="trade-metric-value">—</span>
                 </div>
                 <div
-                  class="wallet-control-field trade-metric-field"
+                  class="wallet-control-field trade-metric-field trade-fill-success-field"
                   aria-label="Fill success"
-                  title="Share of buy/sell orders that matched any size in the last 7 days"
+                  title="Fill success by order type (last 7 days). Partial fill = success. GTD counts only when the limit was touched while live."
                 >
-                  <span class="wallet-control-label">Fill success</span>
-                  <span id="trade-fill-success" class="trade-metric-value">—</span>
+                  <div class="trade-fill-success-head">
+                    <span class="wallet-control-label">Fill success</span>
+                    <span id="trade-fill-success" class="trade-metric-value">—</span>
+                  </div>
+                  <div id="trade-fill-success-breakdown" class="trade-fill-success-breakdown" hidden>
+                    <div class="trade-fill-success-row">
+                      <span>FAK</span>
+                      <span id="trade-fill-success-fak" class="trade-metric-value">—</span>
+                    </div>
+                    <div class="trade-fill-success-row">
+                      <span>FOK</span>
+                      <span id="trade-fill-success-fok" class="trade-metric-value">—</span>
+                    </div>
+                    <div class="trade-fill-success-row">
+                      <span>GTD</span>
+                      <span id="trade-fill-success-gtd" class="trade-metric-value">—</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

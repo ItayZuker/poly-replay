@@ -4174,6 +4174,40 @@ body.is-row-resizing .panel-header-drag-handle {
   text-align: right;
 }
 
+.trade-fill-success-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.trade-fill-success-head {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.trade-fill-success-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 2px;
+}
+
+.trade-fill-success-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted, #8b949e);
+}
+
+.trade-fill-success-row .trade-metric-value {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted, #8b949e);
+}
+
 .trade-panel-body {
   flex: 0 0 var(--trade-content-height);
   min-height: 0;
