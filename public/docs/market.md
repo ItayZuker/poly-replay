@@ -19,7 +19,7 @@ Below **Recording**, Trade also shows live execution metrics (each on its own ro
 | **Latency** | Same feed latency as the Settings header (ms) |
 | **Fill success** | Rolling last **7 days** (independent of the ~14-day weekday×hour recording overlay). Shows a **total %** plus **FAK / FOK / GTD** rows (`successes/attempts · %`). **Partial fill = success**. **FAK/FOK:** count when the order is fired/sent. **GTD:** count only when the limit was **touched** while live (ask/bid/trade at the limit) — strategy cancels with no touch are ignored (neither success nor miss). **—** until the first countable attempt |
 
-**Recording** is stored per market (e.g. `btc-5m` on, `eth-5m` off). A process with `TRADING_EXECUTOR` on saves the toggle but does not capture data — run a non-executor instance (or leave executor off locally) to actually record. See [Information flow](doc:data-flow).
+**Recording** is stored per market (e.g. `btc-5m` on, `eth-5m` off). A process with `TRADING_EXECUTOR` on saves the toggle but does not capture data — run a non-executor instance (or leave executor off locally) to actually record. On the recorder, stalled Chainlink (~20s) discards the active window and reconnects; a broader silence watchdog (~60s with no book/Chainlink ticks) reconnects feeds and restarts that series’ recorder. See [Information flow](doc:data-flow).
 
 Scheduled live: **Allow trade** + **Auto Trade** + **Use Schedule** on.
 

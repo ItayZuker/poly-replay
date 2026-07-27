@@ -2,14 +2,22 @@ import type { MarketDocument } from "./types.js";
 import { listMarkets } from "./db/market-repository.js";
 import { MarketRecorder } from "./market-recorder.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
+import { clobMarketFeed } from "./clob-market-feed.js";
 import { parseMarketSeries } from "./market-pair.js";
 import { logService } from "./log-service.js";
 import { canProcessRecord } from "./recording-enabled.js";
+
+const HEALTH_CHECK_MS = 5_000;
+/** Avoid thrashing reconnects if silence persists across consecutive windows. */
+const RECOVERY_COOLDOWN_MS = 90_000;
 
 export class RecordingManager {
   private recorders = new Map<string, MarketRecorder>();
   private onChange: ((series: string) => void) | null = null;
   private stallUnsub: (() => void) | null = null;
+  private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private lastRecoveryAtMs = 0;
+  private recoveryInFlight = false;
 
   setOnChange(listener: (series: string) => void): void {
     this.onChange = listener;
@@ -21,6 +29,13 @@ export class RecordingManager {
       logService.warn("chainlink", `${asset.toUpperCase()} price stalled — reconnecting RTDS`);
       this.discardWindowsForAsset(asset);
     });
+  }
+
+  private ensureHealthWatchdog(): void {
+    if (this.healthTimer) return;
+    this.healthTimer = setInterval(() => {
+      void this.checkRecordingHealth();
+    }, HEALTH_CHECK_MS);
   }
 
   private discardWindowsForAsset(asset: string): void {
@@ -36,6 +51,47 @@ export class RecordingManager {
     }
   }
 
+  /**
+   * Broader than Chainlink-only stall: if any recorder's active window has had
+   * no book/chainlink ticks for too long, discard that window, reconnect feeds,
+   * and restart the stuck recorder(s).
+   */
+  private async checkRecordingHealth(): Promise<void> {
+    if (!canProcessRecord() || this.recorders.size === 0) return;
+    if (this.recoveryInFlight) return;
+
+    const now = Date.now();
+    if (now - this.lastRecoveryAtMs < RECOVERY_COOLDOWN_MS) return;
+
+    const stuck: MarketRecorder[] = [];
+    for (const recorder of this.recorders.values()) {
+      if (recorder.needsHealthRecovery(now)) stuck.push(recorder);
+    }
+    if (stuck.length === 0) return;
+
+    this.recoveryInFlight = true;
+    this.lastRecoveryAtMs = now;
+    const labels = stuck.map((r) => r.getSeries()).join(", ");
+    try {
+      logService.warn(
+        "recorder",
+        `Recording silence on ${labels} — discarding window(s), reconnecting feeds, restarting recorder(s)`,
+      );
+      for (const recorder of stuck) {
+        recorder.discardActiveWindow("recording silence (health watchdog)");
+      }
+      chainlinkPriceFeed.forceReconnect();
+      clobMarketFeed.forceReconnect();
+      for (const recorder of stuck) {
+        await this.refreshMarket(recorder.getMarket());
+      }
+    } catch (err) {
+      logService.error("recorder", `Health recovery failed: ${String(err)}`);
+    } finally {
+      this.recoveryInFlight = false;
+    }
+  }
+
   /** Start/stop recorders from each market's `recordingEnabled` flag. */
   async sync(): Promise<void> {
     if (!canProcessRecord()) {
@@ -44,6 +100,7 @@ export class RecordingManager {
     }
 
     this.ensureStallHandler();
+    this.ensureHealthWatchdog();
     const markets = await listMarkets();
     const enabled = new Set(
       markets.filter((m) => m.recordingEnabled).map((m) => m._id),
@@ -78,6 +135,7 @@ export class RecordingManager {
     }
 
     this.ensureStallHandler();
+    this.ensureHealthWatchdog();
     const existing = this.recorders.get(market._id);
     if (market.recordingEnabled) {
       if (existing) {
@@ -112,6 +170,11 @@ export class RecordingManager {
       this.stallUnsub();
       this.stallUnsub = null;
     }
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
+    }
+    this.recoveryInFlight = false;
     for (const recorder of this.recorders.values()) {
       recorder.stop();
     }

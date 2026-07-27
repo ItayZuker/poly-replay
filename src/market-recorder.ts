@@ -53,6 +53,10 @@ const POLL_MS = 500;
 const TRADERS_POLL_MS = 15_000;
 /** Subscribe the next window's CLOB tokens this many seconds before current end. */
 const NEXT_WINDOW_PREFETCH_SEC = 30;
+/** No book/chainlink ticks into the active window for this long → health recovery. */
+const RECORDING_SILENCE_MS = 60_000;
+/** Ignore silence right after a window opens (pair/book may still be warming up). */
+const WINDOW_START_GRACE_MS = 20_000;
 
 type StateChangeListener = (series: string) => void;
 
@@ -96,6 +100,9 @@ export class MarketRecorder {
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
   private prefetchedNextWindowStart: number | null = null;
   private nextWindowPrefetchInFlight = false;
+  /** Last time a book or chainlink tick was appended for the active window. */
+  private lastUsefulTickAtMs = 0;
+  private windowBeganAtMs = 0;
 
   constructor(market: MarketDocument, onStateChange: StateChangeListener | null = null) {
     this.market = market;
@@ -104,6 +111,28 @@ export class MarketRecorder {
 
   getSeries(): string {
     return this.market._id;
+  }
+
+  getMarket(): MarketDocument {
+    return this.market;
+  }
+
+  /**
+   * True when an active window has gone too long without book/chainlink ticks.
+   * Used by RecordingManager for broader feed recovery (beyond Chainlink-only stall).
+   */
+  needsHealthRecovery(nowMs = Date.now()): boolean {
+    if (!this.interval || !this.activeWindow) return false;
+    if (this.windowBeganAtMs > 0 && nowMs - this.windowBeganAtMs < WINDOW_START_GRACE_MS) {
+      return false;
+    }
+    const last = this.lastUsefulTickAtMs || this.windowBeganAtMs;
+    if (!last) return false;
+    return nowMs - last >= RECORDING_SILENCE_MS;
+  }
+
+  private noteUsefulTick(tMs = Date.now()): void {
+    this.lastUsefulTickAtMs = tMs;
   }
 
   getActiveWindow(): WindowHitRecord | null {
@@ -186,8 +215,8 @@ export class MarketRecorder {
   }
 
   /**
-   * Abandon the in-progress window without saving — used when Chainlink for this
-   * asset stalled and the window's price stream is damaged.
+   * Abandon the in-progress window without saving — used when Chainlink stalls
+   * or the health watchdog detects recording silence.
    */
   discardActiveWindow(reason: string): void {
     if (!this.activeWindow) return;
@@ -246,6 +275,8 @@ export class MarketRecorder {
     this.assetPrices = {};
     this.prefetchedNextWindowStart = null;
     this.nextWindowPrefetchInFlight = false;
+    this.lastUsefulTickAtMs = 0;
+    this.windowBeganAtMs = 0;
   }
 
   private isInWindow(tMs: number): boolean {
@@ -306,6 +337,7 @@ export class MarketRecorder {
     if (!tick) return;
     this.clobBookBuffer.push(tick);
     this.clobBookCount += 1;
+    this.noteUsefulTick(tMs);
     this.onStateChange?.(this.market._id);
   }
 
@@ -368,6 +400,7 @@ export class MarketRecorder {
     if (!tick) return;
     this.chainlinkTickBuffer.push(tick);
     this.chainlinkCount += 1;
+    this.noteUsefulTick(tMs);
     this.onStateChange?.(this.market._id);
   }
 
@@ -452,6 +485,9 @@ export class MarketRecorder {
     this.clobBookBuffer = [];
     this.chainlinkTickBuffer = [];
     this.lastTraderStats = null;
+    const now = Date.now();
+    this.windowBeganAtMs = now;
+    this.lastUsefulTickAtMs = now;
     void ensureWindowTickDir(this.market._id, windowStart);
     this.startTradersPoll();
     logService.info(

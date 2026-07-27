@@ -1,6 +1,6 @@
 # Schedule & Heatmap
 
-Toggle **Schedule** and **Heatmap** on this page. At the bottom of the setups list, switch **Live** vs **Simulator** workspace.
+Toggle **Schedule** and **Heatmap** on this page. At the bottom of the setups list, switch **Live** vs **Replay** workspace.
 
 ## Setups
 
@@ -19,7 +19,7 @@ Reusable templates — full fields: [Setups & phases](doc:setups-phases).
 - Days × UTC hours
 - Place or clear setups (drag onto a cell, drop on a day header to fill that column, or drop on the **UTC** header to fill the whole week in one request)
 - Current UTC cell is highlighted
-- Double-click a placement to highlight it; highlighted cards feed the **Custom** header total (and still work with Heatmap)
+- Double-click a placement to highlight it; double-click a **day header** to highlight all cards in that column (double-click again to clear that column’s highlight). Highlighted cards feed the **Custom** header total (and still work with Heatmap)
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the selected market series; **Live** = since last header reset; **Schedule** = sum of cards on the week grid. Switching ranges shows a spinner on the totals icon while values load.
 - Counts and P/L always show numeric values (`0` / `+$0.00`) when empty — never dashes
 
@@ -32,21 +32,21 @@ With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** set
 | Purpose | Real schedule for auto-trade | What-if board over recent history |
 | Setups | Own list | Own list (separate from Live) |
 | Placements | Own week grid | Own week grid |
-| Card stats | Live trade outcomes | Filled when you press **Replay** |
+| Card stats | Live trade outcomes | Filled when you press **Run** |
 | Header total | Same summary chrome (**Market** = series all-time, **Live** = since reset, **Schedule** = sum of cards) | Same — totals update as replay results arrive |
 
-In **Replay** (**Simulator** on the switcher), a blue border frames the whole screen so the workspace is obvious. The footer expands upward (quick transition) so a **Replay** button and its inputs appear above the Live/Simulator switcher — order top→bottom: **Replay**, then **Latency** / **Fill success**, then the switcher. Switching back to **Live** collapses that panel.
+In **Replay** (on the Live/Replay switcher), a blue border frames the whole screen so the workspace is obvious. The footer expands upward (quick transition) so a **Run** button and its inputs appear above the Live/Replay switcher — order top→bottom: **Run**, then **Latency** / **Fill success**, then the switcher. Switching back to **Live** collapses that panel.
 
 | Control | Meaning |
 |---------|---------|
-| **Latency (ms)** | Simulated delay for FAK fills and before GTD limits become live. Prefills from live feed latency (Market → Trade / Settings). |
-| **Fill success (%)** | Chance each would-be fill succeeds after latency (random per attempt). **100%** = always fill when the book allows; **0%** = never. Prefills from live **Fill success** total % (last 7 days). |
+| **Latency (ms)** | Simulated delay for FAK fills and before GTD limits become live. Prefills from live feed latency (Market → Trade / Settings). Frozen for the duration of a **Run**. |
+| **Fill success (%)** | Chance each would-be fill succeeds after latency (random per attempt). **100%** = always fill when the book allows; **0%** = never. Prefills from live **Fill success** total % (last 7 days). Frozen for the duration of a **Run**. |
 
-It sends the placed cards (and their setups) for the areas they cover on the week grid. For each card it loads recorded ticks in that day/hour slot and runs the same simulation engine as demo trading. Cards are processed **top-left first** (Monday → Sunday, then earlier UTC hour). Results stream back **one card at a time** (green / red / blue / gray + PnL). Gray is Replay-only: windows that ran with ticks but never triggered a buy. The top summary shows the **total**. Cards with **no windows/ticks** in their slot stay full color after Replay and show a centered **No Data** label; cards that ran over recordings use the completed stats look (including zeros if nothing hit).
+It sends the placed cards (and their setups) for the areas they cover on the week grid. For each card it loads recorded ticks in that day/hour slot and runs the same simulation engine as demo trading. Cards are processed **top-left first** (Monday → Sunday, then earlier UTC hour). Results stream back **one card at a time** (green / red / blue / gray + PnL). Gray is Replay-only: windows that ran with ticks but never triggered a buy (dot color matches the zero / neutral P/L badge). In Replay, the header totals and **Custom** (highlighted) totals also include the gray count. The top summary shows the **total**. Cards with **no windows/ticks** in their slot stay full color after a **Run** and show a centered **No Data** label; cards that ran over recordings use the completed stats look (including zeros if nothing hit).
 
-After a Replay run, cards that have tick data show **Open** in the card ⋮ menu. **Open** launches the **Open Replay** popup for that card’s windows: a scrollable window list (outcome + PnL), graph playback with scrubber/speed, and a hits view. On the graph, the price line and buy/sell hits reveal up to the scrubber (drag to the end of the window for the full line and all hits). The popup shows the **same** windows and fills as the card stats from that Replay run (not a fresh random re-roll of Fill success). After a server restart, run **Replay** again before Open so hits match the card.
+After a **Run**, cards that have tick data show **Open** in the card ⋮ menu. **Open** launches the **Open Replay** popup for that card’s windows: a scrollable window list (outcome + PnL), graph playback with scrubber/speed, and a hits view. On the graph, the price line and buy/sell hits reveal up to the scrubber (drag to the end of the window for the full line and all hits). The popup shows the **same** windows and fills as the card stats from that run (not a fresh random re-roll of Fill success). After a server restart, press **Run** again before Open so hits match the card.
 
-Replay schedule cards stay **editable** (move, resize, remove, place) — they are never locked like Live cards after a trade. Replay setups can also be edited in the setup editor while placed; on **Live**, phases stay locked until you remove the setup’s placements. While Replay is running, the button switches to **Stop** (stop icon, same style with a color pulse); click it to cancel. Changing a card on the Replay schedule also stops the run. Switching between **Live** and **Simulator** does **not** stop a running Replay — progress keeps applying and is restored when you return to Simulator.
+Replay schedule cards stay **editable** (move, resize, remove, place) — they are never locked like Live cards after a trade. Replay setups can also be edited in the setup editor while placed; on **Live**, phases stay locked until you remove the setup’s placements. While a run is in progress, the button switches to **Stop** and the refresh arrows icon spins (same accent pulse style); **Latency** and **Fill success** are disabled (muted) and keep the values captured when **Run** started — live prefill resumes only after the run ends or is stopped. Click **Stop** to cancel. Changing a card on the Replay schedule also stops the run. Switching between **Live** and **Replay** does **not** stop a running job — progress keeps applying and is restored when you return to Replay.
 
 Replay uses the same simulation engine as demo trading. Window times/outcomes come from Mongo (`recorded_windows`, same as the heatmap); the engine still needs **local tick files** under `DATA_DIR` (book + Chainlink) for each window. If ticks were pruned or Dropbox only kept recent files locally, those day/hour cards stay empty even though the heatmap still shows activity. Turn **Recording** on per series under Market → Trade, and keep `DATA_DIR` fully available on disk.
 
@@ -63,4 +63,4 @@ If `SCHEDULE_REPLAY_SERVICE_URL` is empty, Replay runs in-process on this server
 
 ## Heatmap
 
-Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay (new hour overrides that slot only; missing hours keep the previous week). Flat-price bad recordings are excluded (see above). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Simulator are independent toggles. On a recorder process, new windows update the heatmap as they finalize.
+Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay (new hour overrides that slot only; missing hours keep the previous week). Flat-price bad recordings are excluded (see above). Use it to choose where to place setups — it does not trade by itself. Schedule/Heatmap and Live/Replay are independent toggles. On a recorder process, new windows update the heatmap as they finalize.

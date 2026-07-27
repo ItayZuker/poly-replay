@@ -1405,7 +1405,7 @@ body {
   display: none !important;
 }
 
-/* Collapses above the Live/Simulator switcher; border rises with the panel. */
+/* Collapses above the Live/Replay switcher; border rises with the panel. */
 .schedule-replay-panel {
   display: flex;
   flex-direction: column;
@@ -1477,8 +1477,17 @@ body {
 }
 
 .schedule-replay-latency-input:disabled {
-  opacity: 0.55;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 70%, #000);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  opacity: 1;
   cursor: not-allowed;
+  -webkit-text-fill-color: var(--muted);
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-latency-label,
+.schedule-replay-controls.is-locked .schedule-replay-latency-unit {
+  color: color-mix(in srgb, var(--muted) 65%, transparent);
 }
 
 .schedule-replay-latency-unit {
@@ -1495,10 +1504,10 @@ body {
   width: 100%;
   min-height: 36px;
   padding: 0 12px;
-  border: 1px dashed var(--accent);
+  border: 1px solid var(--accent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
-  color: var(--text);
+  background: var(--accent);
+  color: #fff;
   font-size: 0.85rem;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -1524,13 +1533,14 @@ body {
 }
 
 .schedule-replay-run-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 80%, #fff);
   border-color: color-mix(in srgb, var(--accent) 80%, #fff);
   color: #fff;
 }
 
 .schedule-replay-run-btn:active:not(:disabled) {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 70%, #000);
+  border-color: color-mix(in srgb, var(--accent) 70%, #000);
   color: #fff;
 }
 
@@ -1540,22 +1550,23 @@ body {
 }
 
 .schedule-replay-run-btn.is-stop {
-  border-style: dashed;
+  border-style: solid;
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
-  color: var(--text);
+  background: var(--accent);
+  color: #fff;
   animation: schedule-replay-stop-pulse 1.4s ease-in-out infinite;
 }
 
 .schedule-replay-run-btn.is-stop:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 32%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 80%, #fff);
   border-color: color-mix(in srgb, var(--accent) 80%, #fff);
   color: #fff;
   animation: none;
 }
 
 .schedule-replay-run-btn.is-stop:active:not(:disabled) {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 70%, #000);
+  border-color: color-mix(in srgb, var(--accent) 70%, #000);
   color: #fff;
   animation: none;
 }
@@ -1564,12 +1575,12 @@ body {
   0%,
   100% {
     border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 18%, var(--bg));
-    color: var(--text);
+    background: var(--accent);
+    color: #fff;
   }
   50% {
-    border-color: color-mix(in srgb, var(--accent) 55%, #fff);
-    background: color-mix(in srgb, var(--accent) 34%, var(--bg));
+    border-color: color-mix(in srgb, var(--accent) 70%, #fff);
+    background: color-mix(in srgb, var(--accent) 70%, #fff);
     color: #fff;
   }
 }
@@ -2447,7 +2458,7 @@ body.is-schedule-resizing {
 }
 
 .schedule-placement-dot-gray {
-  background: #6e7681;
+  background: var(--muted);
 }
 
 .schedule-placement-pnl-cell {
@@ -4191,21 +4202,32 @@ body.is-row-resizing .panel-header-drag-handle {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-left: 2px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .trade-fill-success-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
   font-size: 11px;
   color: var(--muted, #8b949e);
 }
 
+.trade-fill-success-row > span:first-child {
+  padding-left: 2px;
+}
+
 .trade-fill-success-row .trade-metric-value {
+  margin-left: auto;
   font-size: 11px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--muted, #8b949e);
+  text-align: right;
 }
 
 .trade-panel-body {

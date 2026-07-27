@@ -529,13 +529,55 @@
       trash.innerHTML =
         '<svg viewBox="0 0 16 16"><path d="M3 4.5h10M6 2.5h4l.5 2H5.5l.5-2ZM4.5 4.5l.6 9h5.8l.6-9M6.7 6.5v5M9.3 6.5v5" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
       button.append(trash, title);
+      // Delay clear so a double-click can highlight the column instead of wiping it.
+      let clearClickTimer = null;
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        void clearDay(day);
+        if (clearClickTimer != null) {
+          window.clearTimeout(clearClickTimer);
+          clearClickTimer = null;
+          return;
+        }
+        clearClickTimer = window.setTimeout(() => {
+          clearClickTimer = null;
+          void clearDay(day);
+        }, 280);
+      });
+      button.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (clearClickTimer != null) {
+          window.clearTimeout(clearClickTimer);
+          clearClickTimer = null;
+        }
+        toggleDayColumnFrames(day);
+      });
+      header.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (clearClickTimer != null) {
+          window.clearTimeout(clearClickTimer);
+          clearClickTimer = null;
+        }
+        toggleDayColumnFrames(day);
       });
       header.insertBefore(button, header.firstChild);
     });
+  }
+
+  /** Double-click day header: frame all cards in the column (or unframe if all already framed). */
+  function toggleDayColumnFrames(day) {
+    const dayPlacements = placements.filter((p) => p.day === day);
+    if (dayPlacements.length === 0) return;
+    const ids = dayPlacements.map((p) => p._id);
+    const allFramed = ids.every((id) => framedPlacementIds.has(id));
+    if (allFramed) {
+      for (const id of ids) framedPlacementIds.delete(id);
+    } else {
+      for (const id of ids) framedPlacementIds.add(id);
+    }
+    applyPlacementFrameStates();
   }
 
   function highlightedUtcHours() {
@@ -1010,6 +1052,7 @@
     let green = 0;
     let red = 0;
     let blue = 0;
+    let gray = 0;
     let hasAny = false;
 
     for (const placementId of framedPlacementIds) {
@@ -1021,9 +1064,10 @@
       green += stats.green ?? 0;
       red += stats.red ?? 0;
       blue += stats.blue ?? 0;
+      gray += stats.gray ?? 0;
     }
 
-    return { hasData: hasAny, pnl: totalPnl, green, red, blue };
+    return { hasData: hasAny, pnl: totalPnl, green, red, blue, gray };
   }
 
   function clearAllFramedPlacements() {
@@ -1040,7 +1084,7 @@
     container.hidden = !visible;
     if (!visible) return;
 
-    const { hasData, pnl, green, red, blue } = highlightedTotals();
+    const { hasData, pnl, green, red, blue, gray } = highlightedTotals();
     const dotsEl = container.querySelector(".schedule-highlighted-stats-dots");
     const pnlEl = container.querySelector(".schedule-highlighted-pnl");
 
@@ -1058,6 +1102,9 @@
       appendStatItem(dotsEl, "green", green, hasData);
       appendStatItem(dotsEl, "red", red, hasData);
       appendStatItem(dotsEl, "blue", blue, hasData);
+      if (isReplayWorkspace()) {
+        appendStatItem(dotsEl, "gray", gray ?? 0, hasData);
+      }
     }
 
     if (pnlEl) {
@@ -1078,6 +1125,7 @@
     let green = 0;
     let red = 0;
     let blue = 0;
+    let gray = 0;
     let hasAny = false;
 
     for (const placement of placements) {
@@ -1089,9 +1137,10 @@
       green += stats.green ?? 0;
       red += stats.red ?? 0;
       blue += stats.blue ?? 0;
+      gray += stats.gray ?? 0;
     }
 
-    return { hasData: hasAny, pnl: totalPnl, green, red, blue };
+    return { hasData: hasAny, pnl: totalPnl, green, red, blue, gray };
   }
 
   const SUMMARY_RANGE_STORAGE_KEY = "poly-real:header-stats-range";
@@ -1363,6 +1412,7 @@
     const green = totals?.green ?? 0;
     const red = totals?.red ?? 0;
     const blue = totals?.blue ?? 0;
+    const gray = totals?.gray ?? 0;
     const dotsEl = container.querySelector(".schedule-week-stats-dots");
     const pnlEl = container.querySelector(".schedule-week-pnl");
 
@@ -1371,6 +1421,9 @@
       appendStatItem(dotsEl, "green", green, hasData);
       appendStatItem(dotsEl, "red", red, hasData);
       appendStatItem(dotsEl, "blue", blue, hasData);
+      if (isReplayWorkspace()) {
+        appendStatItem(dotsEl, "gray", gray, hasData);
+      }
     }
 
     if (pnlEl) {
@@ -3383,6 +3436,9 @@
   }
 
   let replayRunning = false;
+  /** Frozen Latency / Fill success for the in-flight run (null when idle). */
+  let replayRunLockedLatencyMs = null;
+  let replayRunLockedFillSuccessPct = null;
   /** @type {AbortController | null} */
   let replayAbort = null;
   let replayStopReason = null;
@@ -3391,9 +3447,7 @@
   /** Placement IDs included in the current Replay run. */
   let activeReplayPlacementIds = new Set();
 
-  const REPLAY_PLAY_ICON =
-    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 4.5v15l13-7.5-13-7.5z" fill="currentColor"/></svg>';
-  const REPLAY_STOP_ICON =
+  const REPLAY_SPIN_ICON =
     '<svg class="schedule-replay-spin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
     '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 9"/>' +
     '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 3v6h-6"/>' +
@@ -3464,6 +3518,33 @@
     }
   }
 
+  function applyReplayRunLockedInputs() {
+    const latencyInput = document.getElementById("schedule-replay-latency-input");
+    const fillInput = document.getElementById("schedule-replay-fill-success-input");
+    if (latencyInput && replayRunLockedLatencyMs != null) {
+      latencyInput.value = String(replayRunLockedLatencyMs);
+    }
+    if (fillInput && replayRunLockedFillSuccessPct != null) {
+      fillInput.value = String(replayRunLockedFillSuccessPct);
+    }
+  }
+
+  function setReplayInputsLocked(locked) {
+    const controls = document.getElementById("schedule-replay-controls");
+    controls?.classList.toggle("is-locked", locked);
+    const latencyInput = document.getElementById("schedule-replay-latency-input");
+    const fillInput = document.getElementById("schedule-replay-fill-success-input");
+    if (latencyInput) {
+      latencyInput.disabled = locked;
+      latencyInput.setAttribute("aria-disabled", locked ? "true" : "false");
+    }
+    if (fillInput) {
+      fillInput.disabled = locked;
+      fillInput.setAttribute("aria-disabled", locked ? "true" : "false");
+    }
+    if (locked) applyReplayRunLockedInputs();
+  }
+
   function initReplayLatencyInput() {
     const latencyInput = document.getElementById("schedule-replay-latency-input");
     if (latencyInput && latencyInput.dataset.bound !== "1") {
@@ -3477,6 +3558,10 @@
         // keep default
       }
       const commitLatency = () => {
+        if (replayRunning || latencyInput.disabled) {
+          applyReplayRunLockedInputs();
+          return;
+        }
         markReplayInputUserEdited(latencyInput);
         const ms = readReplayLatencyMs();
         latencyInput.value = String(ms);
@@ -3484,7 +3569,13 @@
       };
       latencyInput.addEventListener("change", commitLatency);
       latencyInput.addEventListener("blur", commitLatency);
-      latencyInput.addEventListener("input", () => markReplayInputUserEdited(latencyInput));
+      latencyInput.addEventListener("input", () => {
+        if (replayRunning || latencyInput.disabled) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        markReplayInputUserEdited(latencyInput);
+      });
     }
 
     const fillInput = document.getElementById("schedule-replay-fill-success-input");
@@ -3499,6 +3590,10 @@
         // keep default
       }
       const commitFill = () => {
+        if (replayRunning || fillInput.disabled) {
+          applyReplayRunLockedInputs();
+          return;
+        }
         markReplayInputUserEdited(fillInput);
         const pct = readReplayFillSuccessPct();
         fillInput.value = String(pct);
@@ -3506,7 +3601,13 @@
       };
       fillInput.addEventListener("change", commitFill);
       fillInput.addEventListener("blur", commitFill);
-      fillInput.addEventListener("input", () => markReplayInputUserEdited(fillInput));
+      fillInput.addEventListener("input", () => {
+        if (replayRunning || fillInput.disabled) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        markReplayInputUserEdited(fillInput);
+      });
     }
 
     // Prefer live feed latency / 7-day fill success when available.
@@ -3519,16 +3620,13 @@
     btn.disabled = false;
     btn.classList.toggle("is-stop", replayRunning);
     btn.setAttribute("aria-pressed", replayRunning ? "true" : "false");
-    const latencyInput = document.getElementById("schedule-replay-latency-input");
-    if (latencyInput) latencyInput.disabled = replayRunning;
-    const fillInput = document.getElementById("schedule-replay-fill-success-input");
-    if (fillInput) fillInput.disabled = replayRunning;
+    setReplayInputsLocked(replayRunning);
     if (replayRunning) {
-      btn.title = "Stop Replay";
-      btn.innerHTML = `<span>Stop</span>${REPLAY_STOP_ICON}`;
+      btn.title = "Stop run";
+      btn.innerHTML = `<span>Stop</span>${REPLAY_SPIN_ICON}`;
     } else {
-      btn.title = "Replay placed cards over the last week";
-      btn.innerHTML = `<span>Replay</span>${REPLAY_PLAY_ICON}`;
+      btn.title = "Run placed cards over recorded windows";
+      btn.innerHTML = `<span>Run</span>${REPLAY_SPIN_ICON}`;
     }
   }
 
@@ -3573,7 +3671,7 @@
       window.appendLogEntry?.({
         level: "warn",
         source: "client",
-        message: "Place setup cards on the Replay schedule before running Replay",
+        message: "Place setup cards on the Replay schedule before pressing Run",
       });
       return;
     }
@@ -3581,6 +3679,12 @@
     replayAbort = new AbortController();
     const { signal } = replayAbort;
     replayStopReason = null;
+    const latencyMs = readReplayLatencyMs();
+    const fillSuccessPct = readReplayFillSuccessPct();
+    replayRunLockedLatencyMs = latencyMs;
+    replayRunLockedFillSuccessPct = fillSuccessPct;
+    persistReplayLatencyMs(latencyMs);
+    persistReplayFillSuccessPct(fillSuccessPct);
     replayRunning = true;
     syncReplayRunButton();
     placementStats.clear();
@@ -3597,10 +3701,6 @@
     });
     activeReplayPlacementIds = new Set(orderedPlacements.map((p) => p._id));
     const first = orderedPlacements[0];
-    const latencyMs = readReplayLatencyMs();
-    const fillSuccessPct = readReplayFillSuccessPct();
-    persistReplayLatencyMs(latencyMs);
-    persistReplayFillSuccessPct(fillSuccessPct);
     window.appendLogEntry?.({
       level: "info",
       source: "client",
@@ -3740,7 +3840,11 @@
       replayAbort = null;
       replayRunning = false;
       replayStopReason = null;
+      replayRunLockedLatencyMs = null;
+      replayRunLockedFillSuccessPct = null;
       syncReplayRunButton();
+      // Unlock live prefill again now that the run's frozen values are released.
+      syncReplayInputsFromLive();
       // Full completion only: fill remaining cards as no-data.
       // Early stop: leave unfinished cards without stats so they don't look like zero-trade results.
       if (gotDoneEvent && !signal.aborted) {

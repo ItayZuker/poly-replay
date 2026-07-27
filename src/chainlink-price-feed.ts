@@ -424,7 +424,8 @@ export class ChainlinkPriceFeed {
     this.forceReconnect();
   }
 
-  private forceReconnect(): void {
+  /** Close and reschedule the RTDS socket (health watchdog / manual recovery). */
+  forceReconnect(): void {
     if (this.tearingDown) return;
     this.clearTimers();
     const ws = this.ws;

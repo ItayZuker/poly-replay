@@ -111,6 +111,28 @@ export class ClobMarketFeed {
     }
   }
 
+  /** Close and reconnect the market WebSocket (health watchdog / manual recovery). */
+  forceReconnect(): void {
+    if (!this.started) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.clearPingTimer();
+    const ws = this.ws;
+    this.ws = null;
+    this.connecting = false;
+    if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+      try {
+        ws.close();
+      } catch {
+        // schedule below
+      }
+    }
+    logService.warn("clob", "Forced reconnect (recording health)");
+    this.scheduleReconnect();
+  }
+
   onUpdate(listener: UpdateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

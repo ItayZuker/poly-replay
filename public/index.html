@@ -830,12 +830,43 @@
                 type="button"
                 id="schedule-replay-run-btn"
                 class="schedule-replay-run-btn"
-                title="Replay placed cards over the last week"
+                title="Run placed cards over recorded windows"
                 tabindex="-1"
               >
-                <span>Replay</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M7 4.5v15l13-7.5-13-7.5z" fill="currentColor" />
+                <span>Run</span>
+                <svg class="schedule-replay-spin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 9"
+                  />
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M21 3v6h-6"
+                  />
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M20.5 12a8.5 8.5 0 0 1-14.3 6.2L3 15"
+                  />
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M3 21v-6h6"
+                  />
                 </svg>
               </button>
               <div id="schedule-replay-controls" class="schedule-replay-controls">
@@ -888,7 +919,7 @@
             >
               <span class="schedule-workspace-switcher-handle" aria-hidden="true"></span>
               <button type="button" class="schedule-workspace-switcher-opt is-active" data-schedule-workspace="live">Live</button>
-              <button type="button" class="schedule-workspace-switcher-opt" data-schedule-workspace="replay">Simulator</button>
+              <button type="button" class="schedule-workspace-switcher-opt" data-schedule-workspace="replay">Replay</button>
             </div>
           </div>
           <div id="schedule-heatmap-panel" class="schedule-heatmap-panel" hidden></div>
