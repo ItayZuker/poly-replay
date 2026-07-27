@@ -4632,11 +4632,11 @@ function createWalletsSortHeader(options) {
 }
 
 function refreshWalletsSortHeaders() {
-  const table = document.querySelector(".schedule-wallets-table");
-  if (!table) return;
-  const sightingsTh = table.querySelector("thead th:nth-child(2)");
-  const winTh = table.querySelector("thead th:nth-child(3)");
-  const lostTh = table.querySelector("thead th:nth-child(4)");
+  const headTable = document.querySelector(".schedule-wallets-table--head");
+  if (!headTable) return;
+  const sightingsTh = headTable.querySelector("thead th:nth-child(2)");
+  const winTh = headTable.querySelector("thead th:nth-child(3)");
+  const lostTh = headTable.querySelector("thead th:nth-child(4)");
   if (sightingsTh) {
     sightingsTh.replaceChildren(
       createWalletsSortHeader({ key: "sightings", label: "Sightings", className: "is-sightings" }),
@@ -4662,65 +4662,20 @@ function refreshWalletsSortHeaders() {
   }
 }
 
-function syncWalletsListOpenUi() {
-  const page = $("page-schedule-heatmap");
-  const week = document.querySelector(".schedule-week-layout");
-  const panel = $("schedule-wallets-panel");
-  const open = walletsListOpen && isHeatmapViewActive();
-  walletsListOpen = open;
-  page?.classList.toggle("is-wallets-list-view", open);
-  if (week) week.hidden = open;
-  if (panel) panel.hidden = !open;
-  document.querySelectorAll(".heatmap-legend-open-btn").forEach((btn) => {
-    btn.setAttribute("aria-pressed", open ? "true" : "false");
-    btn.title = open ? "Back to heatmap" : "Open wallet list";
-    btn.closest(".heatmap-legend-item")?.classList.toggle("is-wallets-open", open);
-  });
+function buildWalletsColgroup() {
+  const colgroup = document.createElement("colgroup");
+  for (const width of ["46%", "18%", "18%", "18%"]) {
+    const col = document.createElement("col");
+    col.style.width = width;
+    colgroup.appendChild(col);
+  }
+  return colgroup;
 }
 
-function polymarketProfileUrl(address) {
-  const raw = String(address || "").trim().toLowerCase();
-  if (!/^0x[a-f0-9]{40}$/.test(raw)) return null;
-  return `https://polymarket.com/profile/${raw}`;
-}
-
-function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries, meta = {}) {
-  const body = $("schedule-wallets-body");
-  const countEl = $("schedule-wallets-count");
-  if (!body) return;
-
-  if (errorMessage) {
-    walletsListCache = [];
-    body.innerHTML = "";
-    const err = document.createElement("div");
-    err.className = "schedule-wallets-error";
-    err.textContent = errorMessage;
-    body.appendChild(err);
-    if (countEl) countEl.textContent = "";
-    return;
-  }
-
-  const list = Array.isArray(wallets) ? wallets : [];
-  walletsListCache = list;
-  walletsListSeries = series;
-  const total = Number(meta.total);
-  if (countEl) {
-    if (Number.isFinite(total) && total > list.length) {
-      countEl.textContent = `Top ${list.length} of ${total}`;
-    } else {
-      countEl.textContent = list.length === 1 ? "1 wallet" : `${list.length} wallets`;
-    }
-  }
-
-  if (list.length === 0) {
-    body.innerHTML =
-      '<div class="schedule-wallets-empty">No wallets recorded for this market yet.</div>';
-    return;
-  }
-
+function buildWalletsHeadTable() {
   const table = document.createElement("table");
-  table.className = "schedule-wallets-table";
-
+  table.className = "schedule-wallets-table schedule-wallets-table--head";
+  table.appendChild(buildWalletsColgroup());
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   const addressTh = document.createElement("th");
@@ -4747,6 +4702,83 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
   );
   headRow.append(addressTh, sightingsTh, winTh, lostTh);
   thead.appendChild(headRow);
+  table.appendChild(thead);
+  return table;
+}
+
+function syncWalletsListOpenUi() {
+  const page = $("page-schedule-heatmap");
+  const week = document.querySelector(".schedule-week-layout");
+  const panel = $("schedule-wallets-panel");
+  const open = walletsListOpen && isHeatmapViewActive();
+  walletsListOpen = open;
+  page?.classList.toggle("is-wallets-list-view", open);
+  if (week) week.hidden = open;
+  if (panel) panel.hidden = !open;
+  document.querySelectorAll(".heatmap-legend-open-btn").forEach((btn) => {
+    btn.setAttribute("aria-pressed", open ? "true" : "false");
+    btn.title = open ? "Back to heatmap" : "Open wallet list";
+    btn.closest(".heatmap-legend-item")?.classList.toggle("is-wallets-open", open);
+  });
+}
+
+function polymarketProfileUrl(address) {
+  const raw = String(address || "").trim().toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(raw)) return null;
+  return `https://polymarket.com/profile/${raw}`;
+}
+
+function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries, meta = {}) {
+  const body = $("schedule-wallets-body");
+  const cols = $("schedule-wallets-cols");
+  const countEl = $("schedule-wallets-count");
+  if (!body) return;
+
+  if (errorMessage) {
+    walletsListCache = [];
+    if (cols) {
+      cols.hidden = true;
+      cols.replaceChildren();
+    }
+    body.innerHTML = "";
+    const err = document.createElement("div");
+    err.className = "schedule-wallets-error";
+    err.textContent = errorMessage;
+    body.appendChild(err);
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+
+  const list = Array.isArray(wallets) ? wallets : [];
+  walletsListCache = list;
+  walletsListSeries = series;
+  const total = Number(meta.total);
+  if (countEl) {
+    if (Number.isFinite(total) && total > list.length) {
+      countEl.textContent = `Top ${list.length} of ${total}`;
+    } else {
+      countEl.textContent = list.length === 1 ? "1 wallet" : `${list.length} wallets`;
+    }
+  }
+
+  if (list.length === 0) {
+    if (cols) {
+      cols.hidden = true;
+      cols.replaceChildren();
+    }
+    body.innerHTML =
+      '<div class="schedule-wallets-empty">No wallets recorded for this market yet.</div>';
+    return;
+  }
+
+  if (cols) {
+    cols.hidden = false;
+    cols.replaceChildren(buildWalletsHeadTable());
+  }
+
+  const table = document.createElement("table");
+  table.className = "schedule-wallets-table schedule-wallets-table--body";
+  table.appendChild(buildWalletsColgroup());
 
   const tbody = document.createElement("tbody");
   for (const wallet of list) {
@@ -4783,7 +4815,7 @@ function renderTraderWalletsList(wallets, errorMessage, series = selectedSeries,
     tr.append(address, sightings, iWin, iLost);
     tbody.appendChild(tr);
   }
-  table.append(thead, tbody);
+  table.appendChild(tbody);
   body.replaceChildren(table);
 }
 
@@ -4797,6 +4829,11 @@ async function loadTraderWalletsList() {
   const dir = walletsListSort.dir || "desc";
   const sorting = Boolean(walletsListSortLoadingKey);
   if (!sorting) {
+    const cols = $("schedule-wallets-cols");
+    if (cols) {
+      cols.hidden = true;
+      cols.replaceChildren();
+    }
     body.innerHTML = '<div class="schedule-wallets-empty">Loading…</div>';
     if (countEl) countEl.textContent = "";
   }

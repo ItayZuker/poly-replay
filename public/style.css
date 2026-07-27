@@ -1285,6 +1285,15 @@ body {
   align-items: center;
 }
 
+/* Heatmap: match Schedule/Heatmap toggle bottom edge to day/UTC header borders. */
+.app-page-schedule.is-heatmap-view .schedule-setups-header {
+  border-bottom: none;
+}
+
+.app-page-schedule.is-heatmap-view .schedule-setups-toolbar {
+  border-bottom: 1px solid var(--border);
+}
+
 .schedule-add-setup-wrap {
   padding: 0 8px 8px;
   box-sizing: border-box;
@@ -1829,9 +1838,11 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 
 .schedule-wallets-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  height: var(--schedule-toolbar-height);
+  padding: 0 14px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   flex-shrink: 0;
@@ -1839,14 +1850,25 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 
 .schedule-wallets-title {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text);
+  line-height: 1;
 }
 
 .schedule-wallets-count {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+.schedule-wallets-cols {
+  flex-shrink: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.schedule-wallets-cols[hidden] {
+  display: none;
 }
 
 .schedule-wallets-body {
@@ -1856,6 +1878,7 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   padding: 0;
   scrollbar-width: thin;
   scrollbar-color: #484f58 transparent;
+  scrollbar-gutter: stable;
 }
 
 .schedule-wallets-empty,
@@ -1871,6 +1894,7 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
 
 .schedule-wallets-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.8rem;
 }
@@ -1883,22 +1907,27 @@ body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
   vertical-align: middle;
 }
 
-.schedule-wallets-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.schedule-wallets-table--head th {
+  position: static;
+  top: auto;
+  z-index: auto;
   background: var(--panel);
   color: var(--muted);
   font-weight: 500;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+  border-bottom: none;
 }
 
-.schedule-wallets-table td {
+.schedule-wallets-table--body td {
   color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: left;
+}
+
+.schedule-wallets-table--body tr:last-child td {
+  border-bottom: none;
 }
 
 .schedule-wallets-address {
