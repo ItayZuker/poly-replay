@@ -932,16 +932,20 @@ async function playSettlementFields(
   let finalPrice =
     finalPriceRaw != null && Number.isFinite(finalPriceRaw) ? Number(finalPriceRaw) : undefined;
 
-  // Drop a close that contradicts the official outcome vs PTB (stale last live tick).
+  // Align close to Settlement vs PTB: keep if already on the correct side;
+  // otherwise mirror by |gap| (or a tiny ε) so Gap sign matches the outcome.
   if (
     finalPrice != null &&
     prevCloseAsset != null &&
     (windowOutcome === "up" || windowOutcome === "down")
   ) {
-    if (windowOutcome === "up" && finalPrice < prevCloseAsset) {
-      finalPrice = prevCloseAsset;
-    } else if (windowOutcome === "down" && finalPrice >= prevCloseAsset) {
-      finalPrice = prevCloseAsset - Math.max(1e-6, Math.abs(prevCloseAsset) * 1e-10);
+    const ptb = prevCloseAsset;
+    const eps = Math.max(1e-6, Math.abs(ptb) * 1e-10);
+    const mag = Math.abs(finalPrice - ptb) > 0 ? Math.abs(finalPrice - ptb) : eps;
+    if (windowOutcome === "up" && finalPrice <= ptb) {
+      finalPrice = ptb + mag;
+    } else if (windowOutcome === "down" && finalPrice >= ptb) {
+      finalPrice = ptb - mag;
     }
   }
 

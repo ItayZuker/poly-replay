@@ -795,11 +795,15 @@
       saveBtn.setAttribute("aria-hidden", saveBtn.hidden ? "true" : "false");
     }
     if (hint) {
-      hint.hidden = !readOnly;
-      if (readOnly) {
-        hint.textContent = external
-          ? "This setup is on the schedule. Remove its placements to edit."
-          : 'To change settings turn off "Use Schedule"';
+      // External read-only (e.g. Open Replay): no schedule-edit hint — view only.
+      if (external && readOnly) {
+        hint.hidden = true;
+        hint.textContent = "";
+      } else {
+        hint.hidden = !readOnly;
+        if (readOnly) {
+          hint.textContent = 'To change settings turn off "Use Schedule"';
+        }
       }
     }
     // Hide the whole footer when neither Save nor the schedule hint is shown.

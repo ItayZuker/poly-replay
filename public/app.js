@@ -1927,7 +1927,9 @@ function windowPricePoints(state) {
   const windowEnd = state?.windowEnd;
   if (!windowStart || !windowEnd) return [];
 
-  const points = history.filter((p) => p.t >= windowStart && p.t < windowEnd);
+  // Include t === windowEnd so Open Replay's official close anchor is drawn
+  // (Settlement-aligned tip). Live in-progress windows never emit that stamp early.
+  const points = history.filter((p) => p.t >= windowStart && p.t <= windowEnd);
   if (
     state.assetPrice != null &&
     Number.isFinite(state.assetPrice) &&

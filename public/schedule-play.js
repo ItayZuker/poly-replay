@@ -247,8 +247,12 @@
     if (!setup || !layout || (viewMode !== "play" && viewMode !== "hits")) return;
     if (nearPhaseLine(canvasX, layout, setup)) return;
     const idx = phaseIndexForFrac(xToFrac(canvasX, layout), setup);
+    if (!window.Simulator?.beginExternalPhaseEdit || !window.Simulator?.openPhaseModalExternal) {
+      return;
+    }
     stopPlayback();
-    window.Simulator?.openPhaseModalReadonly?.(setup, idx);
+    window.Simulator.beginExternalPhaseEdit(setup, null, { readOnly: true });
+    window.Simulator.openPhaseModalExternal(idx);
   }
 
   function hideHitTooltip() {
@@ -1322,27 +1326,28 @@
     return null;
   }
 
+  /**
+   * Place the official close on the Settlement side of PTB.
+   * If the stored close (or last tick) is on the wrong side / on PTB, mirror by |gap|
+   * (or a tiny ε) so the line tip and Gap sign match the outcome.
+   */
   function closeOnOutcomeSide(close, lastPrice, ptb, outcome) {
-    if (outcome === "up" && Number.isFinite(ptb)) {
-      const base = Number.isFinite(close)
-        ? close
-        : Number.isFinite(lastPrice)
-          ? lastPrice
-          : ptb;
-      return Math.max(base, ptb);
+    if ((outcome !== "up" && outcome !== "down") || !Number.isFinite(ptb)) {
+      if (Number.isFinite(close)) return close;
+      if (Number.isFinite(lastPrice)) return lastPrice;
+      return null;
     }
-    if (outcome === "down" && Number.isFinite(ptb)) {
-      const under = ptb - Math.max(1e-6, Math.abs(ptb) * 1e-10);
-      const base = Number.isFinite(close)
-        ? close
-        : Number.isFinite(lastPrice)
-          ? lastPrice
-          : under;
-      return Math.min(base, under);
+    const eps = Math.max(1e-6, Math.abs(ptb) * 1e-10);
+    const base = Number.isFinite(close)
+      ? close
+      : Number.isFinite(lastPrice)
+        ? lastPrice
+        : ptb;
+    const mag = Math.abs(base - ptb) > 0 ? Math.abs(base - ptb) : eps;
+    if (outcome === "up") {
+      return base > ptb ? base : ptb + mag;
     }
-    if (Number.isFinite(close)) return close;
-    if (Number.isFinite(lastPrice)) return lastPrice;
-    return null;
+    return base < ptb ? base : ptb - mag;
   }
 
   /**
@@ -1894,7 +1899,8 @@
     headerLoadFinishing = false;
     setWindowsLoading(false);
     hideHitTooltip();
-    window.Simulator?.closePhaseModal?.();
+    window.Simulator?.discardPhaseModal?.();
+    window.Simulator?.endExternalPhaseEdit?.();
     hideHeaderProgress();
     clearMetricsPanel();
     updateTransportEnabled();
