@@ -15,6 +15,7 @@
     "backfill:outcomes": "tsx src/scripts/backfill-window-outcomes.ts",
     "migrate:heatmap-to-windows": "tsx src/scripts/migrate-heatmap-to-windows.ts",
     "set-password": "tsx src/scripts/set-user-password.ts",
+    "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",
     "repair:false-wins": "tsx src/scripts/repair-false-wins.ts"
   },
   "dependencies": {

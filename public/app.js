@@ -3519,6 +3519,13 @@ function updateCountdown(state) {
 function populateMarketSelect() {
   const sel = $("market-select");
   sel.innerHTML = "";
+  if (!Array.isArray(markets) || markets.length === 0) {
+    selectedSeries = "";
+    return;
+  }
+  if (!markets.some((m) => m._id === selectedSeries)) {
+    selectedSeries = markets[0]._id;
+  }
   for (const m of markets) {
     const opt = document.createElement("option");
     opt.value = m._id;
@@ -3528,18 +3535,10 @@ function populateMarketSelect() {
   }
 }
 
-function syncRecordingToggle() {
-  const input = $("market-recording");
-  if (!input) return;
-  const market = markets.find((m) => m._id === selectedSeries);
-  input.checked = Boolean(market?.recordingEnabled);
-}
-
 async function loadMarkets() {
   const res = await fetch("/api/markets");
   markets = await res.json();
   populateMarketSelect();
-  syncRecordingToggle();
 }
 
 function connectSSE() {
@@ -3548,7 +3547,6 @@ function connectSSE() {
   es.addEventListener("markets", (e) => {
     markets = JSON.parse(e.data);
     populateMarketSelect();
-    syncRecordingToggle();
   });
 
   es.addEventListener("window", (e) => {
@@ -3629,7 +3627,6 @@ function connectSSE() {
 async function onMarketSeriesChanged(nextSeries) {
   selectedSeries = nextSeries;
   lastPositionsFingerprint = "";
-  syncRecordingToggle();
   const res = await fetch(`/api/window?series=${encodeURIComponent(selectedSeries)}`);
   if (res.ok) updateWindowUI(await res.json());
   const config = await loadTradingConfig();
@@ -5223,54 +5220,16 @@ function bindTradeToggles() {
   const autoTradeInput = $("auto-trade");
   const useScheduleInput = $("use-schedule");
   const startTradingInput = $("start-trading");
-  const recordingInput = $("market-recording");
   const sharesInput = $("manual-shares");
   const unitSelect = $("manual-order-unit");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
 
   // Restore immediately from localStorage, then sync from server
   applyTradingConfigToUi(readLocalTradingConfig());
-  syncRecordingToggle();
   void loadTradingConfig().then((config) => {
     applyTradingConfigToUi(coalesceTradingConfig(config, readLocalTradingConfig()) ?? config);
     syncGraphSaveBtn(windowState);
     if (windowState) drawPriceChart(windowState);
-  });
-
-  recordingInput?.addEventListener("change", async () => {
-    const enabled = Boolean(recordingInput.checked);
-    recordingInput.disabled = true;
-    try {
-      const res = await fetch(`/api/markets/${encodeURIComponent(selectedSeries)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recordingEnabled: enabled }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(body.error || `Recording update failed (${res.status})`);
-      }
-      const idx = markets.findIndex((m) => m._id === selectedSeries);
-      if (idx >= 0) markets[idx] = { ...markets[idx], ...body };
-      else markets.push(body);
-      syncRecordingToggle();
-      appendLogEntry({
-        level: "info",
-        source: "client",
-        message: enabled
-          ? `Recording enabled for ${selectedSeries}`
-          : `Recording disabled for ${selectedSeries}`,
-      });
-    } catch (err) {
-      syncRecordingToggle();
-      appendLogEntry({
-        level: "error",
-        source: "client",
-        message: `Recording: ${err.message || err}`,
-      });
-    } finally {
-      recordingInput.disabled = false;
-    }
   });
 
   autoTradeInput.addEventListener("change", async () => {

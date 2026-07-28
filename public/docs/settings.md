@@ -43,4 +43,4 @@ These are set on the **server**, not in this UI:
 | `SCHEDULE_REPLAY_SERVICE_URL` | On a live process: URL of the recorder’s replay worker (also used to proxy Open Replay `/api/ticks`) |
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret between live and recorder |
 
-Per-series **Recording** is a Market → Trade toggle (not an env var). See [Market](doc:market) and [Information flow](doc:data-flow).
+Per-series **Available**, **Recording**, and **retention days** are Admin CRM controls (not env vars and not trader Market toggles). See [Market](doc:market) and [Information flow](doc:data-flow).

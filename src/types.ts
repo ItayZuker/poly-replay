@@ -9,8 +9,12 @@ export interface MarketDocument {
   _id: string;
   label: string;
   timeframeMinutes: number;
+  /** When true, series is shown in the trader app and trading APIs allow it. */
+  available: boolean;
   /** When true, a non-executor process captures ticks/windows for this series. */
   recordingEnabled: boolean;
+  /** Hot tick/window retention for this series (days). Default 14. */
+  retentionDays: number;
   createdAt: string;
   updatedAt: string;
 }

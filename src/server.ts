@@ -6,9 +6,12 @@ import {
   initStorageAndSeed,
   ensureAllMarketIndexes,
   listMarkets,
+  listAvailableMarkets,
   getMarket,
+  requireAvailableMarket,
   updateMarket,
 } from "./db/market-repository.js";
+import { clampRetentionDays } from "./retention.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
 import {
   listChainlinkTicks,
@@ -103,6 +106,7 @@ import {
   ensureUserIndexes,
   getBootstrapUserId,
   getUserPublicById,
+  maybeBootstrapAdminFromEnv,
   maybeBootstrapDefaultPassword,
   registerUser,
   updateUserProfile,
@@ -130,6 +134,28 @@ const publicDir = path.join(__dirname, "../public");
 
 const app = express();
 app.use(express.json());
+
+const CRM_ADMIN_SECRET = process.env.CRM_ADMIN_SECRET?.trim() || "";
+const CRM_ORIGIN = process.env.CRM_ORIGIN?.trim() || "";
+
+/** CORS for Admin CRM → poly-replay admin APIs (secret auth; credentials not required). */
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/admin")) {
+    next();
+    return;
+  }
+  if (CRM_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", CRM_ORIGIN);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CRM-Secret");
+    res.setHeader("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
+  }
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 
 function sendIndexHtml(_req: express.Request, res: express.Response): void {
   res.sendFile(path.join(publicDir, "index.html"));
@@ -175,6 +201,8 @@ function isPublicAuthPath(req: express.Request): boolean {
   if (req.method === "POST" && req.path === "/api/auth/login") return true;
   if (req.method === "POST" && req.path === "/api/auth/register") return true;
   if (req.method === "GET" && req.path === "/api/auth/me") return true;
+  // Admin CRM market APIs — gated by CRM_ADMIN_SECRET.
+  if (req.path.startsWith("/api/admin")) return true;
   // Live→recorder worker; gated by SCHEDULE_REPLAY_WORKER_SECRET when set.
   if (req.method === "POST" && req.path === "/api/internal/schedule-replay") return true;
   if (req.method === "POST" && /^\/api\/internal\/schedule-placements\/[^/]+\/play$/.test(req.path)) {
@@ -182,6 +210,24 @@ function isPublicAuthPath(req: express.Request): boolean {
   }
   if (req.method === "GET" && req.path === "/api/internal/ticks") return true;
   return false;
+}
+
+function requireCrmSecret(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (!CRM_ADMIN_SECRET) {
+    res.status(503).json({ error: "CRM admin API not configured (CRM_ADMIN_SECRET)" });
+    return;
+  }
+  const header = req.headers["x-crm-secret"];
+  const provided = Array.isArray(header) ? header[0] : header;
+  if (typeof provided !== "string" || provided !== CRM_ADMIN_SECRET) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  next();
 }
 
 async function requireAuth(
@@ -201,6 +247,10 @@ async function requireAuth(
     const user = await loadAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    if (user.disabled) {
+      res.status(403).json({ error: "This account is disabled" });
       return;
     }
     (req as AuthedRequest).authUser = user;
@@ -224,7 +274,12 @@ app.post("/api/auth/login", async (req, res) => {
     res.setHeader("Set-Cookie", buildSessionCookie(token, expiresAt, isSecureRequest(req)));
     res.json({ user });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === "This account is disabled") {
+      res.status(403).json({ error: message });
+      return;
+    }
+    res.status(400).json({ error: message });
   }
 });
 
@@ -432,6 +487,14 @@ function parseSeriesParam(req: express.Request, bodySeries?: unknown): string {
   return fromQuery || fromBody || displayService.getState().series || "btc-5m";
 }
 
+async function assertSeriesAvailable(series: string): Promise<void> {
+  await requireAvailableMarket(series);
+}
+
+function marketUnavailableStatus(message: string): number {
+  return message.startsWith("Market unavailable:") ? 403 : 404;
+}
+
 function parseWorkspaceMode(req: express.Request): ScheduleWorkspaceMode {
   const fromQuery = req.query.mode;
   const fromBody = req.body?.mode;
@@ -526,9 +589,12 @@ async function runScheduleReplaySse(
     fillSuccessPct?: number;
   },
 ): Promise<void> {
-  const market = await getMarket(input.series);
-  if (!market) {
-    writeSseEvent(res, closed, "failure", { error: `Unknown series: ${input.series}` });
+  let market;
+  try {
+    market = await requireAvailableMarket(input.series);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    writeSseEvent(res, closed, "failure", { error: message });
     res.end();
     return;
   }
@@ -760,17 +826,24 @@ app.patch("/api/account/wallet", async (req, res) => {
 app.get("/api/trading/config", async (req, res) => {
   try {
     const series = parseSeriesParam(req);
+    await assertSeriesAvailable(series);
     const engine = tradingFor(req);
     await engine.ensureBoundToSeries(series);
     res.json(engine.getConfig());
   } catch (err) {
-    res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("Market unavailable:") || message.startsWith("Unknown series:")) {
+      res.status(marketUnavailableStatus(message)).json({ error: message });
+      return;
+    }
+    res.status(401).json({ error: message });
   }
 });
 
 app.put("/api/trading/config", async (req, res) => {
   try {
     const series = parseSeriesParam(req, req.body?.series);
+    await assertSeriesAvailable(series);
     const engine = tradingFor(req);
     await engine.ensureBoundToSeries(series);
     const body = req.body as Partial<import("./types.js").TradingConfig>;
@@ -779,7 +852,12 @@ app.put("/api/trading/config", async (req, res) => {
     pushWindowStateImmediate();
     res.json(config);
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("Market unavailable:") || message.startsWith("Unknown series:")) {
+      res.status(marketUnavailableStatus(message)).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
   }
 });
 
@@ -801,6 +879,7 @@ app.post("/api/trading/order", async (req, res) => {
       return;
     }
     const state = displayService.getState();
+    await assertSeriesAvailable(state.series);
     const result = await tradingFor(req).manualOrder(state, side, leg);
     pushWindowStateImmediate();
     if (!result.ok) {
@@ -809,7 +888,12 @@ app.post("/api/trading/order", async (req, res) => {
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("Market unavailable:") || message.startsWith("Unknown series:")) {
+      res.status(marketUnavailableStatus(message)).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
   }
 });
 
@@ -924,6 +1008,22 @@ app.get("/api/trading/session-memory", async (req, res) => {
 
 app.get("/api/markets", async (_req, res) => {
   try {
+    const markets = await listAvailableMarkets();
+    res.json(markets);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/** Ops market settings are owned by Admin CRM (`/api/admin/markets`). */
+app.patch("/api/markets/:series", async (_req, res) => {
+  res.status(403).json({
+    error: "Market ops settings are managed in Admin CRM",
+  });
+});
+
+app.get("/api/admin/markets", requireCrmSecret, async (_req, res) => {
+  try {
     const markets = await listMarkets();
     res.json(markets);
   } catch (err) {
@@ -931,16 +1031,39 @@ app.get("/api/markets", async (_req, res) => {
   }
 });
 
-app.patch("/api/markets/:series", async (req, res) => {
+app.patch("/api/admin/markets/:series", requireCrmSecret, async (req, res) => {
   try {
-    requireUserId(req);
     const series = String(req.params.series ?? "").trim();
-    const patch: { recordingEnabled?: boolean } = {};
-    if (typeof req.body?.recordingEnabled === "boolean") {
-      patch.recordingEnabled = req.body.recordingEnabled;
+    const body = (req.body ?? {}) as {
+      available?: unknown;
+      recordingEnabled?: unknown;
+      retentionDays?: unknown;
+    };
+    const patch: {
+      available?: boolean;
+      recordingEnabled?: boolean;
+      retentionDays?: number;
+    } = {};
+    if (typeof body.available === "boolean") patch.available = body.available;
+    if (typeof body.recordingEnabled === "boolean") {
+      patch.recordingEnabled = body.recordingEnabled;
     }
-    if (patch.recordingEnabled === undefined) {
-      res.status(400).json({ error: "recordingEnabled boolean required" });
+    if (body.retentionDays !== undefined) {
+      patch.retentionDays = clampRetentionDays(body.retentionDays);
+    }
+    if (
+      patch.available === undefined &&
+      patch.recordingEnabled === undefined &&
+      patch.retentionDays === undefined
+    ) {
+      res.status(400).json({
+        error: "Provide available, recordingEnabled, and/or retentionDays",
+      });
+      return;
+    }
+    const before = await getMarket(series);
+    if (!before) {
+      res.status(404).json({ error: "Market not found" });
       return;
     }
     const updated = await updateMarket(series, patch);
@@ -948,22 +1071,19 @@ app.patch("/api/markets/:series", async (req, res) => {
       res.status(404).json({ error: "Market not found" });
       return;
     }
-    await recordingManager.refreshMarket(updated);
-    const markets = await listMarkets();
-    broadcast("markets", markets);
-    logService.info(
-      "recording",
-      `Recording ${updated.recordingEnabled ? "enabled" : "disabled"} for ${updated._id}` +
-        (canProcessRecord() ? "" : " (saved; this process does not record)"),
-    );
+    if (before.recordingEnabled !== updated.recordingEnabled) {
+      await recordingManager.refreshMarket(updated);
+      logService.info(
+        "recording",
+        `Recording ${updated.recordingEnabled ? "enabled" : "disabled"} for ${updated._id}` +
+          (canProcessRecord() ? "" : " (saved; this process does not record)"),
+      );
+    }
+    const availableMarkets = await listAvailableMarkets();
+    broadcast("markets", availableMarkets);
     res.json(updated);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message === "Unauthorized") {
-      res.status(401).json({ error: message });
-      return;
-    }
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -1392,6 +1512,7 @@ app.post("/api/schedule-placements", async (req, res) => {
     const userId = requireUserId(req);
     const mode = parseWorkspaceMode(req);
     const series = parseSeriesParam(req, req.body?.series);
+    await assertSeriesAvailable(series);
     const saved = await insertSchedulePlacement(
       userId,
       {
@@ -1450,6 +1571,7 @@ app.post("/api/schedule-placements/replace-day", async (req, res) => {
     const userId = requireUserId(req);
     const mode = parseWorkspaceMode(req);
     const series = parseSeriesParam(req, req.body?.series);
+    await assertSeriesAvailable(series);
     const setupId = String(req.body?.setupId ?? "");
     const setup = await getTradingSetupById(userId, setupId, mode);
     if (!setup) {
@@ -1485,6 +1607,7 @@ app.post("/api/schedule-placements/replace-week", async (req, res) => {
     const userId = requireUserId(req);
     const mode = parseWorkspaceMode(req);
     const series = parseSeriesParam(req, req.body?.series);
+    await assertSeriesAvailable(series);
     const setupId = String(req.body?.setupId ?? "");
     const setup = await getTradingSetupById(userId, setupId, mode);
     if (!setup) {
@@ -2093,7 +2216,7 @@ app.get("/api/stream", (req, res) => {
 
   void (async () => {
     try {
-      const markets = await listMarkets();
+      const markets = await listAvailableMarkets();
       res.write(`event: markets\ndata: ${JSON.stringify(markets)}\n\n`);
       res.write(
         `event: window\ndata: ${JSON.stringify(enrichWindowStateForUser(userId, displayService.getState()))}\n\n`,
@@ -2124,6 +2247,7 @@ async function main(): Promise<void> {
     await ensureDefaultUser();
     await ensureWalletRegistryReady();
     await maybeBootstrapDefaultPassword();
+    await maybeBootstrapAdminFromEnv();
     const bootstrapId = await getBootstrapUserId();
     await ensureTradingSetupsUserId(bootstrapId);
     await ensureSchedulePlacementsUserId(bootstrapId);
@@ -2148,12 +2272,12 @@ async function main(): Promise<void> {
   if (canProcessRecord()) {
     logService.info(
       "server",
-      "Recording available — per-market Recording toggle starts capture on this process",
+      "Recording available — Admin CRM Recording flags start capture on this process",
     );
   } else {
     logService.info(
       "server",
-      "TRADING_EXECUTOR on — per-market Recording toggles save to Mongo but this process will not record",
+      "TRADING_EXECUTOR on — Admin CRM Recording flags save to Mongo but this process will not record",
     );
   }
   if (SCHEDULE_REPLAY_SERVICE_URL) {

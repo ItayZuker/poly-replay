@@ -33,6 +33,10 @@ export interface UserDocument {
   nameKey?: string;
   /** scrypt password hash — required for login. */
   passwordHash?: string;
+  /** When true, user may sign in to Admin CRM. */
+  admin?: boolean;
+  /** When true, trader + CRM login are blocked. */
+  disabled?: boolean;
   wallet: UserWalletStored;
   /** Legacy flat trading config (also mirrored for DEFAULT_MARKET_SERIES). */
   trading: TradingConfig;
@@ -48,6 +52,8 @@ export interface UserPublic {
   email?: string;
   name?: string;
   hasPassword: boolean;
+  admin: boolean;
+  disabled: boolean;
   /** True when funder + private key are both stored. */
   walletReady: boolean;
   trading: TradingConfig;
@@ -58,6 +64,19 @@ export interface UserPublic {
     hasPrivateKey: boolean;
     privateKeyHint?: string;
   };
+}
+
+/** Safe admin-console projection — never includes wallet secrets. */
+export interface UserAdminListItem {
+  id: string;
+  slug: string;
+  email?: string;
+  name?: string;
+  createdAt: string;
+  walletReady: boolean;
+  admin: boolean;
+  disabled: boolean;
+  hasPassword: boolean;
 }
 
 export interface WalletCredentials {
@@ -153,6 +172,8 @@ function toPublic(doc: UserDocument): UserPublic {
     email: doc.email,
     name: doc.name,
     hasPassword: Boolean(doc.passwordHash),
+    admin: doc.admin === true,
+    disabled: doc.disabled === true,
     walletReady: hasPrivateKey && Boolean(funderAddress?.trim()),
     trading: normalizeTrading(doc.trading),
     wallet: {
@@ -162,6 +183,25 @@ function toPublic(doc: UserDocument): UserPublic {
       hasPrivateKey,
       privateKeyHint: doc.wallet?.privateKeyHint,
     },
+  };
+}
+
+function toAdminListItem(doc: UserDocument): UserAdminListItem {
+  const hasPrivateKey = Boolean(doc.wallet?.privateKeyEnc);
+  const funderAddress = doc.wallet?.funderAddress;
+  return {
+    id: String(doc._id),
+    slug: doc.slug,
+    email: doc.email,
+    name: doc.name,
+    createdAt:
+      doc.createdAt instanceof Date
+        ? doc.createdAt.toISOString()
+        : String(doc.createdAt ?? ""),
+    walletReady: hasPrivateKey && Boolean(funderAddress?.trim()),
+    admin: doc.admin === true,
+    disabled: doc.disabled === true,
+    hasPassword: Boolean(doc.passwordHash),
   };
 }
 
@@ -385,6 +425,7 @@ export async function findUserByEmail(email: string): Promise<UserDocument | nul
 /**
  * Authenticate an existing user by email + password.
  * Users without a passwordHash cannot log in.
+ * Disabled users are rejected.
  */
 export async function authenticateUser(
   email: string,
@@ -395,6 +436,9 @@ export async function authenticateUser(
   if (!user?.passwordHash) return null;
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) return null;
+  if (user.disabled === true) {
+    throw new Error("This account is disabled");
+  }
   return toPublic(user);
 }
 
@@ -567,8 +611,10 @@ export async function updateUserTrading(
 /** Users that may need a live engine (wallet configured and/or trading armed). */
 export async function listUsersForLiveTrading(): Promise<UserDocument[]> {
   const col = await collection();
+  const notDisabled = { disabled: { $ne: true } };
   const docs = await col
     .find({
+      ...notDisabled,
       $or: [
         { "wallet.privateKeyEnc": { $type: "string" }, "wallet.funderAddress": { $type: "string" } },
         { "trading.autoTrade": true },
@@ -580,6 +626,7 @@ export async function listUsersForLiveTrading(): Promise<UserDocument[]> {
   // Also include users who only armed a non-default market via tradingBySeries.
   const extra = await col
     .find({
+      ...notDisabled,
       tradingBySeries: { $exists: true },
       "wallet.privateKeyEnc": { $type: "string" },
       "wallet.funderAddress": { $type: "string" },
@@ -596,6 +643,155 @@ export async function listUsersForLiveTrading(): Promise<UserDocument[]> {
     if (armed) byId.set(id, doc);
   }
   return [...byId.values()];
+}
+
+export async function listUsersForAdmin(): Promise<UserAdminListItem[]> {
+  const col = await collection();
+  const docs = await col.find({}).sort({ createdAt: 1 }).toArray();
+  return docs.map(toAdminListItem);
+}
+
+export async function countAdmins(): Promise<number> {
+  const col = await collection();
+  return col.countDocuments({ admin: true, disabled: { $ne: true } });
+}
+
+export async function setUserAdmin(
+  id: string | ObjectId,
+  admin: boolean,
+): Promise<UserAdminListItem> {
+  const user = await getUserById(id);
+  if (!user) throw new Error("User not found");
+  if (!admin && user.admin === true) {
+    const admins = await countAdmins();
+    if (admins <= 1) {
+      throw new Error("Cannot remove the last admin");
+    }
+  }
+  const col = await collection();
+  await col.updateOne(
+    { _id: user._id },
+    { $set: { admin: admin === true, updatedAt: new Date() } },
+  );
+  const updated = await col.findOne({ _id: user._id });
+  if (!updated) throw new Error("User missing after admin update");
+  return toAdminListItem(updated);
+}
+
+export async function setUserDisabled(
+  id: string | ObjectId,
+  disabled: boolean,
+): Promise<UserAdminListItem> {
+  const user = await getUserById(id);
+  if (!user) throw new Error("User not found");
+  if (disabled && user.admin === true) {
+    const admins = await countAdmins();
+    if (admins <= 1) {
+      throw new Error("Cannot disable the last admin");
+    }
+  }
+  const col = await collection();
+  await col.updateOne(
+    { _id: user._id },
+    { $set: { disabled: disabled === true, updatedAt: new Date() } },
+  );
+  const updated = await col.findOne({ _id: user._id });
+  if (!updated) throw new Error("User missing after disable update");
+  return toAdminListItem(updated);
+}
+
+export async function setUserPasswordById(
+  id: string | ObjectId,
+  password: string,
+): Promise<UserAdminListItem> {
+  const user = await getUserById(id);
+  if (!user) throw new Error("User not found");
+  const passwordHash = await hashPassword(normalizePassword(password));
+  const col = await collection();
+  await col.updateOne(
+    { _id: user._id },
+    { $set: { passwordHash, updatedAt: new Date() } },
+  );
+  const updated = await col.findOne({ _id: user._id });
+  if (!updated) throw new Error("User missing after password update");
+  return toAdminListItem(updated);
+}
+
+/**
+ * Create or promote an admin user (bootstrap / CLI).
+ * If email exists: set password + admin=true + disabled=false.
+ * If not: create a new user with that email/password as admin.
+ */
+export async function bootstrapAdminUser(input: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<UserAdminListItem> {
+  const email = normalizeLoginEmail(input.email);
+  const emailKey = normalizeEmailKey(email);
+  const passwordHash = await hashPassword(normalizePassword(input.password));
+  const col = await collection();
+  const now = new Date();
+  const existing = await col.findOne({ emailKey });
+  if (existing) {
+    await col.updateOne(
+      { _id: existing._id },
+      {
+        $set: {
+          passwordHash,
+          email,
+          emailKey,
+          admin: true,
+          disabled: false,
+          updatedAt: now,
+        },
+      },
+    );
+    const updated = await col.findOne({ _id: existing._id });
+    if (!updated) throw new Error("User missing after admin bootstrap");
+    return toAdminListItem(updated);
+  }
+
+  const name = normalizeDisplayName(input.name, email.split("@")[0] || "admin");
+  const nameKey = normalizeNameKey(name);
+  const nameClash = await col.findOne({ nameKey });
+  const finalName = nameClash ? `${name}-admin` : name;
+  const finalNameKey = normalizeNameKey(finalName);
+  let slug = uniqueSlug();
+  for (let i = 0; i < 5; i++) {
+    const clash = await col.findOne({ slug });
+    if (!clash) break;
+    slug = uniqueSlug();
+  }
+
+  const doc: Omit<UserDocument, "_id"> = {
+    slug,
+    email,
+    emailKey,
+    name: finalName,
+    nameKey: finalNameKey,
+    passwordHash,
+    admin: true,
+    disabled: false,
+    wallet: { signatureType: 1 },
+    trading: defaultTrading(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const result = await col.insertOne(doc as UserDocument);
+  const inserted = await col.findOne({ _id: result.insertedId });
+  if (!inserted) throw new Error("Failed to create admin user");
+  return toAdminListItem(inserted);
+}
+
+/** If zero admins exist and BOOTSTRAP_ADMIN_* env is set, create the first admin. */
+export async function maybeBootstrapAdminFromEnv(): Promise<void> {
+  const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim();
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+  if (!email || password == null || password === "") return;
+  const admins = await countAdmins();
+  if (admins > 0) return;
+  await bootstrapAdminUser({ email, password });
 }
 
 export interface UpdateUserProfileInput {

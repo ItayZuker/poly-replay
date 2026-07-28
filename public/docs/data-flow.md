@@ -65,14 +65,14 @@ Live server -> GET /api/internal/ticks -> Recorder DATA_DIR
 
 | Control / env | Role |
 |---------------|------|
-| **Recording** (Market → Trade) | Per-series flag in Mongo — `PATCH /api/markets/:series` |
-| `TRADING_EXECUTOR=1` | Live — may place CLOB orders; never runs recorders (toggle still persists) |
+| **Available / Recording / Retention** (Admin CRM) | Per-series flags in Mongo — `GET/PATCH /api/admin/markets` (CRM secret). Available gates trader UI + APIs; Recording starts capture; Retention days drive prune |
+| `TRADING_EXECUTOR=1` | Live — may place CLOB orders; never runs recorders (Recording flag still persists) |
 | Non-executor process | Starts/stops `MarketRecorder` for each series with Recording on; writes `DATA_DIR` + Mongo heatmap summaries |
 | `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process. Same origin is used to proxy Open Replay ticks (`/api/internal/ticks`) and play payloads |
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
 | `DATA_DIR` | Local tick/window files (default `./data`) |
 
-Heatmap and Replay load ~**14 days** of `recorded_windows`, then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than ~14 days are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
+Heatmap and Replay load recent `recorded_windows` (default ~**14 days**, overridable per series via Admin CRM retention), then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than that retention are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
 
 **Trader wallets** (Mongo `trader_wallets`, used for heatmap Wallets / New wallets): each completed window refreshes `lastSeenAt`. The hourly retention job deletes any wallet not seen again within **30 days** (must be active at least once a month to stay in the registry). Per-window trader address lists are stored in Mongo `window_traders` (pruned with ~14-day recording retention) so Heatmap’s wallet list can show per-user **I WON** / **I LOST**. Trader **P/L** is that wallet’s Polymarket all-time profit from `lb-api.polymarket.com/profit` (cached ~6h on the wallet doc). `GET /api/trader-wallets?series=…&sort=sightings|pnl|iWin|iLost&dir=desc|asc&limit=100` returns the ranked top page (default: top 100 by sightings).
 

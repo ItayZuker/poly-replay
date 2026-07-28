@@ -65,7 +65,7 @@ export async function pruneColdMarketData(
   market: MarketDocument,
 ): Promise<PruneMarketResult> {
   const series = market._id;
-  const cutoffSec = hotCutoffSec();
+  const cutoffSec = hotCutoffSec(Math.floor(Date.now() / 1000), market.retentionDays);
 
   const coldTicks = await listColdTickDirs(series, cutoffSec);
   for (const windowStart of coldTicks) {

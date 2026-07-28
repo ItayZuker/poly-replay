@@ -149,8 +149,9 @@ Object keyed by market series id. Uses **normal field names** (not compact keys)
 | `_id` | string | Series id, e.g. `btc-5m` |
 | `label` | string | Human label |
 | `timeframeMinutes` | number | `5` or `15` |
-| `recordingEnabled` | boolean | Whether recorder is running for this market |
-| `retentionDays` | number | Days of tick/window/heatmap data to keep (`0` = no pruning) |
+| `available` | boolean | Shown in trader app / allowed for trading (Admin CRM) |
+| `recordingEnabled` | boolean | Whether recorder should run for this market (Admin CRM) |
+| `retentionDays` | number | Days of tick/window data to keep (default `14`; Admin CRM) |
 | `createdAt` | string | ISO timestamp |
 | `updatedAt` | string | ISO timestamp |
 
@@ -409,7 +410,8 @@ Base URL: `http://localhost:3847` (or `PORT` env).
 
 | Endpoint | Params | Returns | Simulator use |
 |----------|--------|---------|---------------|
-| `GET /api/markets` | — | All market configs | List available series |
+| `GET /api/markets` | — | Available market configs (trader) | List tradable series |
+| `GET/PATCH /api/admin/markets` | CRM secret | All markets / patch ops fields | Admin CRM |
 | `GET /api/ticks` | `series`, `windowStart`, `limit?` | Merged replay ticks | **Primary replay feed** |
 | `GET /api/window` | `series` | Live current window state | Live UI only |
 | `GET /api/quotes` | `series` | Live quotes | Live UI only |

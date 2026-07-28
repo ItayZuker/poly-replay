@@ -1,4 +1,5 @@
 import { SEED_MARKETS } from "../collections.js";
+import { clampRetentionDays, HOT_RETENTION_DAYS } from "../retention.js";
 import type { MarketDocument } from "../types.js";
 import {
   ensureMarketDirs,
@@ -14,6 +15,10 @@ const SEED_SERIES_IDS = SEED_MARKETS.map((m) => m.series);
 
 type MarketsFile = Record<string, MarketDocument>;
 
+export type MarketAdminPatch = Partial<
+  Pick<MarketDocument, "available" | "recordingEnabled" | "retentionDays">
+>;
+
 async function collection() {
   const mongo = await getMongoClient();
   return mongo.db(getMongoDbName()).collection<MarketDocument>(COLLECTION);
@@ -22,7 +27,11 @@ async function collection() {
 function normalizeMarket(doc: MarketDocument): MarketDocument {
   return {
     ...doc,
+    available: doc.available !== false,
     recordingEnabled: doc.recordingEnabled === true,
+    retentionDays: clampRetentionDays(
+      doc.retentionDays != null ? doc.retentionDays : HOT_RETENTION_DAYS,
+    ),
   };
 }
 
@@ -46,11 +55,26 @@ async function migrateMarketsFromDiskIfNeeded(): Promise<void> {
   await col.insertMany(docs, { ordered: false });
 }
 
+/** Backfill available / retentionDays on existing seed markets. */
+async function migrateMarketAdminFields(): Promise<void> {
+  const col = await collection();
+  const now = new Date().toISOString();
+  await col.updateMany(
+    { available: { $exists: false } },
+    { $set: { available: true, updatedAt: now } },
+  );
+  await col.updateMany(
+    { retentionDays: { $exists: false } },
+    { $set: { retentionDays: HOT_RETENTION_DAYS, updatedAt: now } },
+  );
+}
+
 export async function initStorageAndSeed(): Promise<void> {
   await initStorage();
   await ensureMarketIndexes();
   await migrateMarketsFromDiskIfNeeded();
   await seedMarkets();
+  await migrateMarketAdminFields();
   await ensureAllMarketDirs();
 }
 
@@ -70,7 +94,9 @@ export async function seedMarkets(): Promise<void> {
         },
         $setOnInsert: {
           _id: seed.series,
+          available: true,
           recordingEnabled: false,
+          retentionDays: HOT_RETENTION_DAYS,
           createdAt: existing?.createdAt ?? now,
         },
       },
@@ -97,15 +123,34 @@ export async function listMarkets(): Promise<MarketDocument[]> {
   );
 }
 
+/** Markets visible/tradable in the trader app. */
+export async function listAvailableMarkets(): Promise<MarketDocument[]> {
+  const markets = await listMarkets();
+  return markets.filter((m) => m.available);
+}
+
 export async function getMarket(series: string): Promise<MarketDocument | null> {
   const col = await collection();
   const doc = await col.findOne({ _id: series });
   return doc ? normalizeMarket(doc) : null;
 }
 
+export async function requireAvailableMarket(
+  series: string,
+): Promise<MarketDocument> {
+  const market = await getMarket(series);
+  if (!market) {
+    throw new Error(`Unknown series: ${series}`);
+  }
+  if (!market.available) {
+    throw new Error(`Market unavailable: ${series}`);
+  }
+  return market;
+}
+
 export async function updateMarket(
   series: string,
-  patch: Partial<Pick<MarketDocument, "recordingEnabled">>,
+  patch: MarketAdminPatch,
 ): Promise<MarketDocument | null> {
   const col = await collection();
   const existing = await col.findOne({ _id: series });
@@ -114,8 +159,14 @@ export async function updateMarket(
   const $set: Partial<MarketDocument> = {
     updatedAt: new Date().toISOString(),
   };
+  if (typeof patch.available === "boolean") {
+    $set.available = patch.available;
+  }
   if (typeof patch.recordingEnabled === "boolean") {
     $set.recordingEnabled = patch.recordingEnabled;
+  }
+  if (patch.retentionDays !== undefined) {
+    $set.retentionDays = clampRetentionDays(patch.retentionDays);
   }
 
   await col.updateOne({ _id: series }, { $set });
