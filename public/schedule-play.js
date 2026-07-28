@@ -44,6 +44,8 @@
   let lastFrameMs = 0;
   let loadToken = 0;
   let scrubbing = false;
+  /** While scrubbing, follow the pointer within the chart container. */
+  let scrubVisualX = null;
   /** Vertical position of the scrubber handle along the playhead bar (0 = top, 1 = bottom). */
   let scrubberHandleFrac = 0.5;
   /** True while the play payload (window list) is fetching. */
@@ -928,6 +930,26 @@
     updateScrubberUi(win, elapsed, duration);
   }
 
+  function scrubberWidthPx() {
+    return scrubber?.offsetWidth || 12;
+  }
+
+  /** Scrubber center X range that keeps the full bar inside the chart wrap. */
+  function scrubberCenterBounds(wrapWidth, barW = scrubberWidthPx()) {
+    const half = barW / 2;
+    const minX = half;
+    const maxX = Math.max(minX, wrapWidth - half);
+    const plotStart = CHART_PAD.left;
+    const plotEnd = Math.max(
+      plotStart,
+      wrapWidth - CHART_PAD.right,
+    );
+    // At end-of-window, allow travel into the right pad (still inside the wrap)
+    // so the bar can clear the final price dot.
+    const endX = Math.min(maxX, plotEnd + barW);
+    return { minX, maxX, plotStart, plotEnd, endX, barW };
+  }
+
   function updateScrubberUi(win, elapsed, duration) {
     if (!scrubber) return;
     const ready = isGraphReady() && win;
@@ -940,7 +962,11 @@
     const plotW = Math.max(1, width - CHART_PAD.left - CHART_PAD.right);
     const plotH = Math.max(1, height - CHART_PAD.top - CHART_PAD.bottom);
     const frac = duration > 0 ? elapsed / duration : 0;
-    const x = CHART_PAD.left + frac * plotW;
+    const { minX, endX } = scrubberCenterBounds(width);
+    let x = CHART_PAD.left + frac * plotW;
+    if (frac >= 1) x = endX;
+    x = Math.min(endX, Math.max(minX, x));
+    if (scrubbing && scrubVisualX != null) x = scrubVisualX;
 
     scrubber.style.left = `${x}px`;
     scrubber.style.top = `${CHART_PAD.top}px`;
@@ -966,7 +992,11 @@
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
     const plotW = Math.max(1, rect.width - CHART_PAD.left - CHART_PAD.right);
-    const timeFrac = Math.min(1, Math.max(0, (clientX - rect.left - CHART_PAD.left) / plotW));
+    const { minX, endX, plotStart } = scrubberCenterBounds(rect.width);
+    const centerX = Math.min(endX, Math.max(minX, clientX - rect.left));
+    // Past the plot’s right edge (inside the wrap pad) still maps to end-of-window.
+    const timeFrac = Math.min(1, Math.max(0, (centerX - plotStart) / plotW));
+    scrubVisualX = centerX;
     setPlayhead(win.windowStart + timeFrac * windowDuration(win));
 
     if (clientY != null && scrubber) {
@@ -984,6 +1014,7 @@
   function endScrub(pointerId) {
     if (!scrubbing) return;
     scrubbing = false;
+    scrubVisualX = null;
     scrubber?.classList.remove("is-dragging");
     document.body.classList.remove("is-schedule-dragging");
     if (scrubber && pointerId != null) {
@@ -993,6 +1024,8 @@
         /* already released */
       }
     }
+    const win = selectedWindow();
+    if (win) updateTimeUi(win);
   }
 
   function isGraphReady() {

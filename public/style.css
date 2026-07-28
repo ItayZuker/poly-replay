@@ -6921,6 +6921,7 @@ body.is-column-resizing * {
   align-items: center;
   justify-content: center;
   gap: 10px;
+  border-radius: inherit;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   pointer-events: none;
 }
@@ -6947,6 +6948,7 @@ body.is-column-resizing * {
   display: block;
   width: 100%;
   height: 100%;
+  border-radius: inherit;
 }
 
 .schedule-play-view-btn:disabled {
@@ -7054,7 +7056,7 @@ body.is-column-resizing * {
   top: 10px;
   left: 10px;
   z-index: 2;
-  width: 24px;
+  width: 12px;
   height: calc(100% - 32px);
   margin: 0;
   padding: 0;
@@ -7097,8 +7099,8 @@ body.is-column-resizing * {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   border: 2px solid #f0f6fc;
   background: var(--accent);
@@ -7108,8 +7110,8 @@ body.is-column-resizing * {
 }
 
 .schedule-play-scrubber.is-dragging .schedule-play-scrubber-handle {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
 }
 
 .schedule-play-transport-panel.is-disabled {
