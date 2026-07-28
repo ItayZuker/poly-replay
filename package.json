@@ -1,6 +1,6 @@
 {
   "name": "poly-simulator",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "description": "Schedule-driven Polymarket up/down trading with optional recording and Replay",
   "type": "module",
   "engines": {

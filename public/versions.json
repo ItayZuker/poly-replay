@@ -1,6 +1,11 @@
 {
-  "current": "1.12.1",
+  "current": "1.12.2",
   "releases": [
+    {
+      "version": "1.12.2",
+      "releasedAt": "2026-07-28T08:39:31.000Z",
+      "notes": "Open Replay: view-only phase settings on phase click; Settlement-aligned close tip (draw at window end, mirror wrong-side closes); hide schedule-edit hint in view-only phase modal; docs updated."
+    },
     {
       "version": "1.12.1",
       "releasedAt": "2026-07-27T19:13:07.000Z",
