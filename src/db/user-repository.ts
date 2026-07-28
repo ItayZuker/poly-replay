@@ -35,8 +35,6 @@ export interface UserDocument {
   passwordHash?: string;
   /** When true, user may sign in to Admin CRM. */
   admin?: boolean;
-  /** When true, trader + CRM login are blocked. */
-  disabled?: boolean;
   wallet: UserWalletStored;
   /** Legacy flat trading config (also mirrored for DEFAULT_MARKET_SERIES). */
   trading: TradingConfig;
@@ -53,7 +51,6 @@ export interface UserPublic {
   name?: string;
   hasPassword: boolean;
   admin: boolean;
-  disabled: boolean;
   /** True when funder + private key are both stored. */
   walletReady: boolean;
   trading: TradingConfig;
@@ -75,7 +72,6 @@ export interface UserAdminListItem {
   createdAt: string;
   walletReady: boolean;
   admin: boolean;
-  disabled: boolean;
   hasPassword: boolean;
 }
 
@@ -173,7 +169,6 @@ function toPublic(doc: UserDocument): UserPublic {
     name: doc.name,
     hasPassword: Boolean(doc.passwordHash),
     admin: doc.admin === true,
-    disabled: doc.disabled === true,
     walletReady: hasPrivateKey && Boolean(funderAddress?.trim()),
     trading: normalizeTrading(doc.trading),
     wallet: {
@@ -200,7 +195,6 @@ function toAdminListItem(doc: UserDocument): UserAdminListItem {
         : String(doc.createdAt ?? ""),
     walletReady: hasPrivateKey && Boolean(funderAddress?.trim()),
     admin: doc.admin === true,
-    disabled: doc.disabled === true,
     hasPassword: Boolean(doc.passwordHash),
   };
 }
@@ -425,7 +419,6 @@ export async function findUserByEmail(email: string): Promise<UserDocument | nul
 /**
  * Authenticate an existing user by email + password.
  * Users without a passwordHash cannot log in.
- * Disabled users are rejected.
  */
 export async function authenticateUser(
   email: string,
@@ -436,9 +429,6 @@ export async function authenticateUser(
   if (!user?.passwordHash) return null;
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) return null;
-  if (user.disabled === true) {
-    throw new Error("This account is disabled");
-  }
   return toPublic(user);
 }
 
@@ -611,10 +601,8 @@ export async function updateUserTrading(
 /** Users that may need a live engine (wallet configured and/or trading armed). */
 export async function listUsersForLiveTrading(): Promise<UserDocument[]> {
   const col = await collection();
-  const notDisabled = { disabled: { $ne: true } };
   const docs = await col
     .find({
-      ...notDisabled,
       $or: [
         { "wallet.privateKeyEnc": { $type: "string" }, "wallet.funderAddress": { $type: "string" } },
         { "trading.autoTrade": true },
@@ -626,7 +614,6 @@ export async function listUsersForLiveTrading(): Promise<UserDocument[]> {
   // Also include users who only armed a non-default market via tradingBySeries.
   const extra = await col
     .find({
-      ...notDisabled,
       tradingBySeries: { $exists: true },
       "wallet.privateKeyEnc": { $type: "string" },
       "wallet.funderAddress": { $type: "string" },
@@ -653,7 +640,7 @@ export async function listUsersForAdmin(): Promise<UserAdminListItem[]> {
 
 export async function countAdmins(): Promise<number> {
   const col = await collection();
-  return col.countDocuments({ admin: true, disabled: { $ne: true } });
+  return col.countDocuments({ admin: true });
 }
 
 export async function setUserAdmin(
@@ -678,28 +665,6 @@ export async function setUserAdmin(
   return toAdminListItem(updated);
 }
 
-export async function setUserDisabled(
-  id: string | ObjectId,
-  disabled: boolean,
-): Promise<UserAdminListItem> {
-  const user = await getUserById(id);
-  if (!user) throw new Error("User not found");
-  if (disabled && user.admin === true) {
-    const admins = await countAdmins();
-    if (admins <= 1) {
-      throw new Error("Cannot disable the last admin");
-    }
-  }
-  const col = await collection();
-  await col.updateOne(
-    { _id: user._id },
-    { $set: { disabled: disabled === true, updatedAt: new Date() } },
-  );
-  const updated = await col.findOne({ _id: user._id });
-  if (!updated) throw new Error("User missing after disable update");
-  return toAdminListItem(updated);
-}
-
 export async function setUserPasswordById(
   id: string | ObjectId,
   password: string,
@@ -719,7 +684,7 @@ export async function setUserPasswordById(
 
 /**
  * Create or promote an admin user (bootstrap / CLI).
- * If email exists: set password + admin=true + disabled=false.
+ * If email exists: set password + admin=true.
  * If not: create a new user with that email/password as admin.
  */
 export async function bootstrapAdminUser(input: {
@@ -742,7 +707,6 @@ export async function bootstrapAdminUser(input: {
           email,
           emailKey,
           admin: true,
-          disabled: false,
           updatedAt: now,
         },
       },
@@ -772,7 +736,6 @@ export async function bootstrapAdminUser(input: {
     nameKey: finalNameKey,
     passwordHash,
     admin: true,
-    disabled: false,
     wallet: { signatureType: 1 },
     trading: defaultTrading(),
     createdAt: now,

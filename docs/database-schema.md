@@ -411,7 +411,7 @@ Base URL: `http://localhost:3847` (or `PORT` env).
 | Endpoint | Params | Returns | Simulator use |
 |----------|--------|---------|---------------|
 | `GET /api/markets` | — | Available market configs (trader) | List tradable series |
-| `GET/PATCH /api/admin/markets` | CRM secret | All markets / patch ops fields | Admin CRM |
+| Admin CRM (separate app) | Shared Mongo | Writes `markets` / `users` directly | Ops Available/Recording/retention + user `admin`; poly-replay reads them (Recording applies on recorder sync ~30s) |
 | `GET /api/ticks` | `series`, `windowStart`, `limit?` | Merged replay ticks | **Primary replay feed** |
 | `GET /api/window` | `series` | Live current window state | Live UI only |
 | `GET /api/quotes` | `series` | Live quotes | Live UI only |

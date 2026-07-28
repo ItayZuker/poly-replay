@@ -65,7 +65,7 @@ Live server -> GET /api/internal/ticks -> Recorder DATA_DIR
 
 | Control / env | Role |
 |---------------|------|
-| **Available / Recording / Retention** (Admin CRM) | Per-series flags in Mongo — `GET/PATCH /api/admin/markets` (CRM secret). Available gates trader UI + APIs; Recording starts capture; Retention days drive prune |
+| **Available / Recording / Retention** (Admin CRM) | Per-series flags in shared Mongo `markets` (CRM writes Mongo directly). Available gates trader UI + APIs; Recording starts capture on recorder sync (~30s); Retention days drive prune |
 | `TRADING_EXECUTOR=1` | Live — may place CLOB orders; never runs recorders (Recording flag still persists) |
 | Non-executor process | Starts/stops `MarketRecorder` for each series with Recording on; writes `DATA_DIR` + Mongo heatmap summaries |
 | `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process. Same origin is used to proxy Open Replay ticks (`/api/internal/ticks`) and play payloads |

@@ -7,7 +7,7 @@
  * Or env (same as server first-boot):
  *   BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD
  *
- * Safe to re-run: sets password, admin=true, disabled=false on the email.
+ * Safe to re-run: sets password and admin=true on the email.
  * There is no open "register as admin" path — use this script or env bootstrap.
  */
 import "dotenv/config";

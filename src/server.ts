@@ -5,13 +5,10 @@ import { fileURLToPath } from "url";
 import {
   initStorageAndSeed,
   ensureAllMarketIndexes,
-  listMarkets,
   listAvailableMarkets,
   getMarket,
   requireAvailableMarket,
-  updateMarket,
 } from "./db/market-repository.js";
-import { clampRetentionDays } from "./retention.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
 import {
   listChainlinkTicks,
@@ -135,28 +132,6 @@ const publicDir = path.join(__dirname, "../public");
 const app = express();
 app.use(express.json());
 
-const CRM_ADMIN_SECRET = process.env.CRM_ADMIN_SECRET?.trim() || "";
-const CRM_ORIGIN = process.env.CRM_ORIGIN?.trim() || "";
-
-/** CORS for Admin CRM → poly-replay admin APIs (secret auth; credentials not required). */
-app.use((req, res, next) => {
-  if (!req.path.startsWith("/api/admin")) {
-    next();
-    return;
-  }
-  if (CRM_ORIGIN) {
-    res.setHeader("Access-Control-Allow-Origin", CRM_ORIGIN);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CRM-Secret");
-    res.setHeader("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
-  }
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return;
-  }
-  next();
-});
-
 function sendIndexHtml(_req: express.Request, res: express.Response): void {
   res.sendFile(path.join(publicDir, "index.html"));
 }
@@ -201,8 +176,6 @@ function isPublicAuthPath(req: express.Request): boolean {
   if (req.method === "POST" && req.path === "/api/auth/login") return true;
   if (req.method === "POST" && req.path === "/api/auth/register") return true;
   if (req.method === "GET" && req.path === "/api/auth/me") return true;
-  // Admin CRM market APIs — gated by CRM_ADMIN_SECRET.
-  if (req.path.startsWith("/api/admin")) return true;
   // Live→recorder worker; gated by SCHEDULE_REPLAY_WORKER_SECRET when set.
   if (req.method === "POST" && req.path === "/api/internal/schedule-replay") return true;
   if (req.method === "POST" && /^\/api\/internal\/schedule-placements\/[^/]+\/play$/.test(req.path)) {
@@ -210,24 +183,6 @@ function isPublicAuthPath(req: express.Request): boolean {
   }
   if (req.method === "GET" && req.path === "/api/internal/ticks") return true;
   return false;
-}
-
-function requireCrmSecret(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-): void {
-  if (!CRM_ADMIN_SECRET) {
-    res.status(503).json({ error: "CRM admin API not configured (CRM_ADMIN_SECRET)" });
-    return;
-  }
-  const header = req.headers["x-crm-secret"];
-  const provided = Array.isArray(header) ? header[0] : header;
-  if (typeof provided !== "string" || provided !== CRM_ADMIN_SECRET) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
 }
 
 async function requireAuth(
@@ -247,10 +202,6 @@ async function requireAuth(
     const user = await loadAuthUser(req);
     if (!user) {
       res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    if (user.disabled) {
-      res.status(403).json({ error: "This account is disabled" });
       return;
     }
     (req as AuthedRequest).authUser = user;
@@ -274,12 +225,7 @@ app.post("/api/auth/login", async (req, res) => {
     res.setHeader("Set-Cookie", buildSessionCookie(token, expiresAt, isSecureRequest(req)));
     res.json({ user });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message === "This account is disabled") {
-      res.status(403).json({ error: message });
-      return;
-    }
-    res.status(400).json({ error: message });
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -1015,76 +961,11 @@ app.get("/api/markets", async (_req, res) => {
   }
 });
 
-/** Ops market settings are owned by Admin CRM (`/api/admin/markets`). */
+/** Ops market settings are owned by Admin CRM (shared Mongo); traders cannot patch. */
 app.patch("/api/markets/:series", async (_req, res) => {
   res.status(403).json({
     error: "Market ops settings are managed in Admin CRM",
   });
-});
-
-app.get("/api/admin/markets", requireCrmSecret, async (_req, res) => {
-  try {
-    const markets = await listMarkets();
-    res.json(markets);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-app.patch("/api/admin/markets/:series", requireCrmSecret, async (req, res) => {
-  try {
-    const series = String(req.params.series ?? "").trim();
-    const body = (req.body ?? {}) as {
-      available?: unknown;
-      recordingEnabled?: unknown;
-      retentionDays?: unknown;
-    };
-    const patch: {
-      available?: boolean;
-      recordingEnabled?: boolean;
-      retentionDays?: number;
-    } = {};
-    if (typeof body.available === "boolean") patch.available = body.available;
-    if (typeof body.recordingEnabled === "boolean") {
-      patch.recordingEnabled = body.recordingEnabled;
-    }
-    if (body.retentionDays !== undefined) {
-      patch.retentionDays = clampRetentionDays(body.retentionDays);
-    }
-    if (
-      patch.available === undefined &&
-      patch.recordingEnabled === undefined &&
-      patch.retentionDays === undefined
-    ) {
-      res.status(400).json({
-        error: "Provide available, recordingEnabled, and/or retentionDays",
-      });
-      return;
-    }
-    const before = await getMarket(series);
-    if (!before) {
-      res.status(404).json({ error: "Market not found" });
-      return;
-    }
-    const updated = await updateMarket(series, patch);
-    if (!updated) {
-      res.status(404).json({ error: "Market not found" });
-      return;
-    }
-    if (before.recordingEnabled !== updated.recordingEnabled) {
-      await recordingManager.refreshMarket(updated);
-      logService.info(
-        "recording",
-        `Recording ${updated.recordingEnabled ? "enabled" : "disabled"} for ${updated._id}` +
-          (canProcessRecord() ? "" : " (saved; this process does not record)"),
-      );
-    }
-    const availableMarkets = await listAvailableMarkets();
-    broadcast("markets", availableMarkets);
-    res.json(updated);
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
 });
 
 app.get("/api/quotes", async (req, res) => {
