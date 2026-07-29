@@ -17,10 +17,10 @@ Live trading console for the selected series.
 |---------|---------|
 | **Duration (Sec)** | Seconds the condition must hold (compare now vs that many seconds ago) |
 | **Window area** | Dual-handle bar over the market window timeline. Time labels under each handle move with the dots (`0:00` → window length, e.g. `5:00` for a 5m market). Only the span between the handles is watched |
-| **Prediction** | Full-width status under Window area: **Detecting…** (animated dots) → **Prediction UP/DOWN** on trigger (same green/red fill as triggered Buy quote boxes). Window end → **Pending**, then only a ✓ / ✕ for **5 seconds** after the official outcome. Info icon on the switcher explains the Gap vs UP/DOWN Buy trigger |
+| **Prediction** | Full-width status under Window area: **Detecting…** (animated dots) → **Prediction UP/DOWN** on trigger (same green/red fill as triggered Buy quote boxes). Window end → **Pending**, then only a ✓ / ✕ for **5 seconds** after the official outcome (Chainlink final vs PTB, or settled ~1/0 token prices — not mid-window book prices). Info icon on the switcher explains the Gap vs UP/DOWN Buy trigger |
 | **Right / Wrong** | Per-series counts updated when the official outcome arrives. **Reset** clears both counts for the selected market |
 
-**Trigger:** while Gap stays the same or stronger in its direction, UP Buy gets cheaper and DOWN Buy gets more expensive (mirror for a negative Gap). On trigger, the price graph container border turns **blue** for up to **10 seconds**, or until the window ends — whichever is sooner.
+**Trigger:** while Gap stays the same or stronger in its direction, UP Buy gets cheaper and DOWN Buy gets more expensive (mirror for a negative Gap). On trigger, the price graph container border turns **green** for Prediction UP or **red** for Prediction DOWN, and stays until the window ends.
 
 Feed **Latency** is shown in the Settings page header. **Fill success** lives under Settings → **Stats**. See [Settings & wallet](doc:settings).
 

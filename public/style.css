@@ -5655,9 +5655,15 @@ body.is-column-resizing * {
   transition: border-color 0.15s ease;
 }
 
-.price-graph-wrap--manipulation {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+.price-graph-wrap--manipulation,
+.price-graph-wrap--prediction-up {
+  border-color: var(--up);
+  box-shadow: inset 0 0 0 1px var(--up);
+}
+
+.price-graph-wrap--prediction-down {
+  border-color: var(--down);
+  box-shadow: inset 0 0 0 1px var(--down);
 }
 
 .wallet-control-field--manipulation {

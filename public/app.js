@@ -5284,7 +5284,6 @@ function coalesceTradingConfig(serverConfig, localPatch) {
   };
 }
 
-const MANIP_FLASH_MS = 10000;
 const MANIP_SAMPLE_MAX = 600;
 const PREDICTION_RESOLVE_MAX_MS = 45000;
 const PREDICTION_RESOLVE_INTERVAL_MS = 2000;
@@ -5618,7 +5617,11 @@ function clearManipulationFlash() {
     manipDetectorRuntime.flashTimer = null;
   }
   manipDetectorRuntime.flashUntilMs = 0;
-  $("price-graph-wrap")?.classList.remove("price-graph-wrap--manipulation");
+  $("price-graph-wrap")?.classList.remove(
+    "price-graph-wrap--manipulation",
+    "price-graph-wrap--prediction-up",
+    "price-graph-wrap--prediction-down",
+  );
 }
 
 function resetManipulationDetector() {
@@ -5641,28 +5644,44 @@ function resetManipulationDetector() {
 function triggerManipulationFlash(state, predictionSide) {
   const wrap = $("price-graph-wrap");
   if (!wrap) return;
+  if (predictionSide !== "up" && predictionSide !== "down") return;
+  // One prediction highlight per window.
+  if (manipDetectorRuntime.predictionSide != null) return;
+
   const now = Date.now();
   const windowEndMs =
     state?.windowEnd != null && Number.isFinite(state.windowEnd)
       ? state.windowEnd * 1000
-      : now + MANIP_FLASH_MS;
-  const duration = Math.max(0, Math.min(MANIP_FLASH_MS, windowEndMs - now));
-  if (duration <= 0) return;
+      : null;
+  const duration = windowEndMs != null ? Math.max(0, windowEndMs - now) : null;
+  if (duration != null && duration <= 0) return;
 
-  if (predictionSide === "up" || predictionSide === "down") {
-    setActivePrediction(predictionSide, state);
-  }
+  setActivePrediction(predictionSide, state);
 
-  wrap.classList.add("price-graph-wrap--manipulation");
+  wrap.classList.remove(
+    "price-graph-wrap--manipulation",
+    "price-graph-wrap--prediction-up",
+    "price-graph-wrap--prediction-down",
+  );
+  wrap.classList.add(
+    predictionSide === "up"
+      ? "price-graph-wrap--prediction-up"
+      : "price-graph-wrap--prediction-down",
+  );
   if (manipDetectorRuntime.flashTimer != null) clearTimeout(manipDetectorRuntime.flashTimer);
-  manipDetectorRuntime.flashUntilMs = now + duration;
+  manipDetectorRuntime.flashUntilMs = duration != null ? now + duration : Number.POSITIVE_INFINITY;
   manipDetectorRuntime.cooldownUntilMs = manipDetectorRuntime.flashUntilMs;
   manipDetectorRuntime.samples = [];
-  manipDetectorRuntime.flashTimer = setTimeout(() => {
-    manipDetectorRuntime.flashTimer = null;
-    manipDetectorRuntime.flashUntilMs = 0;
-    wrap.classList.remove("price-graph-wrap--manipulation");
-  }, duration);
+  if (duration != null) {
+    manipDetectorRuntime.flashTimer = setTimeout(() => {
+      manipDetectorRuntime.flashTimer = null;
+      manipDetectorRuntime.flashUntilMs = 0;
+      wrap.classList.remove(
+        "price-graph-wrap--prediction-up",
+        "price-graph-wrap--prediction-down",
+      );
+    }, duration);
+  }
 }
 
 function isInManipulationArea(state, areaStart, areaEnd) {
