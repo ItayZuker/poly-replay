@@ -1,6 +1,11 @@
 {
-  "current": "1.17.0",
+  "current": "1.17.1",
   "releases": [
+    {
+      "version": "1.17.1",
+      "releasedAt": "2026-07-29T13:31:11.531Z",
+      "notes": "Fix Prediction Wrong scores: freeze Chainlink close/PTB for the predicted window (do not use the next window); prefer settled ~1/0 token prices over Gamma metadata. Docs updated."
+    },
     {
       "version": "1.17.0",
       "releasedAt": "2026-07-29T10:46:39.311Z",
