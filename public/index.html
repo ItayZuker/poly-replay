@@ -484,8 +484,10 @@
                     <div class="manipulation-detector-label-row">
                       <button
                         type="button"
+                        id="prediction-info-btn"
                         class="prediction-info-btn"
-                        title="Triggers when Gap holds or strengthens while UP/DOWN Buys move against it, for the set Duration inside the Window area."
+                        aria-expanded="false"
+                        aria-controls="prediction-info-panel"
                         aria-label="About Prediction"
                       >
                         <span class="settings-info-icon" aria-hidden="true">
@@ -500,6 +502,27 @@
                       <input type="checkbox" id="manipulation-detector" />
                       <span class="switch-slider"></span>
                     </label>
+                  </div>
+                  <div
+                    id="prediction-info-panel"
+                    class="prediction-info-panel"
+                    role="note"
+                    aria-hidden="true"
+                  >
+                    <div class="prediction-info-panel-body">
+                      <p>
+                        Triggers when Gap holds or strengthens while UP/DOWN Buys move against it, for
+                        the set Duration inside the Trigger Area.
+                      </p>
+                      <p>
+                        Rule: if any UP or DOWN Buy or Sell price is 90¢ or more, Prediction does not
+                        trigger.
+                      </p>
+                      <p>
+                        Triggers and scoring run only on the deployed app (not localhost). Settings can
+                        still be changed from any host.
+                      </p>
+                    </div>
                   </div>
                   <div id="manipulation-detector-settings" class="manipulation-detector-settings">
                     <div class="manipulation-detector-row">
@@ -519,7 +542,7 @@
                       </div>
                     </div>
                     <div class="manipulation-detector-row manipulation-detector-row--area">
-                      <span class="wallet-control-label" id="manipulation-area-label">Window area</span>
+                      <span class="wallet-control-label" id="manipulation-area-label">Trigger Area</span>
                       <div
                         class="manipulation-area-slider"
                         id="manipulation-area-slider"
@@ -561,6 +584,26 @@
                       <span id="prediction-status-icon" class="prediction-status-icon" hidden aria-hidden="true"></span>
                     </div>
                     <div class="prediction-stats-row" aria-label="Prediction stats">
+                      <button type="button" id="prediction-stats-reset" class="settings-secondary-btn prediction-stats-reset">
+                        <svg class="prediction-stats-reset-icon" viewBox="0 0 16 16" aria-hidden="true">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M2.5 3.5v3h3M13.5 12.5v-3h-3"
+                          />
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5"
+                          />
+                        </svg>
+                        Reset
+                      </button>
                       <div class="prediction-stats-counts">
                         <span class="prediction-stat">
                           Right <strong id="prediction-stats-right">0</strong>
@@ -569,9 +612,6 @@
                           Wrong <strong id="prediction-stats-wrong">0</strong>
                         </span>
                       </div>
-                      <button type="button" id="prediction-stats-reset" class="settings-secondary-btn prediction-stats-reset">
-                        Reset
-                      </button>
                     </div>
                   </div>
                 </div>

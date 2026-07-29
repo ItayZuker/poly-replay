@@ -11,16 +11,16 @@ Live trading console for the selected series.
 | **Auto Trade** | Bot may trade using the active setup; label shows **· On** / **· Off** |
 | **Size** | Manual / fallback order size |
 | **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup; label shows **· On** / **· Off** |
-| **Prediction** | Manipulation / prediction detector. Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Duration (Sec)** and **Window area** stay visible in the same control; they are disabled (muted) when Off. Active window span between the handles is shown in blue |
+| **Prediction** | Manipulation / prediction detector. Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Settings** (On/Off, Duration, Trigger Area) can be changed from any host and sync per series; **triggers and scoring run only on the deployed app** (not localhost), so local + Heroku do not double-count. **Duration (Sec)** and **Trigger Area** stay visible in the same control; they are disabled (muted) when Off. Active window span between the handles is shown in blue |
 
 | Setting | Meaning |
 |---------|---------|
 | **Duration (Sec)** | Seconds the condition must hold (compare now vs that many seconds ago) |
-| **Window area** | Dual-handle bar over the market window timeline. Time labels under each handle move with the dots (`0:00` → window length, e.g. `5:00` for a 5m market). Only the span between the handles is watched |
-| **Prediction** | Full-width status under Window area: **Detecting…** (animated dots) → **Prediction UP/DOWN** on trigger (same green/red fill as triggered Buy quote boxes). Window end → **Pending**, then only a ✓ / ✕ for **5 seconds** after the official outcome (Chainlink final vs PTB, or settled ~1/0 token prices — not mid-window book prices). Info icon on the switcher explains the Gap vs UP/DOWN Buy trigger |
-| **Right / Wrong** | Per-series counts updated when the official outcome arrives. **Reset** clears both counts for the selected market |
+| **Trigger Area** | Dual-handle bar over the market window timeline. Time labels under each handle move with the dots (`0:00` → window length, e.g. `5:00` for a 5m market). Only the span between the handles is watched |
+| **Prediction** | Full-width status under Trigger Area: **Detecting…** (animated dots) → **Prediction UP/DOWN** on trigger (same green/red fill as triggered Buy quote boxes; survives page refresh until scored). Window end → **Pending**, then only a ✓ / ✕ for **5 seconds** after the official outcome (Chainlink final vs PTB, or settled ~1/0 token prices — not mid-window book prices). A new trigger in a later window takes over the status UI; the previous Pending keeps resolving in the background and still updates stats. Click the info icon on the switcher for the Gap vs UP/DOWN Buy trigger rules (including the 90¢ Buy/Sell skip rule) |
+| **Right / Wrong** | Per-series counts updated when each official outcome arrives (including background Pending predictions). **Reset** clears both counts for the selected market |
 
-**Trigger:** while Gap stays the same or stronger in its direction, UP Buy gets cheaper and DOWN Buy gets more expensive (mirror for a negative Gap). On trigger, the price graph container border turns **green** for Prediction UP or **red** for Prediction DOWN, and stays until the window ends.
+**Trigger:** while Gap stays the same or stronger in its direction, UP Buy gets cheaper and DOWN Buy gets more expensive (mirror for a negative Gap). Does **not** trigger when any UP/DOWN Buy or Sell quote is **90¢ or more**. On trigger, the price graph container border turns **green** for Prediction UP or **red** for Prediction DOWN, and stays until the window ends.
 
 Feed **Latency** is shown in the Settings page header. **Fill success** lives under Settings → **Stats**. See [Settings & wallet](doc:settings).
 

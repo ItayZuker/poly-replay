@@ -3648,6 +3648,7 @@ async function onMarketSeriesChanged(nextSeries) {
     predictionWrongCount: 0,
   });
   resetManipulationDetector();
+  if (isPredictionTriggerHost()) restorePredictionRuntime();
   void loadHeatmap();
   if (walletsListOpen) void loadTraderWalletsList();
   if (window.SchedulePlacements?.loadPlacements) {
@@ -5287,6 +5288,18 @@ function coalesceTradingConfig(serverConfig, localPatch) {
 const MANIP_SAMPLE_MAX = 600;
 const PREDICTION_RESOLVE_MAX_MS = 45000;
 const PREDICTION_RESOLVE_INTERVAL_MS = 2000;
+/** Do not trigger when any UP/DOWN Buy or Sell quote is at/above this price. */
+const PREDICTION_MAX_QUOTE_PRICE = 0.9;
+const PREDICTION_RUNTIME_STORAGE_KEY = "poly-prediction-runtime";
+
+/**
+ * Predictions only trigger/score on the deployed host (e.g. Heroku).
+ * Localhost may still edit Prediction settings; those sync via trading config.
+ */
+function isPredictionTriggerHost() {
+  const host = String(window.location?.hostname || "").toLowerCase();
+  return host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]";
+}
 const PREDICTION_ICON_CHECK =
   '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
 const PREDICTION_ICON_CROSS =
@@ -5301,21 +5314,283 @@ const manipDetectorRuntime = {
   /** @type {"up"|"down"|null} */
   predictionSide: null,
   predictionWindowStart: null,
+  predictionWindowEnd: null,
   predictionSlug: null,
   /** @type {"none"|"active"|"pending"|"right"|"wrong"} */
   uiPhase: "none",
-  scoredWindowStart: null,
+  /** @type {number[]} */
+  scoredWindowStarts: [],
   lastPrice: null,
   lastPtb: null,
   resolveTimer: null,
   resolveStartedAt: 0,
   resultClearTimer: null,
+  /**
+   * Pending predictions parked when a newer one takes the UI.
+   * @type {Array<{
+   *   side: "up"|"down",
+   *   windowStart: number,
+   *   slug: string|null,
+   *   lastPrice: number|null,
+   *   lastPtb: number|null,
+   *   resolveStartedAt: number,
+   *   timer: ReturnType<typeof setTimeout>|null,
+   * }>}
+   */
+  backgroundResolutions: [],
   rightCount: 0,
   wrongCount: 0,
   statsPersistChain: Promise.resolve(),
 };
 
 const PREDICTION_RESULT_SHOW_MS = 5000;
+const PREDICTION_SCORED_WINDOW_MAX = 50;
+
+function predictionRuntimeStorageKey(series = selectedSeries) {
+  return userScopedStorageKey(`${PREDICTION_RUNTIME_STORAGE_KEY}:${series || "btc-5m"}`);
+}
+
+function isPredictionWindowScored(windowStart) {
+  return (
+    windowStart != null &&
+    Number.isFinite(windowStart) &&
+    manipDetectorRuntime.scoredWindowStarts.includes(windowStart)
+  );
+}
+
+function markPredictionWindowScored(windowStart) {
+  if (windowStart == null || !Number.isFinite(windowStart)) return;
+  if (isPredictionWindowScored(windowStart)) return;
+  manipDetectorRuntime.scoredWindowStarts.push(windowStart);
+  if (manipDetectorRuntime.scoredWindowStarts.length > PREDICTION_SCORED_WINDOW_MAX) {
+    manipDetectorRuntime.scoredWindowStarts.splice(
+      0,
+      manipDetectorRuntime.scoredWindowStarts.length - PREDICTION_SCORED_WINDOW_MAX,
+    );
+  }
+}
+
+function normalizeScoredWindowStarts(value) {
+  const list = Array.isArray(value)
+    ? value
+    : Number.isFinite(value)
+      ? [value]
+      : [];
+  const out = [];
+  for (const item of list) {
+    const n = Number(item);
+    if (!Number.isFinite(n) || out.includes(n)) continue;
+    out.push(n);
+  }
+  return out.slice(-PREDICTION_SCORED_WINDOW_MAX);
+}
+
+function stopBackgroundResolutionTimers() {
+  for (const job of manipDetectorRuntime.backgroundResolutions) {
+    if (job.timer != null) {
+      clearTimeout(job.timer);
+      job.timer = null;
+    }
+  }
+}
+
+function serializeBackgroundResolutions() {
+  return manipDetectorRuntime.backgroundResolutions.map((job) => ({
+    side: job.side,
+    windowStart: job.windowStart,
+    slug: job.slug,
+    lastPrice: Number.isFinite(job.lastPrice) ? job.lastPrice : null,
+    lastPtb: Number.isFinite(job.lastPtb) ? job.lastPtb : null,
+    resolveStartedAt: job.resolveStartedAt || 0,
+  }));
+}
+
+/** Persist foreground + background pending predictions so refresh does not lose them. */
+function persistPredictionRuntime() {
+  try {
+    const key = predictionRuntimeStorageKey();
+    const side = manipDetectorRuntime.predictionSide;
+    const phase = manipDetectorRuntime.uiPhase;
+    const scored = manipDetectorRuntime.scoredWindowStarts;
+    const background = serializeBackgroundResolutions();
+    const active =
+      (side === "up" || side === "down") &&
+      (phase === "active" || phase === "pending") &&
+      manipDetectorRuntime.predictionWindowStart != null &&
+      Number.isFinite(manipDetectorRuntime.predictionWindowStart);
+
+    if (!active && background.length === 0 && scored.length === 0) {
+      localStorage.removeItem(key);
+      return;
+    }
+
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        predictionSide: active ? side : null,
+        predictionWindowStart: active ? manipDetectorRuntime.predictionWindowStart : null,
+        predictionWindowEnd: active ? manipDetectorRuntime.predictionWindowEnd : null,
+        predictionSlug: active ? manipDetectorRuntime.predictionSlug : null,
+        uiPhase: active ? phase : "none",
+        scoredWindowStarts: scored,
+        // legacy single field for older clients
+        scoredWindowStart: scored.length > 0 ? scored[scored.length - 1] : null,
+        backgroundResolutions: background,
+        lastPrice: Number.isFinite(manipDetectorRuntime.lastPrice)
+          ? manipDetectorRuntime.lastPrice
+          : null,
+        lastPtb: Number.isFinite(manipDetectorRuntime.lastPtb)
+          ? manipDetectorRuntime.lastPtb
+          : null,
+        resolveStartedAt: manipDetectorRuntime.resolveStartedAt || 0,
+      }),
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function restorePredictionGraphBorder(side, windowEndSec) {
+  const wrap = $("price-graph-wrap");
+  if (!wrap || (side !== "up" && side !== "down")) return;
+
+  wrap.classList.remove(
+    "price-graph-wrap--manipulation",
+    "price-graph-wrap--prediction-up",
+    "price-graph-wrap--prediction-down",
+  );
+
+  const now = Date.now();
+  const windowEndMs =
+    windowEndSec != null && Number.isFinite(windowEndSec) ? windowEndSec * 1000 : null;
+  const duration = windowEndMs != null ? Math.max(0, windowEndMs - now) : null;
+  if (duration != null && duration <= 0) return;
+
+  wrap.classList.add(
+    side === "up" ? "price-graph-wrap--prediction-up" : "price-graph-wrap--prediction-down",
+  );
+  if (manipDetectorRuntime.flashTimer != null) clearTimeout(manipDetectorRuntime.flashTimer);
+  manipDetectorRuntime.flashUntilMs =
+    duration != null ? now + duration : Number.POSITIVE_INFINITY;
+  manipDetectorRuntime.cooldownUntilMs = manipDetectorRuntime.flashUntilMs;
+  if (duration != null) {
+    manipDetectorRuntime.flashTimer = setTimeout(() => {
+      manipDetectorRuntime.flashTimer = null;
+      manipDetectorRuntime.flashUntilMs = 0;
+      wrap.classList.remove(
+        "price-graph-wrap--prediction-up",
+        "price-graph-wrap--prediction-down",
+      );
+    }, duration);
+  }
+}
+
+function restoreBackgroundResolutions(rawList) {
+  stopBackgroundResolutionTimers();
+  manipDetectorRuntime.backgroundResolutions = [];
+  if (!Array.isArray(rawList)) return;
+  for (const item of rawList) {
+    if (!item || typeof item !== "object") continue;
+    const side = item.side === "up" || item.side === "down" ? item.side : null;
+    const windowStart = Number.isFinite(item.windowStart) ? item.windowStart : null;
+    if (!side || windowStart == null || isPredictionWindowScored(windowStart)) continue;
+    if (manipDetectorRuntime.backgroundResolutions.some((j) => j.windowStart === windowStart)) {
+      continue;
+    }
+    const job = {
+      side,
+      windowStart,
+      slug:
+        typeof item.slug === "string" && item.slug.trim() ? item.slug.trim() : null,
+      lastPrice: Number.isFinite(item.lastPrice) ? item.lastPrice : null,
+      lastPtb: Number.isFinite(item.lastPtb) ? item.lastPtb : null,
+      resolveStartedAt:
+        Number.isFinite(item.resolveStartedAt) && item.resolveStartedAt > 0
+          ? item.resolveStartedAt
+          : Date.now(),
+      timer: null,
+    };
+    manipDetectorRuntime.backgroundResolutions.push(job);
+    scheduleBackgroundPredictionPoll(job, 400);
+  }
+}
+
+function restorePredictionRuntime() {
+  try {
+    const raw = localStorage.getItem(predictionRuntimeStorageKey());
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return;
+
+    manipDetectorRuntime.scoredWindowStarts = normalizeScoredWindowStarts(
+      parsed.scoredWindowStarts ?? parsed.scoredWindowStart,
+    );
+    restoreBackgroundResolutions(parsed.backgroundResolutions);
+
+    const side =
+      parsed.predictionSide === "up" || parsed.predictionSide === "down"
+        ? parsed.predictionSide
+        : null;
+    const phase =
+      parsed.uiPhase === "active" || parsed.uiPhase === "pending" ? parsed.uiPhase : "none";
+    const windowStart = Number.isFinite(parsed.predictionWindowStart)
+      ? parsed.predictionWindowStart
+      : null;
+    const windowEnd = Number.isFinite(parsed.predictionWindowEnd)
+      ? parsed.predictionWindowEnd
+      : null;
+
+    if (!side || windowStart == null || phase === "none") {
+      syncPredictionStatusUi();
+      persistPredictionRuntime();
+      return;
+    }
+
+    // Already scored this window — keep the score lock, drop stale UI.
+    if (isPredictionWindowScored(windowStart)) {
+      persistPredictionRuntime();
+      syncPredictionStatusUi();
+      return;
+    }
+
+    manipDetectorRuntime.predictionSide = side;
+    manipDetectorRuntime.predictionWindowStart = windowStart;
+    manipDetectorRuntime.predictionWindowEnd = windowEnd;
+    manipDetectorRuntime.predictionSlug =
+      typeof parsed.predictionSlug === "string" && parsed.predictionSlug.trim()
+        ? parsed.predictionSlug.trim()
+        : null;
+    manipDetectorRuntime.lastPrice = Number.isFinite(parsed.lastPrice) ? parsed.lastPrice : null;
+    manipDetectorRuntime.lastPtb = Number.isFinite(parsed.lastPtb) ? parsed.lastPtb : null;
+    // Align detector window so the first tick does not wipe the restored prediction.
+    manipDetectorRuntime.windowStart = windowStart;
+    manipDetectorRuntime.uiPhase = phase;
+
+    const nowMs = Date.now();
+    const windowEndMs = windowEnd != null ? windowEnd * 1000 : null;
+
+    if (phase === "active" && windowEndMs != null && nowMs >= windowEndMs) {
+      beginPredictionPending();
+      return;
+    }
+
+    syncPredictionStatusUi();
+    if (phase === "active") {
+      restorePredictionGraphBorder(side, windowEnd);
+    } else if (phase === "pending") {
+      stopPredictionResolveLoop();
+      manipDetectorRuntime.resolveStartedAt =
+        Number.isFinite(parsed.resolveStartedAt) && parsed.resolveStartedAt > 0
+          ? parsed.resolveStartedAt
+          : Date.now();
+      manipDetectorRuntime.resolveTimer = setTimeout(() => {
+        void pollPredictionOfficialOutcome();
+      }, 400);
+    }
+  } catch {
+    // ignore corrupt storage
+  }
+}
 
 function normalizePredictionCount(value) {
   const n = Math.floor(Number(value));
@@ -5415,22 +5690,16 @@ function resolveWindowOutcomeFromPrices(closePrice, ptb) {
   return closePrice >= ptb ? "up" : "down";
 }
 
-function applyPredictionOutcome(outcome) {
-  const side = manipDetectorRuntime.predictionSide;
-  const windowStart = manipDetectorRuntime.predictionWindowStart;
-  if (side !== "up" && side !== "down") return;
-  if (windowStart == null || !Number.isFinite(windowStart)) return;
-  if (manipDetectorRuntime.scoredWindowStart === windowStart) return;
-  if (outcome !== "up" && outcome !== "down") return;
+function recordPredictionScore(side, windowStart, outcome, { showResultUi }) {
+  if (side !== "up" && side !== "down") return false;
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (outcome !== "up" && outcome !== "down") return false;
+  if (isPredictionWindowScored(windowStart)) return false;
 
-  stopPredictionResolveLoop();
-  stopPredictionResultClearTimer();
-  manipDetectorRuntime.scoredWindowStart = windowStart;
+  markPredictionWindowScored(windowStart);
   const right = side === outcome;
   if (right) manipDetectorRuntime.rightCount += 1;
   else manipDetectorRuntime.wrongCount += 1;
-  manipDetectorRuntime.uiPhase = right ? "right" : "wrong";
-  syncPredictionStatusUi();
   syncPredictionStatsUi();
   void persistPredictionStats();
   appendLogEntry({
@@ -5438,17 +5707,173 @@ function applyPredictionOutcome(outcome) {
     source: "client",
     message: `Prediction ${side.toUpperCase()} → ${outcome.toUpperCase()} (${right ? "right" : "wrong"})`,
   });
-  manipDetectorRuntime.resultClearTimer = setTimeout(() => {
-    manipDetectorRuntime.resultClearTimer = null;
-    if (manipDetectorRuntime.uiPhase !== "right" && manipDetectorRuntime.uiPhase !== "wrong") {
+
+  if (showResultUi) {
+    stopPredictionResultClearTimer();
+    manipDetectorRuntime.uiPhase = right ? "right" : "wrong";
+    syncPredictionStatusUi();
+    manipDetectorRuntime.resultClearTimer = setTimeout(() => {
+      manipDetectorRuntime.resultClearTimer = null;
+      if (manipDetectorRuntime.uiPhase !== "right" && manipDetectorRuntime.uiPhase !== "wrong") {
+        return;
+      }
+      // Only clear if this result is still the foreground window.
+      if (manipDetectorRuntime.predictionWindowStart !== windowStart) return;
+      manipDetectorRuntime.predictionSide = null;
+      manipDetectorRuntime.predictionWindowStart = null;
+      manipDetectorRuntime.predictionWindowEnd = null;
+      manipDetectorRuntime.predictionSlug = null;
+      manipDetectorRuntime.uiPhase = "none";
+      syncPredictionStatusUi();
+      persistPredictionRuntime();
+    }, PREDICTION_RESULT_SHOW_MS);
+  }
+
+  persistPredictionRuntime();
+  return true;
+}
+
+function applyPredictionOutcome(outcome) {
+  const side = manipDetectorRuntime.predictionSide;
+  const windowStart = manipDetectorRuntime.predictionWindowStart;
+  if (manipDetectorRuntime.uiPhase !== "pending") return;
+  stopPredictionResolveLoop();
+  recordPredictionScore(side, windowStart, outcome, { showResultUi: true });
+}
+
+function removeBackgroundResolution(windowStart) {
+  const idx = manipDetectorRuntime.backgroundResolutions.findIndex(
+    (job) => job.windowStart === windowStart,
+  );
+  if (idx < 0) return null;
+  const [job] = manipDetectorRuntime.backgroundResolutions.splice(idx, 1);
+  if (job.timer != null) {
+    clearTimeout(job.timer);
+    job.timer = null;
+  }
+  return job;
+}
+
+function scheduleBackgroundPredictionPoll(job, delayMs = PREDICTION_RESOLVE_INTERVAL_MS) {
+  if (!job) return;
+  if (job.timer != null) clearTimeout(job.timer);
+  job.timer = setTimeout(() => {
+    job.timer = null;
+    void pollBackgroundPredictionOutcome(job);
+  }, delayMs);
+}
+
+async function pollBackgroundPredictionOutcome(job) {
+  if (!job) return;
+  if (!manipDetectorRuntime.backgroundResolutions.includes(job)) return;
+  if (isPredictionWindowScored(job.windowStart)) {
+    removeBackgroundResolution(job.windowStart);
+    persistPredictionRuntime();
+    return;
+  }
+
+  const slug = job.slug;
+  if (slug) {
+    try {
+      const res = await fetch(`/api/window-resolution?slug=${encodeURIComponent(slug)}`);
+      if (res.ok) {
+        const body = await res.json();
+        if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
+          removeBackgroundResolution(job.windowStart);
+          recordPredictionScore(job.side, job.windowStart, body.outcome, {
+            showResultUi: false,
+          });
+          return;
+        }
+      }
+    } catch {
+      // keep polling / fall back
+    }
+  }
+
+  const elapsed = Date.now() - (job.resolveStartedAt || Date.now());
+  if (elapsed >= PREDICTION_RESOLVE_MAX_MS) {
+    const fallback = resolveWindowOutcomeFromPrices(job.lastPrice, job.lastPtb);
+    if (fallback) {
+      removeBackgroundResolution(job.windowStart);
+      recordPredictionScore(job.side, job.windowStart, fallback, { showResultUi: false });
       return;
     }
-    manipDetectorRuntime.predictionSide = null;
-    manipDetectorRuntime.predictionWindowStart = null;
-    manipDetectorRuntime.predictionSlug = null;
-    manipDetectorRuntime.uiPhase = "none";
-    syncPredictionStatusUi();
-  }, PREDICTION_RESULT_SHOW_MS);
+  }
+
+  scheduleBackgroundPredictionPoll(job, PREDICTION_RESOLVE_INTERVAL_MS);
+}
+
+function enqueueBackgroundResolution({
+  side,
+  windowStart,
+  slug,
+  lastPrice,
+  lastPtb,
+  resolveStartedAt,
+}) {
+  if (side !== "up" && side !== "down") return false;
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (isPredictionWindowScored(windowStart)) return false;
+  if (manipDetectorRuntime.backgroundResolutions.some((j) => j.windowStart === windowStart)) {
+    return false;
+  }
+  const job = {
+    side,
+    windowStart,
+    slug: typeof slug === "string" && slug.trim() ? slug.trim() : null,
+    lastPrice: Number.isFinite(lastPrice) ? lastPrice : null,
+    lastPtb: Number.isFinite(lastPtb) ? lastPtb : null,
+    resolveStartedAt:
+      Number.isFinite(resolveStartedAt) && resolveStartedAt > 0 ? resolveStartedAt : Date.now(),
+    timer: null,
+  };
+  manipDetectorRuntime.backgroundResolutions.push(job);
+  scheduleBackgroundPredictionPoll(job, 400);
+  persistPredictionRuntime();
+  return true;
+}
+
+/** Move UI pending prediction into background so a newer trigger can take the status box. */
+function parkForegroundPendingToBackground() {
+  if (manipDetectorRuntime.uiPhase !== "pending") return false;
+  const side = manipDetectorRuntime.predictionSide;
+  const windowStart = manipDetectorRuntime.predictionWindowStart;
+  if (side !== "up" && side !== "down") return false;
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (isPredictionWindowScored(windowStart)) return false;
+
+  if (manipDetectorRuntime.resolveTimer != null) {
+    clearTimeout(manipDetectorRuntime.resolveTimer);
+    manipDetectorRuntime.resolveTimer = null;
+  }
+
+  enqueueBackgroundResolution({
+    side,
+    windowStart,
+    slug: manipDetectorRuntime.predictionSlug,
+    lastPrice: manipDetectorRuntime.lastPrice,
+    lastPtb: manipDetectorRuntime.lastPtb,
+    resolveStartedAt: manipDetectorRuntime.resolveStartedAt || Date.now(),
+  });
+
+  manipDetectorRuntime.predictionSide = null;
+  manipDetectorRuntime.predictionWindowStart = null;
+  manipDetectorRuntime.predictionWindowEnd = null;
+  manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.uiPhase = "none";
+  manipDetectorRuntime.resolveStartedAt = 0;
+  return true;
+}
+
+function clearForegroundPredictionUi() {
+  stopPredictionResolveLoop();
+  stopPredictionResultClearTimer();
+  manipDetectorRuntime.predictionSide = null;
+  manipDetectorRuntime.predictionWindowStart = null;
+  manipDetectorRuntime.predictionWindowEnd = null;
+  manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.uiPhase = "none";
 }
 
 async function pollPredictionOfficialOutcome() {
@@ -5498,13 +5923,15 @@ function beginPredictionPending() {
   if (manipDetectorRuntime.uiPhase === "pending" || manipDetectorRuntime.uiPhase === "right" || manipDetectorRuntime.uiPhase === "wrong") {
     return;
   }
-  if (manipDetectorRuntime.scoredWindowStart === manipDetectorRuntime.predictionWindowStart) {
+  if (isPredictionWindowScored(manipDetectorRuntime.predictionWindowStart)) {
     return;
   }
   manipDetectorRuntime.uiPhase = "pending";
+  clearManipulationFlash();
   syncPredictionStatusUi();
   stopPredictionResolveLoop();
   manipDetectorRuntime.resolveStartedAt = Date.now();
+  persistPredictionRuntime();
   manipDetectorRuntime.resolveTimer = setTimeout(() => {
     void pollPredictionOfficialOutcome();
   }, 400);
@@ -5517,20 +5944,53 @@ function clearPredictionForNewWindow() {
   stopPredictionResolveLoop();
   manipDetectorRuntime.predictionSide = null;
   manipDetectorRuntime.predictionWindowStart = null;
+  manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.uiPhase = "none";
   syncPredictionStatusUi();
+  persistPredictionRuntime();
+}
+
+function predictionHoldsWindow(windowStart) {
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (isPredictionWindowScored(windowStart)) return true;
+  if (
+    manipDetectorRuntime.predictionWindowStart === windowStart &&
+    (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending")
+  ) {
+    return true;
+  }
+  return manipDetectorRuntime.backgroundResolutions.some((job) => job.windowStart === windowStart);
 }
 
 function setActivePrediction(side, state) {
-  if (side !== "up" && side !== "down") return;
-  if (manipDetectorRuntime.predictionSide != null) return;
+  if (side !== "up" && side !== "down") return false;
+  const windowStart = state?.windowStart;
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (predictionHoldsWindow(windowStart)) return false;
+
+  const phase = manipDetectorRuntime.uiPhase;
+  if (phase === "pending") {
+    parkForegroundPendingToBackground();
+  } else if (phase === "right" || phase === "wrong") {
+    clearForegroundPredictionUi();
+  } else if (phase === "active" && manipDetectorRuntime.predictionWindowStart !== windowStart) {
+    beginPredictionPending();
+    parkForegroundPendingToBackground();
+  } else if (manipDetectorRuntime.predictionSide != null) {
+    return false;
+  }
+
   manipDetectorRuntime.predictionSide = side;
-  manipDetectorRuntime.predictionWindowStart = state?.windowStart ?? null;
+  manipDetectorRuntime.predictionWindowStart = windowStart;
+  manipDetectorRuntime.predictionWindowEnd =
+    state?.windowEnd != null && Number.isFinite(state.windowEnd) ? state.windowEnd : null;
   manipDetectorRuntime.predictionSlug =
     typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
   manipDetectorRuntime.uiPhase = "active";
   syncPredictionStatusUi();
+  persistPredictionRuntime();
+  return true;
 }
 
 function manipulationWindowDurationSec(state = windowState) {
@@ -5630,11 +6090,14 @@ function resetManipulationDetector() {
   manipDetectorRuntime.cooldownUntilMs = 0;
   stopPredictionResolveLoop();
   stopPredictionResultClearTimer();
+  stopBackgroundResolutionTimers();
+  manipDetectorRuntime.backgroundResolutions = [];
   manipDetectorRuntime.predictionSide = null;
   manipDetectorRuntime.predictionWindowStart = null;
+  manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.uiPhase = "none";
-  manipDetectorRuntime.scoredWindowStart = null;
+  manipDetectorRuntime.scoredWindowStarts = [];
   manipDetectorRuntime.lastPrice = null;
   manipDetectorRuntime.lastPtb = null;
   clearManipulationFlash();
@@ -5642,11 +6105,7 @@ function resetManipulationDetector() {
 }
 
 function triggerManipulationFlash(state, predictionSide) {
-  const wrap = $("price-graph-wrap");
-  if (!wrap) return;
   if (predictionSide !== "up" && predictionSide !== "down") return;
-  // One prediction highlight per window.
-  if (manipDetectorRuntime.predictionSide != null) return;
 
   const now = Date.now();
   const windowEndMs =
@@ -5656,32 +6115,9 @@ function triggerManipulationFlash(state, predictionSide) {
   const duration = windowEndMs != null ? Math.max(0, windowEndMs - now) : null;
   if (duration != null && duration <= 0) return;
 
-  setActivePrediction(predictionSide, state);
-
-  wrap.classList.remove(
-    "price-graph-wrap--manipulation",
-    "price-graph-wrap--prediction-up",
-    "price-graph-wrap--prediction-down",
-  );
-  wrap.classList.add(
-    predictionSide === "up"
-      ? "price-graph-wrap--prediction-up"
-      : "price-graph-wrap--prediction-down",
-  );
-  if (manipDetectorRuntime.flashTimer != null) clearTimeout(manipDetectorRuntime.flashTimer);
-  manipDetectorRuntime.flashUntilMs = duration != null ? now + duration : Number.POSITIVE_INFINITY;
-  manipDetectorRuntime.cooldownUntilMs = manipDetectorRuntime.flashUntilMs;
+  if (!setActivePrediction(predictionSide, state)) return;
   manipDetectorRuntime.samples = [];
-  if (duration != null) {
-    manipDetectorRuntime.flashTimer = setTimeout(() => {
-      manipDetectorRuntime.flashTimer = null;
-      manipDetectorRuntime.flashUntilMs = 0;
-      wrap.classList.remove(
-        "price-graph-wrap--prediction-up",
-        "price-graph-wrap--prediction-down",
-      );
-    }, duration);
-  }
+  restorePredictionGraphBorder(predictionSide, state?.windowEnd);
 }
 
 function isInManipulationArea(state, areaStart, areaEnd) {
@@ -5702,6 +6138,8 @@ function isInManipulationArea(state, areaStart, areaEnd) {
 
 function tickManipulationDetector(state) {
   if (!state) return;
+  // Settings sync everywhere; detection/scoring only on the deployed host.
+  if (!isPredictionTriggerHost()) return;
 
   if (
     Number.isFinite(state.assetPrice) &&
@@ -5763,6 +6201,7 @@ function tickManipulationDetector(state) {
     manipDetectorRuntime.predictionWindowStart === state.windowStart
   ) {
     manipDetectorRuntime.predictionSlug = state.slug.trim();
+    persistPredictionRuntime();
   }
 
   if (!Boolean($("manipulation-detector")?.checked)) {
@@ -5781,7 +6220,19 @@ function tickManipulationDetector(state) {
   const gap = Number(state.assetGap);
   const upBuy = Number(state.yesAsk);
   const downBuy = Number(state.noAsk);
+  const upSell = Number(state.yesBid);
+  const downSell = Number(state.noBid);
   if (!Number.isFinite(gap) || gap === 0 || !Number.isFinite(upBuy) || !Number.isFinite(downBuy)) {
+    return;
+  }
+  // Near-certain quotes: skip detection (no trigger at 90¢+ Buy/Sell).
+  if (
+    upBuy >= PREDICTION_MAX_QUOTE_PRICE ||
+    downBuy >= PREDICTION_MAX_QUOTE_PRICE ||
+    (Number.isFinite(upSell) && upSell >= PREDICTION_MAX_QUOTE_PRICE) ||
+    (Number.isFinite(downSell) && downSell >= PREDICTION_MAX_QUOTE_PRICE)
+  ) {
+    manipDetectorRuntime.samples = [];
     return;
   }
 
@@ -5905,6 +6356,40 @@ function applyTradingConfigToUi(config) {
   syncWalletControls(config);
 }
 
+function setPredictionInfoPanelOpen(open) {
+  const btn = $("prediction-info-btn");
+  const panel = $("prediction-info-panel");
+  if (!btn || !panel) return;
+  const on = Boolean(open);
+  panel.classList.toggle("is-open", on);
+  panel.setAttribute("aria-hidden", on ? "false" : "true");
+  btn.setAttribute("aria-expanded", on ? "true" : "false");
+}
+
+function bindPredictionInfoTip() {
+  const btn = $("prediction-info-btn");
+  const panel = $("prediction-info-panel");
+  if (!btn || !panel || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+
+  btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setPredictionInfoPanelOpen(!panel.classList.contains("is-open"));
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!panel.classList.contains("is-open")) return;
+    const target = event.target;
+    if (btn.contains(target) || panel.contains(target)) return;
+    setPredictionInfoPanelOpen(false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setPredictionInfoPanelOpen(false);
+  });
+}
+
 function bindTradeToggles() {
   const autoTradeInput = $("auto-trade");
   const useScheduleInput = $("use-schedule");
@@ -5919,6 +6404,7 @@ function bindTradeToggles() {
 
   // Restore immediately from localStorage, then sync from server
   applyTradingConfigToUi(readLocalTradingConfig());
+  if (isPredictionTriggerHost()) restorePredictionRuntime();
   void loadTradingConfig().then((config) => {
     applyTradingConfigToUi(coalesceTradingConfig(config, readLocalTradingConfig()) ?? config);
     syncGraphSaveBtn(windowState);
@@ -5926,6 +6412,7 @@ function bindTradeToggles() {
   });
 
   bindManipulationAreaSlider();
+  bindPredictionInfoTip();
 
   autoTradeInput.addEventListener("change", async () => {
     // Use Schedule only makes sense with Auto Trade; do not touch Allow trade.

@@ -5017,11 +5017,20 @@ body.is-row-resizing .panel-header-drag-handle {
   margin-left: auto;
 }
 
+.wallet-control-field--manual {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
 .wallet-control-field--manual .manual-order-type-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   margin-left: auto;
+  /* Keep Buy/Sell as one unit; wrap under the label when the row is too narrow. */
+  flex: 0 0 auto;
+  min-width: max-content;
 }
 
 .manual-order-type-field {
@@ -5698,12 +5707,60 @@ body.is-column-resizing * {
   border-radius: 4px;
   background: transparent;
   color: var(--muted);
-  cursor: help;
+  cursor: pointer;
   flex-shrink: 0;
 }
 
-.prediction-info-btn:hover {
+.prediction-info-btn:hover,
+.prediction-info-btn[aria-expanded="true"] {
   color: var(--accent);
+}
+
+.prediction-info-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.08);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow: hidden;
+  pointer-events: none;
+  box-sizing: border-box;
+  transition:
+    grid-template-rows 0.22s ease,
+    opacity 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.prediction-info-panel.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  border-color: var(--border);
+  pointer-events: auto;
+}
+
+.prediction-info-panel-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 10px;
+  transition: padding 0.22s ease;
+}
+
+.prediction-info-panel.is-open .prediction-info-panel-body {
+  padding: 8px 10px;
+}
+
+.prediction-info-panel p {
+  margin: 0 0 6px;
+}
+
+.prediction-info-panel p:last-child {
+  margin-bottom: 0;
 }
 
 .manipulation-detector-label-row .wallet-control-label {
@@ -5974,9 +6031,20 @@ body.is-column-resizing * {
 }
 
 .prediction-stats-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   height: 26px;
   padding: 0 10px;
   font-size: 11px;
+}
+
+.prediction-stats-reset-icon {
+  width: 12px;
+  height: 12px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .wallet-control-field--manipulation.is-disabled .prediction-status-box,
