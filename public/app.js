@@ -2991,13 +2991,18 @@ function fmtTradeLeg(side, shares, price) {
   return `${label} ${shares} @ ${fmtPriceCents(price)}`;
 }
 
+const PREDICTION_ICON_CHECK =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
+const PREDICTION_ICON_CROSS =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4 12 12M12 4 4 12"/></svg>';
+
 function positionStatusLabel(status) {
   if (status === "open") return "Open";
   if (status === "sold") return "Sold";
   if (status === "win") return "Win";
   if (status === "loss") return "Loss";
-  if (status === "right") return "Prediction was right";
-  if (status === "wrong") return "Prediction was wrong";
+  if (status === "right") return "Right";
+  if (status === "wrong") return "Wrong";
   return status || "—";
 }
 
@@ -3048,23 +3053,22 @@ function renderPositionCard(card) {
   const buyValue = hasBuyFill ? `${card.shares} @ ${fmtPriceCents(card.buyPrice)}` : "";
   let detailHtml = `<div class="position-card-row"><span>${buyLabel}</span><strong>${buyValue}</strong></div>`;
 
-  if (!isPrediction && status === "sold") {
-    detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${isLoading ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
-  } else {
-    const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
-    const outcomeClass = outcome === "up" ? "is-up" : outcome === "down" ? "is-down" : "";
-    detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${isLoading ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
-  }
+  if (!isPrediction) {
+    if (status === "sold") {
+      detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${isLoading ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
+    } else {
+      const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
+      const outcomeClass = outcome === "up" ? "is-up" : outcome === "down" ? "is-down" : "";
+      detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${isLoading ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
+    }
 
-  if (isPrediction) {
-    // Keep card height aligned with trade cards (empty P/L slot).
-    detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
-  } else if (isLoading) {
-    detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
-  } else {
-    const hasPl = card.pl != null && Number.isFinite(card.pl);
-    const plClass = hasPl ? (card.pl > 0 ? "is-positive" : card.pl < 0 ? "is-negative" : "") : "";
-    detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl ${plClass}">${hasPl ? fmtUsdSigned(card.pl) : ""}</strong></div>`;
+    if (isLoading) {
+      detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
+    } else {
+      const hasPl = card.pl != null && Number.isFinite(card.pl);
+      const plClass = hasPl ? (card.pl > 0 ? "is-positive" : card.pl < 0 ? "is-negative" : "") : "";
+      detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl ${plClass}">${hasPl ? fmtUsdSigned(card.pl) : ""}</strong></div>`;
+    }
   }
 
   // Provisional win/loss (legacy Chainlink path) keep Waiting until Polymarket confirms.
@@ -3075,10 +3079,18 @@ function renderPositionCard(card) {
   const sideLabel = isPrediction
     ? `Prediction ${(card.side || "").toUpperCase()}`
     : `Bet ${(card.side || "").toUpperCase()}`;
+  let statusHtml;
+  if (isPrediction && status === "right") {
+    statusHtml = `<span class="position-card-status is-icon" title="Right" aria-label="Prediction was right">${PREDICTION_ICON_CHECK}</span>`;
+  } else if (isPrediction && status === "wrong") {
+    statusHtml = `<span class="position-card-status is-icon" title="Wrong" aria-label="Prediction was wrong">${PREDICTION_ICON_CROSS}</span>`;
+  } else {
+    statusHtml = `<span class="position-card-status">${statusLabel}</span>`;
+  }
   return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${isLoading ? " is-loading" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
       <span class="position-card-side ${sideClass}">${sideLabel}</span>
-      <span class="position-card-status">${statusLabel}</span>
+      ${statusHtml}
     </div>
     ${detailHtml}
     <div class="position-card-row"><span>Source</span><strong>${sourceNote}</strong></div>
@@ -5626,11 +5638,6 @@ function isPredictionTriggerHost() {
   const host = String(window.location?.hostname || "").toLowerCase();
   return host !== "localhost" && host !== "127.0.0.1" && host !== "[::1]";
 }
-const PREDICTION_ICON_CHECK =
-  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
-const PREDICTION_ICON_CROSS =
-  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4 12 12M12 4 4 12"/></svg>';
-
 const manipDetectorRuntime = {
   samples: [],
   windowStart: null,
@@ -5959,16 +5966,34 @@ function syncPredictionBuyButtonEnabled(state = windowState) {
       : null;
   if (side !== "up" && side !== "down") return;
   const detectorOn = Boolean($("manipulation-detector")?.checked);
-  const allowed = detectorOn && canQuoteAction(tradingState(state), side, "buy");
+  const trading = tradingState(state);
+  const allowed = detectorOn && canQuoteAction(trading, side, "buy");
   box.classList.toggle("is-buy-disabled", !allowed);
   box.setAttribute("aria-disabled", allowed ? "false" : "true");
+
+  // Latch/fill only after a real Buy (same quoteLocks as the graph Buy boxes).
+  const locks = trading?.quoteLocks ?? state?.sim?.quoteLocks ?? {};
+  const lockKey = side === "up" ? "upBuy" : "downBuy";
+  const lockedPrice = locks[lockKey];
+  const latched = lockedPrice != null && Number.isFinite(lockedPrice);
+  box.classList.toggle("quote-box-latched", latched);
+  box.classList.toggle("quote-triggered-up", latched && side === "up");
+  box.classList.toggle("quote-triggered-down", latched && side === "down");
+  if (latched) box.classList.remove("quote-box-pressing");
 }
 
 function setPredictionStatusBuyable(box, side) {
   const buyable = side === "up" || side === "down";
   box.classList.toggle("is-buyable", buyable);
   if (!buyable) {
-    box.classList.remove("is-buy-disabled", "quote-box-pressing", "quote-box-pending");
+    box.classList.remove(
+      "is-buy-disabled",
+      "quote-box-pressing",
+      "quote-box-pending",
+      "quote-box-latched",
+      "quote-triggered-up",
+      "quote-triggered-down",
+    );
     box.removeAttribute("role");
     box.removeAttribute("tabindex");
     box.removeAttribute("aria-disabled");
@@ -6045,18 +6070,32 @@ function bindPredictionStatusBuyButton() {
 
   box.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
-    if (!box.classList.contains("is-buyable") || box.classList.contains("is-buy-disabled")) return;
+    if (
+      !box.classList.contains("is-buyable") ||
+      box.classList.contains("is-buy-disabled") ||
+      box.classList.contains("quote-box-latched")
+    ) {
+      return;
+    }
     box.classList.add("quote-box-pressing");
   });
 
   const releasePress = () => {
-    box.classList.remove("quote-box-pressing");
+    if (!box.classList.contains("quote-box-latched")) {
+      box.classList.remove("quote-box-pressing");
+    }
   };
   box.addEventListener("mouseup", releasePress);
   box.addEventListener("mouseleave", releasePress);
 
   const activate = () => {
-    if (!box.classList.contains("is-buyable") || box.classList.contains("is-buy-disabled")) return;
+    if (
+      !box.classList.contains("is-buyable") ||
+      box.classList.contains("is-buy-disabled") ||
+      box.classList.contains("quote-box-latched")
+    ) {
+      return;
+    }
     const side = box.classList.contains("is-up")
       ? "up"
       : box.classList.contains("is-down")

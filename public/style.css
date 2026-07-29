@@ -5393,13 +5393,21 @@ body.is-row-resizing .panel-header-drag-handle {
   border-radius: 3px;
 }
 
-.position-card.is-prediction .position-card-status {
+.position-card.is-prediction .position-card-status.is-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   text-transform: none;
-  letter-spacing: 0.02em;
-  font-size: 10px;
-  text-align: right;
-  line-height: 1.25;
-  max-width: 58%;
+  letter-spacing: 0;
+}
+
+.position-card.is-prediction .position-card-status.is-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 /* Open or waiting for Polymarket settlement — gray pulsing badge. */
@@ -6077,9 +6085,27 @@ body.is-column-resizing * {
   cursor: pointer;
   position: relative;
   z-index: 1;
+  background: var(--bg);
+  color: var(--text);
 }
 
-.prediction-status-box.is-buyable:not(.is-buy-disabled):not(.quote-box-pending):hover {
+.prediction-status-box.is-buyable .prediction-status-label {
+  color: inherit;
+}
+
+.prediction-status-box.is-buyable.is-up {
+  border-color: var(--up);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.prediction-status-box.is-buyable.is-down {
+  border-color: var(--down);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.prediction-status-box.is-buyable:not(.is-buy-disabled):not(.quote-box-pending):not(.quote-box-latched):hover {
   transform: translateY(-4px);
   box-shadow:
     0 -1px 0 0 var(--quote-hover-edge, var(--border)),
@@ -6087,11 +6113,11 @@ body.is-column-resizing * {
   z-index: 2;
 }
 
-.prediction-status-box.is-buyable.is-up:not(.is-buy-disabled):not(.quote-box-pending):hover {
+.prediction-status-box.is-buyable.is-up:not(.is-buy-disabled):not(.quote-box-pending):not(.quote-box-latched):hover {
   --quote-hover-edge: var(--up);
 }
 
-.prediction-status-box.is-buyable.is-down:not(.is-buy-disabled):not(.quote-box-pending):hover {
+.prediction-status-box.is-buyable.is-down:not(.is-buy-disabled):not(.quote-box-pending):not(.quote-box-latched):hover {
   --quote-hover-edge: var(--down);
 }
 
@@ -6105,6 +6131,25 @@ body.is-column-resizing * {
 .prediction-status-box.is-buyable.is-buy-disabled {
   cursor: not-allowed;
   opacity: 0.45;
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* After a real fill — same latched fill as quote Buy; keep full opacity when disabled. */
+.prediction-status-box.is-buyable.quote-triggered-up {
+  background: rgba(63, 185, 80, 0.24);
+}
+
+.prediction-status-box.is-buyable.quote-triggered-down {
+  background: rgba(248, 81, 73, 0.24);
+}
+
+.prediction-status-box.is-buyable.is-buy-disabled.quote-triggered-up,
+.prediction-status-box.is-buyable.is-buy-disabled.quote-triggered-down {
+  opacity: 1;
+}
+
+.prediction-status-box.is-buyable.quote-box-latched {
   transform: translateY(0);
   box-shadow: none;
 }
@@ -6159,24 +6204,24 @@ body.is-column-resizing * {
   }
 }
 
-/* Match quote Buy boxes when latched / triggered. */
-.prediction-status-box.is-up {
+/* Non-buyable UP/DOWN (not the active Buy shortcut) — keep prior tint if ever used. */
+.prediction-status-box.is-up:not(.is-buyable) {
   border-color: var(--up);
   background: rgba(63, 185, 80, 0.24);
   color: var(--up);
 }
 
-.prediction-status-box.is-up .prediction-status-label {
+.prediction-status-box.is-up:not(.is-buyable) .prediction-status-label {
   color: var(--up);
 }
 
-.prediction-status-box.is-down {
+.prediction-status-box.is-down:not(.is-buyable) {
   border-color: var(--down);
   background: rgba(248, 81, 73, 0.24);
   color: var(--down);
 }
 
-.prediction-status-box.is-down .prediction-status-label {
+.prediction-status-box.is-down:not(.is-buyable) .prediction-status-label {
   color: var(--down);
 }
 
