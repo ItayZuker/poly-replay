@@ -20,7 +20,7 @@ Reusable templates — full fields: [Setups & phases](doc:setups-phases).
 - Place or clear setups (drag onto a cell, drop on a day header to fill that column, or drop on the **UTC** header to fill the whole week in one request)
 - Current UTC cell is highlighted
 - Double-click a placement to highlight it; double-click a **day header** to highlight all cards in that column (double-click again to clear that column’s highlight). Highlighted cards feed the **Custom** header total (and still work with Heatmap)
-- Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the selected market series; **Live** = since last header reset; **Schedule** = sum of cards on the week grid. Switching ranges shows a spinner on the totals icon while values load.
+- Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the selected market series; **Live** = since last header reset; **Schedule** = sum of cards on the week grid. **Manual** buys (quote-box overrides) count in **Market** and **Live** only — they do **not** appear on Schedule cards or in the Schedule total. Switching ranges shows a spinner on the totals icon while values load.
 - Counts and P/L always show numeric values (`0` / `+$0.00`) when empty — never dashes
 
 With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** setup on the current cell drives trading for that series. Replay placements never trade.
@@ -32,7 +32,7 @@ With **Use Schedule** + **Auto Trade** on [Market](doc:market), the **Live** set
 | Purpose | Real schedule for auto-trade | What-if board over recent history |
 | Setups | Own list | Own list (separate from Live) |
 | Placements | Own week grid | Own week grid |
-| Card stats | Live trade outcomes | Filled when you press **Run** |
+| Card stats | Auto/schedule live trade outcomes (not manual buys) | Filled when you press **Run** |
 | Header total | Same summary chrome (**Market** = series all-time, **Live** = since reset, **Schedule** = sum of cards) | Same — totals update as replay results arrive |
 
 In **Replay** (on the Live/Replay switcher), a blue border frames the whole screen so the workspace is obvious. The footer expands upward (quick transition) so a **Run** button and its inputs appear above the Live/Replay switcher — order top→bottom: **Run**, then **Latency** / **Fill Success** / **Prediction**, then the switcher. Switching back to **Live** collapses that panel.

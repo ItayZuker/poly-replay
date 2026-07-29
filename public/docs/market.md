@@ -50,7 +50,7 @@ Field reference: [Setups & phases](doc:setups-phases).
 - Live and Demo position cards (buy times in UTC). On held settlements, **Market** is the official window outcome (settled token prices / Gamma), not a mid-book guess; Win/Loss follows whether your bet side matched that outcome
 - Log of bot / order activity
 
-**Header Market P/L** is the sum of settled trade results for the selected series (fees included). The wallet balance is your current USDC cash — it only matches Market P/L after accounting for deposits/withdrawals, and only once losing tokens are resolved and winning tokens are redeemed into USDC. Polymarket usually auto-redeems wins; worthless losing tokens may still show as “redeemable” dust (~$0).
+**Header Market P/L** is the sum of settled trade results for the selected series (fees included), including **manual** and auto/schedule trades. Manual wins/losses count here and in **Live**, but not on [Schedule](doc:schedule) cards or the Schedule total. The wallet balance is your current USDC cash — it only matches Market P/L after accounting for deposits/withdrawals, and only once losing tokens are resolved and winning tokens are redeemed into USDC. Polymarket usually auto-redeems wins; worthless losing tokens may still show as “redeemable” dust (~$0). Settled held trades count once Polymarket confirms (~0/~1 token mark or official outcome).
 
 Fees: when Polymarket’s trade feed includes the USDC notional, the app uses that for an exact fee; otherwise it estimates from the market’s taker fee curve.
 

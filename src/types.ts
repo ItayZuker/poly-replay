@@ -446,6 +446,11 @@ export interface TradingPositionCard {
   confirmed?: boolean;
   /** Schedule placement that auto-triggered this trade (real schedule only). */
   placementId?: string;
+  /**
+   * How the buy was initiated. Manual trades count in Market/Live only —
+   * never on Schedule cards or Schedule totals.
+   */
+  source?: "manual" | "auto";
 }
 
 /** Live real-trade aggregates for a schedule placement card. */

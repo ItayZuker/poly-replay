@@ -457,6 +457,7 @@ function eventFingerprint(
     card?.buyFees ?? "",
     card?.sellFees ?? "",
     card?.confirmed ? 1 : 0,
+    card?.source ?? "",
   ].join("|");
 }
 
@@ -485,6 +486,22 @@ function cardSettledMs(card: TradingPositionCard): number {
   return sec * 1000;
 }
 
+function isManualTradeCard(
+  card: Pick<TradingPositionCard, "source" | "placementId"> | null | undefined,
+): boolean {
+  return card?.source === "manual";
+}
+
+function isManualStatEvent(event: TradingStatEvent): boolean {
+  return event.card?.source === "manual";
+}
+
+/** Manual trades never belong on a schedule placement. */
+function stripManualScheduleAttribution(card: TradingPositionCard): void {
+  if (card.source !== "manual") return;
+  if (card.placementId) delete card.placementId;
+}
+
 function cardSnapshotFromPosition(card: TradingPositionCard): TradingStatEvent["card"] {
   if (card.status === "open") return undefined;
   const snap: NonNullable<TradingStatEvent["card"]> = {
@@ -503,7 +520,9 @@ function cardSnapshotFromPosition(card: TradingPositionCard): TradingStatEvent["
   if (card.asset) snap.asset = card.asset;
   if (card.conditionId) snap.conditionId = card.conditionId;
   if (card.slug) snap.slug = card.slug;
-  if (card.placementId) snap.placementId = card.placementId;
+  if (card.source === "manual" || card.source === "auto") snap.source = card.source;
+  // Manual wins/losses must not carry a schedule placement id into stats.
+  if (card.source !== "manual" && card.placementId) snap.placementId = card.placementId;
   if (card.buyFees != null) snap.buyFees = card.buyFees;
   if (card.sellPrice != null) snap.sellPrice = card.sellPrice;
   if (card.sellProceeds != null) snap.sellProceeds = card.sellProceeds;
@@ -535,13 +554,15 @@ function positionCardFromEvent(event: TradingStatEvent): TradingPositionCard | n
   if (snap.conditionId) card.conditionId = snap.conditionId;
   if (snap.slug) card.slug = snap.slug;
   if (snap.buyFees != null) card.buyFees = snap.buyFees;
-  if (snap.placementId || event.placementId) {
+  if (snap.source === "manual" || snap.source === "auto") card.source = snap.source;
+  if (!isManualTradeCard(card) && (snap.placementId || event.placementId)) {
     card.placementId = snap.placementId ?? event.placementId;
   }
   if (snap.sellPrice != null) card.sellPrice = snap.sellPrice;
   if (snap.sellProceeds != null) card.sellProceeds = snap.sellProceeds;
   if (snap.sellFees != null) card.sellFees = snap.sellFees;
   if (snap.soldAt != null) card.soldAt = snap.soldAt;
+  stripManualScheduleAttribution(card);
   return card;
 }
 
@@ -1037,19 +1058,31 @@ export class LiveTradingService {
       }
 
       for (const event of events) {
-        // Older rows may only store placementId on the card snapshot.
-        const pid = eventPlacementId(event);
-        if (pid && !event.placementId) event.placementId = pid;
-        if (pid && event.card && !event.card.placementId) {
-          event.card = { ...event.card, placementId: pid };
+        // Manual trades never belong on Schedule — drop any stored placement link.
+        if (isManualStatEvent(event)) {
+          delete event.placementId;
+          if (event.card?.placementId) {
+            const { placementId: _pid, ...rest } = event.card;
+            event.card = rest;
+          }
+        } else {
+          // Older rows may only store placementId on the card snapshot.
+          const pid = eventPlacementId(event);
+          if (pid && !event.placementId) event.placementId = pid;
+          if (pid && event.card && !event.card.placementId) {
+            event.card = { ...event.card, placementId: pid };
+          }
         }
         this.liveStatLedger.set(event.cardId, event);
         this.lastPersistedStatFingerprint.set(event.cardId, eventFingerprint(event));
-        if (pid) this.knownPlacementIds.add(pid);
+        const pid = eventPlacementId(event);
+        if (pid && !isManualStatEvent(event)) this.knownPlacementIds.add(pid);
         const card = positionCardFromEvent(event);
         if (card) {
           restored.push(card);
-          if (card.placementId) this.knownPlacementIds.add(card.placementId);
+          if (card.placementId && !isManualTradeCard(card)) {
+            this.knownPlacementIds.add(card.placementId);
+          }
         }
       }
 
@@ -1072,8 +1105,9 @@ export class LiveTradingService {
   }
 
   /**
-   * Map settled trades that never got a placementId (late GTD fills, wiped upserts)
-   * onto the schedule slot that was live at buy time so card stats match Live totals.
+   * Map settled *auto* trades that never got a placementId (late GTD fills, wiped upserts)
+   * onto the schedule slot that was live at buy time so card stats match.
+   * Manual trades are never attributed to Schedule cards.
    */
   private async backfillOrphanPlacementIds(): Promise<number> {
     let placements: Awaited<ReturnType<typeof listSchedulePlacements>>;
@@ -1098,7 +1132,49 @@ export class LiveTradingService {
 
     let fixed = 0;
     for (const event of this.liveStatLedger.values()) {
+      // Strip any prior mistaken schedule link on manual trades.
+      if (isManualStatEvent(event)) {
+        if (event.placementId || event.card?.placementId) {
+          delete event.placementId;
+          if (event.card?.placementId) {
+            const { placementId: _pid, ...rest } = event.card;
+            event.card = rest;
+          }
+          const ramCard = this.findCard(event.cardId);
+          if (ramCard) stripManualScheduleAttribution(ramCard);
+          this.lastPersistedStatFingerprint.set(event.cardId, eventFingerprint(event));
+          const snapshot: TradingStatEvent = { ...event, updatedAt: new Date().toISOString() };
+          this.statsPersistChain = this.statsPersistChain
+            .then(() =>
+              upsertTradingStatEvent(this.userId, {
+                cardId: snapshot.cardId,
+                placementId: undefined,
+                status: snapshot.status,
+                green: snapshot.green,
+                red: snapshot.red,
+                blue: snapshot.blue,
+                pnl: snapshot.pnl,
+                settledAt: snapshot.settledAt,
+                card: snapshot.card,
+              }).then(() => undefined),
+            )
+            .catch((err) => {
+              this.lastPersistedStatFingerprint.delete(snapshot.cardId);
+              logService.warn(
+                "trading",
+                `Failed to clear manual placementId for ${snapshot.cardId}: ${String(err)}`,
+              );
+            });
+          fixed += 1;
+        }
+        continue;
+      }
+
       if (eventPlacementId(event)) continue;
+      // Only backfill known auto trades — never invent a schedule link for unlabeled orphans
+      // (those are often manuals from before source was persisted).
+      if (event.card?.source !== "auto") continue;
+
       const placementId = findPlacementAt(eventAttributionMs(event));
       if (!placementId) continue;
 
@@ -1109,7 +1185,9 @@ export class LiveTradingService {
       this.knownPlacementIds.add(placementId);
 
       const ramCard = this.findCard(event.cardId);
-      if (ramCard && !ramCard.placementId) ramCard.placementId = placementId;
+      if (ramCard && !ramCard.placementId && ramCard.source !== "manual") {
+        ramCard.placementId = placementId;
+      }
 
       this.lastPersistedStatFingerprint.set(event.cardId, eventFingerprint(event));
       const snapshot: TradingStatEvent = {
@@ -1299,6 +1377,7 @@ export class LiveTradingService {
   }
 
   private persistCardStat(card: TradingPositionCard): void {
+    stripManualScheduleAttribution(card);
     const contrib = contributionFromCard(card);
     if (!contrib) return;
 
@@ -1314,7 +1393,7 @@ export class LiveTradingService {
       ).toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    if (card.placementId) event.placementId = card.placementId;
+    if (card.source !== "manual" && card.placementId) event.placementId = card.placementId;
     const snap = cardSnapshotFromPosition(card);
     if (snap) event.card = snap;
 
@@ -1323,7 +1402,9 @@ export class LiveTradingService {
 
     this.liveStatLedger.set(card.id, event);
     this.lastPersistedStatFingerprint.set(card.id, fingerprint);
-    if (card.placementId) this.knownPlacementIds.add(card.placementId);
+    if (card.source !== "manual" && card.placementId) {
+      this.knownPlacementIds.add(card.placementId);
+    }
 
     this.statsPersistChain = this.statsPersistChain
       .then(async () => {
@@ -1542,11 +1623,13 @@ export class LiveTradingService {
   private placementHasRecordedStats(placementId: string): boolean {
     for (const event of this.liveStatLedger.values()) {
       if (eventPlacementId(event) !== placementId) continue;
+      if (isManualStatEvent(event)) continue;
       if (!this.eventMatchesBoundSeries(event)) continue;
       return true;
     }
     for (const card of this.positionCards) {
       if (card.placementId !== placementId) continue;
+      if (isManualTradeCard(card)) continue;
       if (!this.cardMatchesBoundSeries(card)) continue;
       if (card.status === "open") continue;
       return true;
@@ -1557,10 +1640,12 @@ export class LiveTradingService {
   private getPlacementStatsFromCards(): PlacementLiveStats[] {
     const ids = new Set(this.knownPlacementIds);
     for (const event of this.liveStatLedger.values()) {
+      if (isManualStatEvent(event)) continue;
       const pid = eventPlacementId(event);
       if (pid) ids.add(pid);
     }
     for (const card of this.positionCards) {
+      if (isManualTradeCard(card)) continue;
       if (card.placementId) ids.add(card.placementId);
     }
     // Always include the in-progress schedule slot so the live card stays stable.
@@ -1631,6 +1716,7 @@ export class LiveTradingService {
 
     for (const card of this.positionCards) {
       if (card.placementId !== placementId) continue;
+      if (isManualTradeCard(card)) continue;
       if (!this.cardMatchesBoundSeries(card)) continue;
       if (card.status === "open") continue;
       const contrib = confirmedContributionFromCard(card);
@@ -1641,6 +1727,7 @@ export class LiveTradingService {
 
     for (const event of this.liveStatLedger.values()) {
       if (eventPlacementId(event) !== placementId) continue;
+      if (isManualStatEvent(event)) continue;
       if (!this.eventMatchesBoundSeries(event)) continue;
       if (cardIdsFromRam.has(event.cardId)) continue;
       const contrib = eventStatContribution(event);
@@ -3623,8 +3710,15 @@ export class LiveTradingService {
       );
 
     if (existing && existing.status === "open") {
-      if (!existing.placementId && resolvedPlacementId) {
-        existing.placementId = resolvedPlacementId;
+      // Manual fills never inherit / keep a schedule placement id.
+      if (source === "manual") {
+        existing.source = "manual";
+        stripManualScheduleAttribution(existing);
+      } else if (source === "auto") {
+        existing.source = existing.source === "manual" ? "manual" : "auto";
+        if (existing.source !== "manual" && !existing.placementId && resolvedPlacementId) {
+          existing.placementId = resolvedPlacementId;
+        }
       }
       if (!this.positions[side]) {
         this.positions[side] = {
@@ -3700,9 +3794,11 @@ export class LiveTradingService {
         conditionId,
         slug,
         confirmed: false,
-        placementId: resolvedPlacementId,
+        source,
+        // Manual buys never attach to a schedule card.
+        placementId: source === "manual" ? undefined : resolvedPlacementId,
       });
-      if (resolvedPlacementId) {
+      if (source !== "manual" && resolvedPlacementId) {
         this.rememberActivatedPlacement(resolvedPlacementId);
       }
       if (this.positionCards.length > MAX_POSITION_CARDS) {
