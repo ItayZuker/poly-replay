@@ -47,7 +47,7 @@ Field reference: [Setups & phases](doc:setups-phases).
 ## Quotes, positions, log
 
 - Up/Down quotes; click to place manual orders when trading is armed (order type from Trade → **Manual Override**)
-- Live and Demo position cards (buy times in UTC). On held settlements, **Market** / Win / Loss wait for the same explicit Gamma resolution as Prediction (Pending longer is OK); Win/Loss is whether your bet side matched that outcome. Portfolio marks may fill P/L dollars after that, never decide the outcome alone
+- Live and Demo position cards (buy times in UTC). On held settlements, **Market** / Win / Loss settle on the same explicit Gamma resolution as Prediction (no extra portfolio wait); Win/Loss is whether your bet side matched that outcome. Portfolio marks may refine P/L dollars after that, never decide the outcome alone
 - **Prediction** cards (when the detector triggers): labeled **Prediction UP/DOWN** (not Bet). Shown in **Live** always, and in **Demo** while Prediction is **On**. Rows are Trigger time and Source (**Pending…** / Confirmed) only — no Market or P/L. After the official outcome, status shows a ✓ or ✕ (same icons as the Trigger Area result). Cards persist across refresh. The Trigger Area status UI is unchanged
 - Log of bot / order activity
 

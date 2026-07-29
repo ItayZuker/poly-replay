@@ -3032,12 +3032,12 @@ function renderPositionCard(card) {
     status === "right" ||
     status === "wrong";
   const plPending = !isPrediction && settled && !isDemo && card.confirmed !== true;
-  // Open and waiting-for-settlement cards render the same skeleton:
-  // all labels present, all values empty, so the card height never changes.
-  const isLoading =
-    isPrediction
-      ? status === "open"
-      : !isDemo && (status === "open" || plPending);
+  const predictionPending = isPrediction && status === "open";
+  // Empty Market/P/L skeleton while open or waiting for confirmation (trades only).
+  const valuesPending =
+    !isPrediction && !isDemo && (status === "open" || plPending);
+  // Gray pulsing status badge is for Waiting only — Open uses accent text (is-open).
+  const statusWaiting = plPending && (status === "win" || status === "loss");
 
   const buyTime = formatPositionBuyTime(card.buyAt);
   const timeLabel = isPrediction ? "Trigger" : "Buy";
@@ -3055,14 +3055,14 @@ function renderPositionCard(card) {
 
   if (!isPrediction) {
     if (status === "sold") {
-      detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${isLoading ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
+      detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${valuesPending ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
     } else {
       const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
       const outcomeClass = outcome === "up" ? "is-up" : outcome === "down" ? "is-down" : "";
-      detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${isLoading ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
+      detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${valuesPending ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
     }
 
-    if (isLoading) {
+    if (valuesPending) {
       detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
     } else {
       const hasPl = card.pl != null && Number.isFinite(card.pl);
@@ -3072,10 +3072,13 @@ function renderPositionCard(card) {
   }
 
   // Provisional win/loss (legacy Chainlink path) keep Waiting until Polymarket confirms.
-  const statusLabel = plPending && (status === "win" || status === "loss")
-    ? "Waiting"
-    : positionStatusLabel(status);
-  const sourceNote = isDemo ? "Demo" : isLoading ? "Pending…" : "Confirmed";
+  const statusLabel = statusWaiting ? "Waiting" : positionStatusLabel(status);
+  const sourceNote =
+    isDemo && !isPrediction
+      ? "Demo"
+      : predictionPending || valuesPending || statusWaiting
+        ? "Pending…"
+        : "Confirmed";
   const sideLabel = isPrediction
     ? `Prediction ${(card.side || "").toUpperCase()}`
     : `Bet ${(card.side || "").toUpperCase()}`;
@@ -3087,7 +3090,8 @@ function renderPositionCard(card) {
   } else {
     statusHtml = `<span class="position-card-status">${statusLabel}</span>`;
   }
-  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${isLoading ? " is-loading" : ""}" data-position-id="${card.id}">
+  // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
+  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
       <span class="position-card-side ${sideClass}">${sideLabel}</span>
       ${statusHtml}

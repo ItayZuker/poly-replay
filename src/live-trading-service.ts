@@ -2056,8 +2056,33 @@ export class LiveTradingService {
     return null;
   }
 
-  /** One Polymarket settlement attempt for a held (open or provisional win/loss) card. */
+  /**
+   * Settle a held card from Gamma + known fill — same clock as Prediction.
+   * Portfolio marks may refine P/L later; they do not gate Win/Loss.
+   */
+  private async trySettleHeldCardFromGamma(card: TradingPositionCard): Promise<boolean> {
+    if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
+    if (!Number.isFinite(card.buyCost) || card.buyCost <= 0) {
+      card.buyCost = card.shares * card.buyPrice;
+    }
+    if (card.buyFees == null) {
+      card.buyFees = await estimateLiveTakerFee(
+        this.userId,
+        card.asset,
+        card.shares,
+        card.buyPrice,
+      );
+    }
+    const officialOutcome = await this.fetchOfficialMarketOutcome(card);
+    if (!officialOutcome) return false;
+    return this.applyHeldSettlementToCard(card, { officialOutcome });
+  }
+
+  /** Held settlement: Gamma first (with Prediction), then portfolio for fill/P/L refinement. */
   private async trySettleHeldCardFromPolymarket(card: TradingPositionCard): Promise<boolean> {
+    // Same resolution clock as Prediction — do not wait on portfolio APIs.
+    if (await this.trySettleHeldCardFromGamma(card)) return true;
+
     if (!card.asset && !card.conditionId) return false;
 
     try {
@@ -2093,7 +2118,13 @@ export class LiveTradingService {
 
     let settledCount = 0;
     for (const card of openCards) {
-      // Keep status open until Polymarket confirms — no Chainlink provisional win/loss.
+      // Same clock as Prediction: settle as soon as Gamma has the official outcome.
+      if (await this.trySettleHeldCardFromGamma(card)) {
+        settledCount += 1;
+        continue;
+      }
+
+      // Fill incomplete or Gamma not ready yet — try portfolio, then keep polling.
       const closed = await pollUntil(
         async () => {
           const rows = await fetchClosedPositions(this.userId, {
@@ -2135,7 +2166,7 @@ export class LiveTradingService {
       "trading",
       `Settled ${settledCount}/${openCards.length} held position(s) for prior window` +
         (settledCount < openCards.length
-          ? ` (${openCards.length - settledCount} waiting on Polymarket)`
+          ? ` (${openCards.length - settledCount} waiting on Gamma/Polymarket)`
           : ""),
     );
     for (const card of openCards) {
@@ -3969,7 +4000,7 @@ export class LiveTradingService {
       if (this.isCorruptConfirmedCard(card)) return true;
       if (this.needsSettlementRecheck(card)) return true;
       if (!card.confirmed) return true;
-      // Prior-window holds need Polymarket settlement even if the buy was confirmed.
+      // Prior-window holds need Gamma settlement even if the buy fill was confirmed.
       if (card.status === "open" && currentKey && card.windowKey !== currentKey) return true;
       return false;
     });
@@ -4085,7 +4116,7 @@ export class LiveTradingService {
       const priorWindow =
         Boolean(this.sessionKey) && Boolean(card.windowKey) && card.windowKey !== this.sessionKey;
       if (priorWindow) {
-        // Held past window end — only Polymarket may mark win/loss.
+        // Held past window end — Gamma marks win/loss (same clock as Prediction).
         const settled = await this.trySettleHeldCardFromPolymarket(card);
         if (!settled) card.confirmed = false;
         return;

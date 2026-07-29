@@ -5366,6 +5366,7 @@ body.is-row-resizing .panel-header-drag-handle {
   color: var(--muted);
 }
 
+/* Open status — accent text (prediction + trade cards share this). */
 .position-card.is-open .position-card-status {
   color: var(--accent);
 }
@@ -5410,7 +5411,7 @@ body.is-row-resizing .panel-header-drag-handle {
   display: block;
 }
 
-/* Open or waiting for Polymarket settlement — gray pulsing badge. */
+/* Waiting for Polymarket settlement — gray pulsing badge (not used for Open). */
 .position-card.is-loading .position-card-status {
   color: #fff;
   background: var(--muted);
@@ -5470,7 +5471,8 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 /* Keep the P/L row height stable while its value is empty during loading. */
-.position-card.is-loading .position-card-row strong {
+.position-card.is-loading .position-card-row strong,
+.position-card.is-values-pending .position-card-row strong {
   min-height: 1em;
 }
 
