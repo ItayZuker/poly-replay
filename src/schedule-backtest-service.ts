@@ -18,6 +18,12 @@ import {
 import { discardBadRecording } from "./bad-recording-cleanup.js";
 import { logService } from "./log-service.js";
 import { isFlatPriceFromTicks, isFlatPriceWindow } from "./window-dynamics.js";
+import {
+  evaluateWindowPrediction,
+  normalizePredictionDetectorConfig,
+  scorePrediction,
+  type PredictionDetectorConfig,
+} from "./prediction-detector.js";
 import type {
   ChainlinkTickDocument,
   LiveWindowState,
@@ -75,6 +81,10 @@ export interface PlacementBacktestStats {
   /** Windows simulated with ticks where no buy triggered (Replay gray dot). */
   gray: number;
   pnl: number;
+  /** Replay Prediction: windows where the detector was right. */
+  predictionRight: number;
+  /** Replay Prediction: windows where the detector was wrong. */
+  predictionWrong: number;
 }
 
 export interface BacktestProgress {
@@ -104,6 +114,8 @@ export interface BacktestScheduleOptions {
   setupsById?: Map<string, TradingPhaseSetup | null> | Record<string, TradingPhaseSetup | null>;
   /** 0–100: probability each would-be fill succeeds after latency. Default 100. */
   fillSuccessPct?: number;
+  /** Replay-only Prediction detector settings (separate from live Market Prediction). */
+  prediction?: Partial<PredictionDetectorConfig> | null;
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
@@ -271,6 +283,11 @@ export interface RecordedWindowSimulation {
   windowEnd: number;
   /** False when window metadata exists but tick files are missing/empty on disk. */
   hadTicks: boolean;
+  predictionSide?: WindowOutcome | null;
+  predictionScore?: "right" | "wrong" | null;
+  predictionTriggeredAtMs?: number | null;
+  /** Duration (sec) used when the Prediction fired (for Open Replay band). */
+  predictionSensitivitySec?: number | null;
 }
 
 export async function simulateRecordedWindow(
@@ -280,10 +297,42 @@ export async function simulateRecordedWindow(
   setup: SimSetup,
   tickCache?: Map<number, ReplayTickDocument[]>,
   simResultCache?: Map<string, WindowSimCacheEntry>,
+  predictionConfig?: PredictionDetectorConfig | null,
 ): Promise<RecordedWindowSimulation> {
   const simCacheKey = simResultCache ? windowSimCacheKey(window.windowStart, setup) : null;
   if (simCacheKey && simResultCache!.has(simCacheKey)) {
     const cached = simResultCache!.get(simCacheKey)!;
+    // Prediction is cheap vs sim; recompute so cache keys need not include prediction settings.
+    if (!predictionConfig) {
+      return {
+        result: cached.result,
+        markers: cached.markers.map((m) => ({ ...m })),
+        windowStart: window.windowStart,
+        windowEnd: window.windowEnd,
+        hadTicks: true,
+        predictionSide: null,
+        predictionScore: null,
+        predictionTriggeredAtMs: null,
+        predictionSensitivitySec: null,
+      };
+    }
+    let ticksForPred = tickCache?.get(window.windowStart);
+    if (!ticksForPred) {
+      ticksForPred = await listReplayTicks(market, window.windowStart, 50_000);
+      tickCache?.set(window.windowStart, ticksForPred);
+    }
+    const predictionHit = evaluateWindowPrediction(
+      ticksForPred,
+      window.windowStart,
+      window.windowEnd,
+      predictionConfig,
+    );
+    const predictionSide = predictionHit?.side ?? null;
+    const predictionTriggeredAtMs = predictionHit?.triggeredAtMs ?? null;
+    const predictionSensitivitySec = predictionHit
+      ? predictionConfig.sensitivitySec
+      : null;
+    const predictionScore = scorePrediction(predictionSide, window.windowOutcome);
     return {
       result: cached.result,
       markers: cached.markers.map((m) => ({ ...m })),
@@ -291,6 +340,10 @@ export async function simulateRecordedWindow(
       windowEnd: window.windowEnd,
       // Cached entries were only stored after a tickful sim.
       hadTicks: true,
+      predictionSide,
+      predictionScore,
+      predictionTriggeredAtMs,
+      predictionSensitivitySec,
     };
   }
 
@@ -310,6 +363,10 @@ export async function simulateRecordedWindow(
       windowStart,
       windowEnd,
       hadTicks: false,
+      predictionSide: null,
+      predictionScore: null,
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
     };
   }
 
@@ -323,8 +380,22 @@ export async function simulateRecordedWindow(
       windowStart,
       windowEnd,
       hadTicks: false,
+      predictionSide: null,
+      predictionScore: null,
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
     };
   }
+
+  const predictionHit = predictionConfig
+    ? evaluateWindowPrediction(ticks, windowStart, windowEnd, predictionConfig)
+    : null;
+  const predictionSide = predictionHit?.side ?? null;
+  const predictionTriggeredAtMs = predictionHit?.triggeredAtMs ?? null;
+  const predictionSensitivitySec = predictionHit
+    ? predictionConfig!.sensitivitySec
+    : null;
+  const predictionScore = scorePrediction(predictionSide, window.windowOutcome);
 
   // Mute per-fill/GTD spam — otherwise Replay floods SSE/console and freezes the UI.
   return logService.runWithMutedSources(["sim"], () => {
@@ -383,6 +454,10 @@ export async function simulateRecordedWindow(
       windowStart,
       windowEnd,
       hadTicks: true,
+      predictionSide,
+      predictionScore,
+      predictionTriggeredAtMs,
+      predictionSensitivitySec,
     };
   });
 }
@@ -396,18 +471,23 @@ function emptyStats(placementId: string): PlacementBacktestStats {
     blue: 0,
     gray: 0,
     pnl: 0,
+    predictionRight: 0,
+    predictionWrong: 0,
   };
 }
 
 function aggregateResult(
   placementId: string,
   results: Array<SimLastWindow | null>,
+  predictionScores: Array<"right" | "wrong" | null | undefined> = [],
 ): PlacementBacktestStats {
   let green = 0;
   let red = 0;
   let blue = 0;
   let gray = 0;
   let pnl = 0;
+  let predictionRight = 0;
+  let predictionWrong = 0;
 
   for (const result of results) {
     const bucket = classifyWindow(result);
@@ -418,6 +498,11 @@ function aggregateResult(
     if (result) pnl += result.pl ?? 0;
   }
 
+  for (const score of predictionScores) {
+    if (score === "right") predictionRight += 1;
+    else if (score === "wrong") predictionWrong += 1;
+  }
+
   return {
     placementId,
     hasData: true,
@@ -426,6 +511,8 @@ function aggregateResult(
     blue,
     gray,
     pnl: Number.isFinite(pnl) ? pnl : 0,
+    predictionRight,
+    predictionWrong,
   };
 }
 
@@ -466,6 +553,7 @@ async function buildPlacementPlan(
     cutoffUtc: number;
     allWindows: RecordedWindowDocument[];
     allowCached: boolean;
+    prediction: PredictionDetectorConfig | null;
   },
 ): Promise<PlacementPlan> {
   const {
@@ -478,6 +566,7 @@ async function buildPlacementPlan(
     cutoffUtc,
     allWindows,
     allowCached,
+    prediction,
   } = input;
   const cacheKey = buildPlacementCacheKey({
     series,
@@ -487,6 +576,7 @@ async function buildPlacementPlan(
     fillSuccessPct,
     heatmapVersion,
     cutoffDay,
+    prediction,
   });
 
   if (allowCached) {
@@ -535,6 +625,11 @@ export async function backtestSchedulePlacements(
     typeof rawFillPct === "number" && Number.isFinite(rawFillPct)
       ? Math.max(0, Math.min(100, rawFillPct))
       : 100;
+  // null = Prediction Off (do not evaluate). Object / omitted → normalize defaults.
+  const prediction =
+    options.prediction === null
+      ? null
+      : normalizePredictionDetectorConfig(options.prediction);
 
   // Always process Mon/top → Sun/bottom so the board fills left-to-right.
   placements = sortPlacementsTopLeft(placements);
@@ -617,6 +712,7 @@ export async function backtestSchedulePlacements(
         fillSuccessPct,
         heatmapVersion,
         cutoffDay,
+        prediction,
       });
       const cached = await getCachedPlacementStats(series, placement._id, cacheKey);
       if (cached) {
@@ -638,6 +734,7 @@ export async function backtestSchedulePlacements(
     cutoffUtc,
     allWindows,
     allowCached,
+    prediction,
   };
 
   const plans: PlacementPlan[] = [];
@@ -727,6 +824,7 @@ export async function backtestSchedulePlacements(
             plan.simSetup,
             tickCache,
             simResultCache,
+            prediction,
           );
           releaseWindowTicks(window.windowStart, tickCache, tickUseRemaining);
           completedUnits += 1;
@@ -748,6 +846,10 @@ export async function backtestSchedulePlacements(
             windowStart: window.windowStart,
             windowEnd: window.windowEnd,
             hadTicks: false,
+            predictionSide: null,
+            predictionScore: null,
+            predictionTriggeredAtMs: null,
+            predictionSensitivitySec: null,
           } satisfies RecordedWindowSimulation;
         }
       },
@@ -759,6 +861,7 @@ export async function backtestSchedulePlacements(
     const withTicks = finished.filter((sim) => sim.hadTicks);
     // Include null results so “ran, no buy” windows count toward gray.
     const results = withTicks.map((sim) => sim.result);
+    const predictionScores = withTicks.map((sim) => sim.predictionScore ?? null);
 
     // Window metadata without tick files must not look like “ran, no trades”.
     if (withTicks.length === 0) {
@@ -778,7 +881,7 @@ export async function backtestSchedulePlacements(
       );
       options.onPlacementComplete?.(computed);
     } else {
-      const computed = aggregateResult(plan.placement._id, results);
+      const computed = aggregateResult(plan.placement._id, results, predictionScores);
       statsById.set(plan.placement._id, computed);
       if (allowCached) {
         cacheUpdates.push({
@@ -804,7 +907,7 @@ export async function backtestSchedulePlacements(
       }
       logService.info(
         "replay",
-        `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue}/gray${computed.gray} pnl ${computed.pnl.toFixed(2)}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
+        `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue}/gray${computed.gray} pnl ${computed.pnl.toFixed(2)}; pred ${computed.predictionRight}/${computed.predictionWrong}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
       );
       options.onPlacementComplete?.(computed);
     }
@@ -840,6 +943,14 @@ export interface PlacementPlayWindowItem {
   plLabel: string;
   sold: boolean;
   markers: SimMarker[];
+  /** Replay Prediction side when the detector fired in this window. */
+  predictionSide?: WindowOutcome | null;
+  /** Right/wrong vs stored window outcome (null if no prediction or no outcome). */
+  predictionScore?: "right" | "wrong" | null;
+  /** Tick time (ms) when Prediction first triggered. */
+  predictionTriggeredAtMs?: number | null;
+  /** Duration (sec) used for the trigger (Open Replay highlight band). */
+  predictionSensitivitySec?: number | null;
 }
 
 export interface PlacementPlayPayload {
@@ -989,6 +1100,10 @@ async function playWindowsFromSims(
       plLabel: sim.result?.plLabel ?? "No trade",
       sold: Boolean(sim.result?.sold),
       markers,
+      predictionSide: sim.predictionSide ?? null,
+      predictionScore: sim.predictionScore ?? null,
+      predictionTriggeredAtMs: sim.predictionTriggeredAtMs ?? null,
+      predictionSensitivitySec: sim.predictionSensitivitySec ?? null,
     });
   }
   return windows.sort((a, b) => a.windowStart - b.windowStart);
@@ -1001,6 +1116,20 @@ export interface BuildPlacementPlayOptions {
   phaseSetup?: TradingPhaseSetup | null;
   /** When true, ignore last-Replay cache and re-simulate (fresh random fills). */
   forceResimulate?: boolean;
+  /** Replay Prediction settings (same as Schedule Run). */
+  prediction?: Partial<PredictionDetectorConfig> | null;
+}
+
+function stripPredictionFromPlayWindows(
+  windows: PlacementPlayWindowItem[],
+): PlacementPlayWindowItem[] {
+  return windows.map((w) => ({
+    ...w,
+    predictionSide: null,
+    predictionScore: null,
+    predictionTriggeredAtMs: null,
+    predictionSensitivitySec: null,
+  }));
 }
 
 /** Build window list + sim markers for the schedule Open Replay popup. */
@@ -1017,6 +1146,7 @@ export async function buildPlacementPlayPayload(
     typeof rawFill === "number" && Number.isFinite(rawFill)
       ? Math.max(0, Math.min(100, rawFill))
       : 100;
+  const predictionOff = options.prediction === null;
 
   // Prefer the exact windows/markers from the last Replay that painted this card.
   if (!options.forceResimulate) {
@@ -1030,7 +1160,11 @@ export async function buildPlacementPlayPayload(
       const needsEnrich = remembered.windows.some(
         (w) => w.windowOutcome == null || w.finalPrice == null || w.prevCloseAsset == null,
       );
-      if (!needsEnrich) return remembered;
+      if (!needsEnrich) {
+        return predictionOff
+          ? { ...remembered, windows: stripPredictionFromPlayWindows(remembered.windows) }
+          : remembered;
+      }
       const enriched = await Promise.all(
         remembered.windows.map(async (w) => {
           if (w.windowOutcome != null && w.finalPrice != null && w.prevCloseAsset != null) {
@@ -1058,7 +1192,9 @@ export async function buildPlacementPlayPayload(
       );
       const next = { ...remembered, windows: enriched };
       rememberPlacementPlay(userId, next);
-      return next;
+      return predictionOff
+        ? { ...next, windows: stripPredictionFromPlayWindows(next.windows) }
+        : next;
     }
   }
 
@@ -1136,6 +1272,10 @@ export async function buildPlacementPlayPayload(
       ? slotWindows[0].windowEnd - slotWindows[0].windowStart
       : undefined;
   const simSetup = phaseSetupToSimSetup(phaseSetup, latencyMs, windowDuration, fillSuccessPct);
+  const prediction =
+    options.prediction === null
+      ? null
+      : normalizePredictionDetectorConfig(options.prediction);
   const tickCache = new Map<number, ReplayTickDocument[]>();
 
   logService.info(
@@ -1144,7 +1284,15 @@ export async function buildPlacementPlayPayload(
   );
 
   const sims = await mapWithConcurrency(slotWindows, WINDOW_SIM_CONCURRENCY, async (window) => {
-    const sim = await simulateRecordedWindow(market, series, window, simSetup, tickCache);
+    const sim = await simulateRecordedWindow(
+      market,
+      series,
+      window,
+      simSetup,
+      tickCache,
+      undefined,
+      prediction,
+    );
     let markers = sim.markers ?? [];
     if (markers.some((m) => m.y == null || !Number.isFinite(m.y))) {
       const chainlink = await listChainlinkTicks(market, window.windowStart, 20_000);
@@ -1173,6 +1321,10 @@ export async function buildPlacementPlayPayload(
       plLabel: result?.plLabel ?? "No trade",
       sold: Boolean(result?.sold),
       markers,
+      predictionSide: sim.predictionSide ?? null,
+      predictionScore: sim.predictionScore ?? null,
+      predictionTriggeredAtMs: sim.predictionTriggeredAtMs ?? null,
+      predictionSensitivitySec: sim.predictionSensitivitySec ?? null,
     });
   }
   windows.sort((a, b) => a.windowStart - b.windowStart);

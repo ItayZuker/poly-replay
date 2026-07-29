@@ -515,8 +515,8 @@
                         the set Duration inside the Trigger Area.
                       </p>
                       <p>
-                        Rule: if any UP or DOWN Buy or Sell price is at or above Max Quote (¢),
-                        Prediction does not trigger.
+                        On top of that: when Duration starts, the cheapening Buy must be at or below
+                        Max Quote (¢), and over Duration it must drop by at least Shift (¢).
                       </p>
                     </div>
                   </div>
@@ -533,7 +533,23 @@
                           step="1"
                           value="90"
                           inputmode="numeric"
-                          aria-label="Skip prediction when any Buy or Sell quote is at or above this many cents"
+                          aria-label="Max Buy price in cents when Duration starts on the cheapening side"
+                        />
+                      </div>
+                    </div>
+                    <div class="manipulation-detector-row">
+                      <label class="wallet-control-label" for="prediction-shift">Shift (¢)</label>
+                      <div class="schedule-replay-latency-field">
+                        <input
+                          type="number"
+                          id="prediction-shift"
+                          class="schedule-replay-latency-input"
+                          min="1"
+                          max="50"
+                          step="1"
+                          value="5"
+                          inputmode="numeric"
+                          aria-label="Minimum drop in cents of the cheapening Buy over Duration"
                         />
                       </div>
                     </div>
@@ -589,7 +605,7 @@
                       aria-label="Prediction status"
                     >
                       <span id="prediction-status-label" class="prediction-status-label"
-                        >Detecting<span class="prediction-loading-dots" aria-hidden="true"
+                        >Waiting<span class="prediction-loading-dots" aria-hidden="true"
                           ><span>.</span><span>.</span><span>.</span></span
                         ></span
                       >
@@ -1122,7 +1138,7 @@
                 </div>
                 <div class="schedule-replay-latency">
                   <label class="schedule-replay-latency-label" for="schedule-replay-fill-success-input"
-                    >Fill success (%)</label
+                    >Fill Success (%)</label
                   >
                   <div class="schedule-replay-latency-field">
                     <input
@@ -1137,6 +1153,125 @@
                       tabindex="-1"
                       title="Chance each Replay fill attempt succeeds after latency. Prefills from live 7-day fill success."
                     />
+                  </div>
+                </div>
+                <div
+                  id="schedule-replay-prediction"
+                  class="schedule-replay-prediction"
+                  aria-label="Replay Prediction"
+                >
+                  <div class="schedule-replay-prediction-head">
+                    <span class="schedule-replay-prediction-title" id="replay-prediction-label"
+                      >Prediction · On</span
+                    >
+                    <label class="switch" for="replay-prediction-enabled">
+                      <input type="checkbox" id="replay-prediction-enabled" checked tabindex="-1" />
+                      <span class="switch-slider"></span>
+                    </label>
+                  </div>
+                  <div id="schedule-replay-prediction-settings" class="schedule-replay-prediction-settings">
+                  <div class="schedule-replay-latency">
+                    <label class="schedule-replay-latency-label" for="replay-prediction-max-quote"
+                      >Max Quote (¢)</label
+                    >
+                    <div class="schedule-replay-latency-field">
+                      <input
+                        id="replay-prediction-max-quote"
+                        class="schedule-replay-latency-input"
+                        type="number"
+                        min="1"
+                        max="99"
+                        step="1"
+                        value="90"
+                        inputmode="numeric"
+                        tabindex="-1"
+                        title="Replay Prediction: max Buy price (¢) when Duration starts on the cheapening side."
+                      />
+                    </div>
+                  </div>
+                  <div class="schedule-replay-latency">
+                    <label class="schedule-replay-latency-label" for="replay-prediction-shift"
+                      >Shift (¢)</label
+                    >
+                    <div class="schedule-replay-latency-field">
+                      <input
+                        id="replay-prediction-shift"
+                        class="schedule-replay-latency-input"
+                        type="number"
+                        min="1"
+                        max="50"
+                        step="1"
+                        value="5"
+                        inputmode="numeric"
+                        tabindex="-1"
+                        title="Replay Prediction: minimum drop (¢) of the cheapening Buy over Duration."
+                      />
+                    </div>
+                  </div>
+                  <div class="schedule-replay-latency">
+                    <label class="schedule-replay-latency-label" for="replay-prediction-duration"
+                      >Duration (Sec)</label
+                    >
+                    <div class="schedule-replay-latency-field">
+                      <input
+                        id="replay-prediction-duration"
+                        class="schedule-replay-latency-input"
+                        type="number"
+                        min="1"
+                        max="120"
+                        step="1"
+                        value="5"
+                        inputmode="numeric"
+                        tabindex="-1"
+                        title="Replay Prediction: seconds the Gap vs Buy condition must hold."
+                      />
+                    </div>
+                  </div>
+                  <div class="schedule-replay-prediction-area">
+                    <span class="schedule-replay-latency-label" id="replay-prediction-area-label"
+                      >Trigger Area</span
+                    >
+                    <div
+                      class="manipulation-area-slider schedule-replay-prediction-slider"
+                      id="replay-prediction-area-slider"
+                      role="group"
+                      aria-labelledby="replay-prediction-area-label"
+                    >
+                      <div class="manipulation-area-track">
+                        <div class="manipulation-area-range" id="replay-prediction-area-range"></div>
+                        <button
+                          type="button"
+                          class="manipulation-area-thumb"
+                          id="replay-prediction-area-start"
+                          data-thumb="start"
+                          tabindex="-1"
+                          aria-label="Replay prediction trigger area start"
+                        ></button>
+                        <button
+                          type="button"
+                          class="manipulation-area-thumb"
+                          id="replay-prediction-area-end"
+                          data-thumb="end"
+                          tabindex="-1"
+                          aria-label="Replay prediction trigger area end"
+                        ></button>
+                      </div>
+                      <span class="manipulation-area-thumb-label" id="replay-prediction-area-start-label"
+                        >0:00</span
+                      >
+                      <span class="manipulation-area-thumb-label" id="replay-prediction-area-end-label"
+                        >5:00</span
+                      >
+                    </div>
+                  </div>
+                  <div class="schedule-replay-prediction-stats" aria-label="Replay prediction stats">
+                    <span class="schedule-replay-prediction-stat"
+                      >Right <strong id="replay-prediction-right">0</strong></span
+                    >
+                    <span class="schedule-replay-prediction-stat"
+                      >Wrong <strong id="replay-prediction-wrong">0</strong></span
+                    >
+                  </div>
                   </div>
                 </div>
               </div>
@@ -1494,6 +1629,44 @@
                 </div>
               </div>
             </div>
+            <div class="quote-row schedule-play-quote-row" aria-label="UP and DOWN Buy Sell quotes">
+              <div class="quote-box quote-box-up" id="play-quote-up-buy-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Buy</div>
+                  <div class="quote-values">
+                    <span id="play-up-buy-locked" class="quote-locked" hidden></span>
+                    <span id="play-up-buy" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box quote-box-up" id="play-quote-up-sell-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Sell</div>
+                  <div class="quote-values">
+                    <span id="play-up-sell-locked" class="quote-locked" hidden></span>
+                    <span id="play-up-sell" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box quote-box-down" id="play-quote-down-buy-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Buy</div>
+                  <div class="quote-values">
+                    <span id="play-down-buy-locked" class="quote-locked" hidden></span>
+                    <span id="play-down-buy" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box quote-box-down" id="play-quote-down-sell-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Sell</div>
+                  <div class="quote-values">
+                    <span id="play-down-sell-locked" class="quote-locked" hidden></span>
+                    <span id="play-down-sell" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div id="schedule-play-chart-wrap" class="schedule-play-chart-wrap">
             <canvas id="schedule-play-chart"></canvas>
@@ -1520,6 +1693,9 @@
               aria-valuenow="0"
               hidden
             >
+              <span id="schedule-play-scrubber-time" class="schedule-play-scrubber-time" aria-hidden="true"
+                >0:00</span
+              >
               <div class="schedule-play-scrubber-line" aria-hidden="true"></div>
               <div class="schedule-play-scrubber-handle" aria-hidden="true"></div>
             </div>
@@ -1538,6 +1714,14 @@
                     <path fill="currentColor" d="M3.8 1.4 8.4 6l-4.6 4.6.9.9L10.2 6 4.7.5z"/>
                   </svg>
                 </button>
+                <div
+                  id="schedule-play-prediction"
+                  class="schedule-play-prediction-badge"
+                  hidden
+                  aria-live="polite"
+                >
+                  <span id="schedule-play-prediction-label"></span>
+                </div>
                 <label class="schedule-play-speed-wrap" title="Playback speed">
                   <span>Speed</span>
                   <select id="schedule-play-speed">

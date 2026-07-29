@@ -6,8 +6,18 @@
   const STATS_CACHE_STORAGE_KEY = "poly-real:schedule-placement-stats";
   const REPLAY_LATENCY_STORAGE_KEY = "poly-real:schedule-replay-latency-ms";
   const REPLAY_FILL_SUCCESS_STORAGE_KEY = "poly-real:schedule-replay-fill-success-pct";
+  const REPLAY_PREDICTION_STORAGE_KEY = "poly-real:schedule-replay-prediction";
   const DEFAULT_REPLAY_LATENCY_MS = 150;
   const DEFAULT_REPLAY_FILL_SUCCESS_PCT = 100;
+  const DEFAULT_REPLAY_PREDICTION = {
+    enabled: true,
+    maxQuoteCents: 90,
+    shiftCents: 5,
+    sensitivitySec: 5,
+    areaStart: 0,
+    areaEnd: 1,
+  };
+  const REPLAY_PRED_THUMB_PX = 12;
   /** Live real-trade stats — do not reuse sim backtest caches. */
 
   let placements = [];
@@ -2429,6 +2439,7 @@
             windowCountHint: hint,
             latencyMs: readReplayLatencyMs(),
             fillSuccessPct: readReplayFillSuccessPct(),
+            prediction: replayPredictionRequestBody(),
             series: placement.series || selectedSeries(),
             setup: setupDoc?.setup ?? null,
           });
@@ -3329,6 +3340,8 @@
       setHeaderSummaryRange("schedule");
       lockedPlacementIds.clear();
       restoreActiveReplayStatsToBoard();
+      syncReplayPredictionTotalsUi();
+      syncReplayPredictionAreaUi();
       if (replayRunning) showHeaderStatsProgressIndeterminate();
     } else {
       hideHeaderStatsProgress();
@@ -3393,6 +3406,8 @@
       blue: stats.blue ?? 0,
       gray: stats.gray ?? 0,
       pnl: stats.pnl ?? 0,
+      predictionRight: stats.predictionRight ?? 0,
+      predictionWrong: stats.predictionWrong ?? 0,
       locked: false,
     };
     activeReplayStats.set(stats.placementId, next);
@@ -3402,6 +3417,7 @@
     applyCardStatsStates();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
+    syncReplayPredictionTotalsUi();
   }
 
   /**
@@ -3419,6 +3435,8 @@
         blue: 0,
         gray: 0,
         pnl: 0,
+        predictionRight: 0,
+        predictionWrong: 0,
         locked: false,
       });
     }
@@ -3426,6 +3444,7 @@
     restoreActiveReplayStatsToBoard();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
+    syncReplayPredictionTotalsUi();
   }
 
   function clearReplayLoadingOnly() {
@@ -3436,9 +3455,15 @@
   }
 
   let replayRunning = false;
-  /** Frozen Latency / Fill success for the in-flight run (null when idle). */
+  /** Frozen Latency / Fill success / Prediction for the in-flight run (null when idle). */
   let replayRunLockedLatencyMs = null;
   let replayRunLockedFillSuccessPct = null;
+  /** @type {{ enabled: boolean, maxQuoteCents: number, shiftCents: number, sensitivitySec: number, areaStart: number, areaEnd: number } | null} */
+  let replayRunLockedPrediction = null;
+  let replayPredictionAreaStart = DEFAULT_REPLAY_PREDICTION.areaStart;
+  let replayPredictionAreaEnd = DEFAULT_REPLAY_PREDICTION.areaEnd;
+  /** @type {"start" | "end" | null} */
+  let replayPredictionAreaDrag = null;
   /** @type {AbortController | null} */
   let replayAbort = null;
   let replayStopReason = null;
@@ -3485,6 +3510,221 @@
     }
   }
 
+  function seriesWindowDurationSec() {
+    const series = selectedSeries();
+    const match = String(series).match(/(\d+)\s*m\b/i);
+    if (match) return Math.max(60, Number(match[1]) * 60);
+    return 300;
+  }
+
+  function normalizeReplayPredictionArea(startRaw, endRaw) {
+    let start = Number(startRaw);
+    let end = Number(endRaw);
+    if (!Number.isFinite(start)) start = DEFAULT_REPLAY_PREDICTION.areaStart;
+    if (!Number.isFinite(end)) end = DEFAULT_REPLAY_PREDICTION.areaEnd;
+    start = Math.max(0, Math.min(1, start));
+    end = Math.max(0, Math.min(1, end));
+    const minSpan = 0.02;
+    if (end - start < minSpan) {
+      if (start > 1 - minSpan) {
+        start = 1 - minSpan;
+        end = 1;
+      } else {
+        end = Math.min(1, start + minSpan);
+      }
+    }
+    return { areaStart: start, areaEnd: end };
+  }
+
+  function normalizeReplayPredictionMaxQuote(value) {
+    const n = Math.round(Number(value));
+    return Math.max(1, Math.min(99, Number.isFinite(n) ? n : DEFAULT_REPLAY_PREDICTION.maxQuoteCents));
+  }
+
+  function normalizeReplayPredictionShift(value) {
+    const n = Math.round(Number(value));
+    return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_REPLAY_PREDICTION.shiftCents));
+  }
+
+  function normalizeReplayPredictionSensitivity(value) {
+    const n = Math.round(Number(value));
+    return Math.max(1, Math.min(120, Number.isFinite(n) ? n : DEFAULT_REPLAY_PREDICTION.sensitivitySec));
+  }
+
+  function fmtReplayPredictionAreaTime(frac, durationSec = seriesWindowDurationSec()) {
+    const total = Math.max(0, Math.round(Number(frac) * Number(durationSec)));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function replayPredThumbLeftCss(frac) {
+    const f = Math.max(0, Math.min(1, Number(frac) || 0));
+    return `calc(${f} * (100% - ${REPLAY_PRED_THUMB_PX}px))`;
+  }
+
+  function replayPredThumbCenterCss(frac) {
+    const f = Math.max(0, Math.min(1, Number(frac) || 0));
+    return `calc(${f} * (100% - ${REPLAY_PRED_THUMB_PX}px) + ${REPLAY_PRED_THUMB_PX / 2}px)`;
+  }
+
+  function isReplayPredictionEnabled() {
+    if (replayRunLockedPrediction) return Boolean(replayRunLockedPrediction.enabled);
+    const toggle = document.getElementById("replay-prediction-enabled");
+    return toggle ? Boolean(toggle.checked) : DEFAULT_REPLAY_PREDICTION.enabled;
+  }
+
+  function readReplayPredictionConfig() {
+    if (replayRunLockedPrediction) {
+      return { ...replayRunLockedPrediction };
+    }
+    const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
+    const shiftInput = document.getElementById("replay-prediction-shift");
+    const durationInput = document.getElementById("replay-prediction-duration");
+    const area = normalizeReplayPredictionArea(
+      replayPredictionAreaStart,
+      replayPredictionAreaEnd,
+    );
+    return {
+      enabled: isReplayPredictionEnabled(),
+      maxQuoteCents: normalizeReplayPredictionMaxQuote(maxQuoteInput?.value),
+      shiftCents: normalizeReplayPredictionShift(shiftInput?.value),
+      sensitivitySec: normalizeReplayPredictionSensitivity(durationInput?.value),
+      areaStart: area.areaStart,
+      areaEnd: area.areaEnd,
+    };
+  }
+
+  /** Payload for Run / Open: settings object when On, null when Off. */
+  function replayPredictionRequestBody() {
+    const config = readReplayPredictionConfig();
+    if (!config.enabled) return null;
+    return {
+      maxQuoteCents: config.maxQuoteCents,
+      shiftCents: config.shiftCents,
+      sensitivitySec: config.sensitivitySec,
+      areaStart: config.areaStart,
+      areaEnd: config.areaEnd,
+    };
+  }
+
+  function persistReplayPredictionConfig(config) {
+    const next = {
+      enabled: config?.enabled == null ? isReplayPredictionEnabled() : Boolean(config.enabled),
+      maxQuoteCents: normalizeReplayPredictionMaxQuote(config?.maxQuoteCents),
+      shiftCents: normalizeReplayPredictionShift(config?.shiftCents),
+      sensitivitySec: normalizeReplayPredictionSensitivity(config?.sensitivitySec),
+      ...normalizeReplayPredictionArea(config?.areaStart, config?.areaEnd),
+    };
+    try {
+      localStorage.setItem(REPLAY_PREDICTION_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+    return next;
+  }
+
+  function syncReplayPredictionAreaUi() {
+    const area = normalizeReplayPredictionArea(
+      replayPredictionAreaStart,
+      replayPredictionAreaEnd,
+    );
+    replayPredictionAreaStart = area.areaStart;
+    replayPredictionAreaEnd = area.areaEnd;
+    const durationSec = seriesWindowDurationSec();
+    const range = document.getElementById("replay-prediction-area-range");
+    const startThumb = document.getElementById("replay-prediction-area-start");
+    const endThumb = document.getElementById("replay-prediction-area-end");
+    const startLabel = document.getElementById("replay-prediction-area-start-label");
+    const endLabel = document.getElementById("replay-prediction-area-end-label");
+    const span = Math.max(0, replayPredictionAreaEnd - replayPredictionAreaStart);
+    if (range) {
+      range.style.left = replayPredThumbCenterCss(replayPredictionAreaStart);
+      range.style.width = `calc(${span} * (100% - ${REPLAY_PRED_THUMB_PX}px))`;
+    }
+    if (startThumb) startThumb.style.left = replayPredThumbLeftCss(replayPredictionAreaStart);
+    if (endThumb) endThumb.style.left = replayPredThumbLeftCss(replayPredictionAreaEnd);
+    if (startLabel) {
+      startLabel.textContent = fmtReplayPredictionAreaTime(replayPredictionAreaStart, durationSec);
+      startLabel.style.left = replayPredThumbCenterCss(replayPredictionAreaStart);
+    }
+    if (endLabel) {
+      endLabel.textContent = fmtReplayPredictionAreaTime(replayPredictionAreaEnd, durationSec);
+      endLabel.style.left = replayPredThumbCenterCss(replayPredictionAreaEnd);
+    }
+  }
+
+  function syncReplayPredictionTotalsUi() {
+    let right = 0;
+    let wrong = 0;
+    for (const stats of activeReplayStats.values()) {
+      right += Number(stats?.predictionRight) || 0;
+      wrong += Number(stats?.predictionWrong) || 0;
+    }
+    const rightEl = document.getElementById("replay-prediction-right");
+    const wrongEl = document.getElementById("replay-prediction-wrong");
+    if (rightEl) rightEl.textContent = String(right);
+    if (wrongEl) wrongEl.textContent = String(wrong);
+  }
+
+  function resetReplayPredictionTotalsUi() {
+    const rightEl = document.getElementById("replay-prediction-right");
+    const wrongEl = document.getElementById("replay-prediction-wrong");
+    if (rightEl) rightEl.textContent = "0";
+    if (wrongEl) wrongEl.textContent = "0";
+  }
+
+  function applyReplayPredictionInputsFromConfig(config) {
+    const next = {
+      enabled: config?.enabled == null ? true : Boolean(config.enabled),
+      maxQuoteCents: normalizeReplayPredictionMaxQuote(config?.maxQuoteCents),
+      shiftCents: normalizeReplayPredictionShift(config?.shiftCents),
+      sensitivitySec: normalizeReplayPredictionSensitivity(config?.sensitivitySec),
+      ...normalizeReplayPredictionArea(config?.areaStart, config?.areaEnd),
+    };
+    const toggle = document.getElementById("replay-prediction-enabled");
+    const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
+    const shiftInput = document.getElementById("replay-prediction-shift");
+    const durationInput = document.getElementById("replay-prediction-duration");
+    if (toggle) toggle.checked = next.enabled;
+    if (maxQuoteInput) maxQuoteInput.value = String(next.maxQuoteCents);
+    if (shiftInput) shiftInput.value = String(next.shiftCents);
+    if (durationInput) durationInput.value = String(next.sensitivitySec);
+    replayPredictionAreaStart = next.areaStart;
+    replayPredictionAreaEnd = next.areaEnd;
+    syncReplayPredictionAreaUi();
+    syncReplayPredictionEnabledUi();
+    return next;
+  }
+
+  function syncReplayPredictionEnabledUi() {
+    const enabled = isReplayPredictionEnabled();
+    const root = document.getElementById("schedule-replay-prediction");
+    const settings = document.getElementById("schedule-replay-prediction-settings");
+    const label = document.getElementById("replay-prediction-label");
+    const toggle = document.getElementById("replay-prediction-enabled");
+    const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
+    const shiftInput = document.getElementById("replay-prediction-shift");
+    const durationInput = document.getElementById("replay-prediction-duration");
+    const startThumb = document.getElementById("replay-prediction-area-start");
+    const endThumb = document.getElementById("replay-prediction-area-end");
+    root?.classList.toggle("is-disabled", !enabled);
+    if (settings) settings.setAttribute("aria-hidden", enabled ? "false" : "true");
+    if (label) label.textContent = enabled ? "Prediction · On" : "Prediction · Off";
+    const settingsLocked = !enabled || replayRunning;
+    for (const input of [maxQuoteInput, shiftInput, durationInput]) {
+      if (!input) continue;
+      input.disabled = settingsLocked;
+      input.setAttribute("aria-disabled", settingsLocked ? "true" : "false");
+    }
+    if (startThumb) startThumb.disabled = settingsLocked;
+    if (endThumb) endThumb.disabled = settingsLocked;
+    if (toggle) {
+      toggle.disabled = replayRunning;
+      toggle.setAttribute("aria-disabled", replayRunning ? "true" : "false");
+    }
+  }
+
   function markReplayInputUserEdited(input) {
     if (input) input.dataset.userEdited = "1";
   }
@@ -3527,6 +3767,9 @@
     if (fillInput && replayRunLockedFillSuccessPct != null) {
       fillInput.value = String(replayRunLockedFillSuccessPct);
     }
+    if (replayRunLockedPrediction) {
+      applyReplayPredictionInputsFromConfig(replayRunLockedPrediction);
+    }
   }
 
   function setReplayInputsLocked(locked) {
@@ -3534,15 +3777,143 @@
     controls?.classList.toggle("is-locked", locked);
     const latencyInput = document.getElementById("schedule-replay-latency-input");
     const fillInput = document.getElementById("schedule-replay-fill-success-input");
-    if (latencyInput) {
-      latencyInput.disabled = locked;
-      latencyInput.setAttribute("aria-disabled", locked ? "true" : "false");
-    }
-    if (fillInput) {
-      fillInput.disabled = locked;
-      fillInput.setAttribute("aria-disabled", locked ? "true" : "false");
+    for (const input of [latencyInput, fillInput]) {
+      if (!input) continue;
+      input.disabled = locked;
+      input.setAttribute("aria-disabled", locked ? "true" : "false");
     }
     if (locked) applyReplayRunLockedInputs();
+    syncReplayPredictionEnabledUi();
+  }
+
+  function bindReplayPredictionAreaSlider() {
+    const track = document
+      .getElementById("replay-prediction-area-slider")
+      ?.querySelector(".manipulation-area-track");
+    if (!track || track.dataset.bound === "1") return;
+    track.dataset.bound = "1";
+
+    const fracFromEvent = (event) => {
+      const rect = track.getBoundingClientRect();
+      const travel = rect.width - REPLAY_PRED_THUMB_PX;
+      if (travel <= 0) return 0;
+      return Math.max(0, Math.min(1, (event.clientX - rect.left - REPLAY_PRED_THUMB_PX / 2) / travel));
+    };
+
+    const onMove = (event) => {
+      if (!replayPredictionAreaDrag || replayRunning || !isReplayPredictionEnabled()) return;
+      const frac = fracFromEvent(event);
+      if (replayPredictionAreaDrag === "start") {
+        replayPredictionAreaStart = Math.min(frac, replayPredictionAreaEnd - 0.02);
+      } else {
+        replayPredictionAreaEnd = Math.max(frac, replayPredictionAreaStart + 0.02);
+      }
+      syncReplayPredictionAreaUi();
+    };
+
+    const onUp = () => {
+      if (!replayPredictionAreaDrag) return;
+      replayPredictionAreaDrag = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (replayRunning || !isReplayPredictionEnabled()) {
+        applyReplayRunLockedInputs();
+        return;
+      }
+      persistReplayPredictionConfig(readReplayPredictionConfig());
+    };
+
+    for (const thumb of track.querySelectorAll("[data-thumb]")) {
+      thumb.addEventListener("pointerdown", (event) => {
+        if (replayRunning || thumb.disabled || !isReplayPredictionEnabled()) return;
+        event.preventDefault();
+        replayPredictionAreaDrag =
+          thumb.getAttribute("data-thumb") === "end" ? "end" : "start";
+        thumb.setPointerCapture?.(event.pointerId);
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    }
+  }
+
+  function initReplayPredictionInputs() {
+    let stored = null;
+    try {
+      const raw = localStorage.getItem(REPLAY_PREDICTION_STORAGE_KEY);
+      if (raw) stored = JSON.parse(raw);
+    } catch {
+      stored = null;
+    }
+    applyReplayPredictionInputsFromConfig(stored || DEFAULT_REPLAY_PREDICTION);
+
+    const enabledToggle = document.getElementById("replay-prediction-enabled");
+    const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
+    const shiftInput = document.getElementById("replay-prediction-shift");
+    const durationInput = document.getElementById("replay-prediction-duration");
+    if (enabledToggle && enabledToggle.dataset.bound !== "1") {
+      enabledToggle.dataset.bound = "1";
+      enabledToggle.addEventListener("change", () => {
+        if (replayRunning) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        persistReplayPredictionConfig(readReplayPredictionConfig());
+        syncReplayPredictionEnabledUi();
+      });
+    }
+    if (maxQuoteInput && maxQuoteInput.dataset.bound !== "1") {
+      maxQuoteInput.dataset.bound = "1";
+      const commit = () => {
+        if (replayRunning || maxQuoteInput.disabled || !isReplayPredictionEnabled()) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        const next = persistReplayPredictionConfig(readReplayPredictionConfig());
+        maxQuoteInput.value = String(next.maxQuoteCents);
+      };
+      maxQuoteInput.addEventListener("change", commit);
+      maxQuoteInput.addEventListener("blur", commit);
+      maxQuoteInput.addEventListener("input", () => {
+        if (replayRunning || maxQuoteInput.disabled) applyReplayRunLockedInputs();
+      });
+    }
+    if (shiftInput && shiftInput.dataset.bound !== "1") {
+      shiftInput.dataset.bound = "1";
+      const commit = () => {
+        if (replayRunning || shiftInput.disabled || !isReplayPredictionEnabled()) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        const next = persistReplayPredictionConfig(readReplayPredictionConfig());
+        shiftInput.value = String(next.shiftCents);
+      };
+      shiftInput.addEventListener("change", commit);
+      shiftInput.addEventListener("blur", commit);
+      shiftInput.addEventListener("input", () => {
+        if (replayRunning || shiftInput.disabled) applyReplayRunLockedInputs();
+      });
+    }
+    if (durationInput && durationInput.dataset.bound !== "1") {
+      durationInput.dataset.bound = "1";
+      const commit = () => {
+        if (replayRunning || durationInput.disabled || !isReplayPredictionEnabled()) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        const next = persistReplayPredictionConfig(readReplayPredictionConfig());
+        durationInput.value = String(next.sensitivitySec);
+      };
+      durationInput.addEventListener("change", commit);
+      durationInput.addEventListener("blur", commit);
+      durationInput.addEventListener("input", () => {
+        if (replayRunning || durationInput.disabled) applyReplayRunLockedInputs();
+      });
+    }
+
+    bindReplayPredictionAreaSlider();
+    syncReplayPredictionAreaUi();
+    syncReplayPredictionEnabledUi();
+    syncReplayPredictionTotalsUi();
   }
 
   function initReplayLatencyInput() {
@@ -3609,6 +3980,8 @@
         markReplayInputUserEdited(fillInput);
       });
     }
+
+    initReplayPredictionInputs();
 
     // Prefer live feed latency / 7-day fill success when available.
     syncReplayInputsFromLive();
@@ -3681,15 +4054,28 @@
     replayStopReason = null;
     const latencyMs = readReplayLatencyMs();
     const fillSuccessPct = readReplayFillSuccessPct();
+    const predictionSettings = persistReplayPredictionConfig(readReplayPredictionConfig());
+    const prediction = predictionSettings.enabled
+      ? {
+          maxQuoteCents: predictionSettings.maxQuoteCents,
+          shiftCents: predictionSettings.shiftCents,
+          sensitivitySec: predictionSettings.sensitivitySec,
+          areaStart: predictionSettings.areaStart,
+          areaEnd: predictionSettings.areaEnd,
+        }
+      : null;
     replayRunLockedLatencyMs = latencyMs;
     replayRunLockedFillSuccessPct = fillSuccessPct;
+    replayRunLockedPrediction = { ...predictionSettings };
     persistReplayLatencyMs(latencyMs);
     persistReplayFillSuccessPct(fillSuccessPct);
+    applyReplayPredictionInputsFromConfig(predictionSettings);
     replayRunning = true;
     syncReplayRunButton();
     placementStats.clear();
     lockedPlacementIds.clear();
     activeReplayStats.clear();
+    resetReplayPredictionTotalsUi();
     applyCardStatsStates();
     showHeaderStatsProgressIndeterminate();
     const dayOrder = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
@@ -3701,10 +4087,13 @@
     });
     activeReplayPlacementIds = new Set(orderedPlacements.map((p) => p._id));
     const first = orderedPlacements[0];
+    const predMsg = prediction
+      ? `prediction max ${prediction.maxQuoteCents}¢ shift ${prediction.shiftCents}¢ / ${prediction.sensitivitySec}s`
+      : "prediction off";
     window.appendLogEntry?.({
       level: "info",
       source: "client",
-      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%; applying setups to recorded windows…`,
+      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, ${predMsg}; applying setups to recorded windows…`,
     });
 
     const setupIds = [...new Set(orderedPlacements.map((p) => p.setupId).filter(Boolean))];
@@ -3727,6 +4116,7 @@
           setups,
           latencyMs,
           fillSuccessPct,
+          prediction,
         }),
       });
       if (!res.ok || !res.body) {
@@ -3842,6 +4232,7 @@
       replayStopReason = null;
       replayRunLockedLatencyMs = null;
       replayRunLockedFillSuccessPct = null;
+      replayRunLockedPrediction = null;
       syncReplayRunButton();
       // Unlock live prefill again now that the run's frozen values are released.
       syncReplayInputsFromLive();
@@ -3851,6 +4242,7 @@
         finalizeReplayCardStats();
       } else {
         clearReplayLoadingOnly();
+        syncReplayPredictionTotalsUi();
       }
     }
   }

@@ -3,7 +3,7 @@ import type { SchedulePlacementListItem } from "./db/schedule-placement-reposito
 import type { PlacementBacktestStats } from "./schedule-backtest-service.js";
 
 /** Bump when simulator/backtest rules change. */
-export const SCHEDULE_BACKTEST_CACHE_VERSION = "8";
+export const SCHEDULE_BACKTEST_CACHE_VERSION = "10";
 
 export function rollingCutoffDayUtc(now = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -17,10 +17,35 @@ export function buildPlacementCacheKey(input: {
   fillSuccessPct: number;
   heatmapVersion: string;
   cutoffDay: string;
+  /** Replay Prediction settings (optional; omitted for non-prediction paths). */
+  prediction?: {
+    sensitivitySec: number;
+    maxQuoteCents: number;
+    shiftCents: number;
+    areaStart: number;
+    areaEnd: number;
+  } | null;
 }): string {
-  const { series, placement, phaseSetup, latencyMs, fillSuccessPct, heatmapVersion, cutoffDay } =
-    input;
+  const {
+    series,
+    placement,
+    phaseSetup,
+    latencyMs,
+    fillSuccessPct,
+    heatmapVersion,
+    cutoffDay,
+    prediction,
+  } = input;
   const setupSig = phaseSetup ? JSON.stringify(phaseSetup) : `missing:${placement.setupId}`;
+  const predSig = prediction
+    ? [
+        prediction.sensitivitySec,
+        prediction.maxQuoteCents,
+        prediction.shiftCents,
+        prediction.areaStart,
+        prediction.areaEnd,
+      ].join(",")
+    : "nopred";
   return [
     SCHEDULE_BACKTEST_CACHE_VERSION,
     series,
@@ -32,6 +57,7 @@ export function buildPlacementCacheKey(input: {
     setupSig,
     latencyMs,
     fillSuccessPct,
+    predSig,
     heatmapVersion,
     cutoffDay,
   ].join("|");

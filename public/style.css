@@ -1429,7 +1429,7 @@ body {
 }
 
 .app-page-schedule.is-replay-workspace .schedule-replay-panel {
-  max-height: 160px;
+  max-height: 480px;
   opacity: 1;
   pointer-events: auto;
 }
@@ -1495,8 +1495,133 @@ body {
 }
 
 .schedule-replay-controls.is-locked .schedule-replay-latency-label,
-.schedule-replay-controls.is-locked .schedule-replay-latency-unit {
+.schedule-replay-controls.is-locked .schedule-replay-latency-unit,
+.schedule-replay-controls.is-locked .schedule-replay-prediction-title,
+.schedule-replay-controls.is-locked .schedule-replay-prediction-stat {
   color: color-mix(in srgb, var(--muted) 65%, transparent);
+}
+
+.schedule-replay-prediction {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Bleed separator to full footer width (cancels .schedule-workspace-footer padding). */
+  width: calc(100% + 16px);
+  margin-top: 2px;
+  margin-left: -8px;
+  margin-right: -8px;
+  padding: 8px 8px 0;
+  border-top: 1px solid var(--border);
+  box-sizing: border-box;
+  transition: gap 0.22s ease;
+}
+
+.schedule-replay-prediction.is-disabled {
+  gap: 0;
+}
+
+.schedule-replay-prediction-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.schedule-replay-prediction-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.schedule-replay-prediction-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-height: 280px;
+  opacity: 1;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition:
+    max-height 0.22s ease,
+    opacity 0.18s ease,
+    margin 0.22s ease;
+}
+
+/* Off: collapse inputs so only the Prediction switcher remains (footer sits lower). */
+.schedule-replay-prediction.is-disabled .schedule-replay-prediction-settings {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.schedule-replay-prediction.is-disabled .schedule-replay-prediction-title {
+  color: #484f58;
+}
+
+.schedule-replay-prediction-area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 0 2px;
+  box-sizing: border-box;
+  /* Match Market: Max Quote / Shift / Duration labels are centered on 28px inputs. */
+  margin-top: calc((28px - 1em) / 2);
+}
+
+.schedule-replay-prediction-slider {
+  width: 100%;
+}
+
+.schedule-replay-prediction-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 2px;
+  box-sizing: border-box;
+}
+
+.schedule-replay-prediction-stat {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.schedule-replay-prediction-stat strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-prediction-area .schedule-replay-latency-label,
+.schedule-replay-controls.is-locked .schedule-replay-prediction-slider .manipulation-area-thumb-label {
+  color: #484f58;
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-prediction-slider .manipulation-area-track::before {
+  background: #30363d;
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-prediction-slider .manipulation-area-range {
+  background: #484f58;
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-prediction-slider .manipulation-area-thumb,
+.schedule-replay-controls.is-locked .schedule-replay-prediction-slider .manipulation-area-thumb:disabled {
+  pointer-events: none;
+  cursor: not-allowed;
+  background: #484f58;
 }
 
 .schedule-replay-latency-unit {
@@ -5785,6 +5910,9 @@ body.is-column-resizing * {
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+  /* Max Quote / Shift / Duration labels are vertically centered on 28px inputs;
+     add the same top inset so Trigger Area sits the same distance below Duration. */
+  margin-top: calc((28px - 1em) / 2);
 }
 
 .manipulation-area-slider {
@@ -5891,8 +6019,9 @@ body.is-column-resizing * {
   justify-content: center;
   gap: 8px;
   width: 100%;
+  height: 36px;
   min-height: 36px;
-  padding: 8px 10px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -5982,8 +6111,8 @@ body.is-column-resizing * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -5992,8 +6121,8 @@ body.is-column-resizing * {
 }
 
 .prediction-status-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   display: block;
 }
 
@@ -7141,6 +7270,7 @@ body.is-column-resizing * {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .schedule-play-item-title {
@@ -7151,6 +7281,60 @@ body.is-column-resizing * {
 .schedule-play-item-sub {
   font-size: 0.72rem;
   color: var(--muted);
+}
+
+.schedule-play-prediction-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.schedule-play-prediction-score svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.schedule-play-prediction-score.is-right {
+  color: var(--up);
+}
+
+.schedule-play-prediction-score.is-wrong {
+  color: var(--down);
+}
+
+.schedule-play-prediction-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.schedule-play-prediction-badge[hidden] {
+  display: none !important;
+}
+
+.schedule-play-prediction-badge.is-up {
+  border-color: var(--up);
+  background: rgba(63, 185, 80, 0.24);
+  color: var(--up);
+}
+
+.schedule-play-prediction-badge.is-down {
+  border-color: var(--down);
+  background: rgba(248, 81, 73, 0.24);
+  color: var(--down);
 }
 
 .schedule-play-main {
@@ -7329,6 +7513,23 @@ body.is-column-resizing * {
 .schedule-play-metrics .schedule-play-metrics-row {
   flex: 0 0 auto;
   grid-template-columns: repeat(3, 1fr);
+}
+
+.schedule-play-quote-row {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Display-only in Open Replay — no click-to-trade hover lift. */
+.schedule-play-quote-row .quote-box {
+  cursor: default;
+  pointer-events: none;
+}
+
+.schedule-play-quote-row .quote-box:not(.quote-box-latched):hover,
+.schedule-play-quote-row .quote-box:not(.quote-box-disabled):not(.quote-box-latched):hover {
+  transform: none;
+  box-shadow: none;
 }
 
 .schedule-play-modal.is-hits-view .schedule-play-metrics {
@@ -7518,6 +7719,29 @@ body.is-column-resizing * {
     0 0 0 2px var(--bg),
     0 0 0 4px var(--accent),
     0 1px 6px rgba(0, 0, 0, 0.45);
+}
+
+.schedule-play-scrubber-time {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 5px);
+  z-index: 1;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.schedule-play-scrubber-time.is-flip-left {
+  left: auto;
+  right: calc(100% + 5px);
 }
 
 .schedule-play-scrubber-line {

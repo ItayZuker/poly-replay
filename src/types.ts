@@ -388,8 +388,13 @@ export interface TradingConfig {
   manipulationDetector: boolean;
   /** Seconds the adverse UP/DOWN vs gap condition must hold. */
   manipulationSensitivitySec: number;
-  /** Skip Prediction triggers when any UP/DOWN Buy or Sell is at/above this many cents (1–99). */
+  /**
+   * Max Buy price (¢) allowed when Duration starts on the cheapening side
+   * (UP Buy for Prediction DOWN, DOWN Buy for Prediction UP).
+   */
   predictionMaxQuoteCents: number;
+  /** Minimum drop (¢) of that cheapening Buy over Duration (1–50). */
+  predictionShiftCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */
   manipulationAreaStart: number;
   /** End of detection area as fraction of the market window [0, 1]. */

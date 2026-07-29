@@ -2774,6 +2774,31 @@ function drawPriceChart(state, options = {}) {
     ctx.stroke();
   }
 
+  // Open Replay: full-height band for Prediction Duration ending at the trigger.
+  const predBand = options.predictionBand;
+  if (
+    predBand &&
+    Number.isFinite(predBand.startSec) &&
+    Number.isFinite(predBand.endSec) &&
+    predBand.endSec > predBand.startSec &&
+    layout.windowStart != null &&
+    layout.windowEnd != null
+  ) {
+    const bandStart = Math.max(layout.windowStart, Number(predBand.startSec));
+    const bandEnd = Math.min(layout.windowEnd, Number(predBand.endSec));
+    if (bandEnd > bandStart) {
+      const x0 = xAt(bandStart);
+      const x1 = xAt(bandEnd);
+      ctx.fillStyle =
+        predBand.side === "up"
+          ? "rgba(63, 185, 80, 0.16)"
+          : predBand.side === "down"
+            ? "rgba(248, 81, 73, 0.16)"
+            : "rgba(88, 166, 255, 0.14)";
+      ctx.fillRect(x0, padding.top, Math.max(1, x1 - x0), plotH);
+    }
+  }
+
   if (layout.windowStart && layout.windowEnd) {
     ctx.fillStyle = "#6e7681";
     ctx.font = "10px sans-serif";
@@ -3643,6 +3668,7 @@ async function onMarketSeriesChanged(nextSeries) {
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     predictionMaxQuoteCents: 90,
+    predictionShiftCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -5143,6 +5169,26 @@ function normalizePredictionMaxQuoteCents(value) {
   return Math.max(1, Math.min(99, Number.isFinite(n) ? n : 90));
 }
 
+function normalizePredictionShiftCents(value) {
+  const n = Math.round(Number(value));
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : 5));
+}
+
+/** Cheapening Buy ≤ Max Quote at Duration start, and drops by ≥ Shift over Duration. */
+function meetsPredictionMaxQuoteAndShift(predictionSide, baseline, now, maxQuoteCents, shiftCents) {
+  const maxP = maxQuoteCents / 100;
+  const shiftP = shiftCents / 100;
+  if (predictionSide === "down") {
+    if (!(baseline.upBuy <= maxP + 1e-12)) return false;
+    return now.upBuy <= baseline.upBuy - shiftP + 1e-12;
+  }
+  if (predictionSide === "up") {
+    if (!(baseline.downBuy <= maxP + 1e-12)) return false;
+    return now.downBuy <= baseline.downBuy - shiftP + 1e-12;
+  }
+  return false;
+}
+
 function normalizeManipulationArea(startRaw, endRaw) {
   let start = Number(startRaw);
   let end = Number(endRaw);
@@ -5190,6 +5236,7 @@ function readLocalTradingConfig() {
       manipulationDetector: Boolean(parsed.manipulationDetector),
       manipulationSensitivitySec: normalizeManipulationSensitivity(parsed.manipulationSensitivitySec),
       predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(parsed.predictionMaxQuoteCents),
+      predictionShiftCents: normalizePredictionShiftCents(parsed.predictionShiftCents),
       ...area,
       predictionRightCount: normalizePredictionCount(parsed.predictionRightCount),
       predictionWrongCount: normalizePredictionCount(parsed.predictionWrongCount),
@@ -5217,6 +5264,7 @@ function writeLocalTradingConfig(config) {
         manipulationDetector: Boolean(config.manipulationDetector),
         manipulationSensitivitySec: normalizeManipulationSensitivity(config.manipulationSensitivitySec),
         predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(config.predictionMaxQuoteCents),
+        predictionShiftCents: normalizePredictionShiftCents(config.predictionShiftCents),
         ...area,
         predictionRightCount: normalizePredictionCount(config.predictionRightCount),
         predictionWrongCount: normalizePredictionCount(config.predictionWrongCount),
@@ -5266,6 +5314,7 @@ function buildTradingConfigPatch(overrides = {}) {
   const manipInput = $("manipulation-detector");
   const sensInput = $("manipulation-sensitivity");
   const maxQuoteInput = $("prediction-max-quote");
+  const shiftInput = $("prediction-shift");
   const manualOrderUnit = unitSelect?.value === "usdc" ? "usdc" : "shares";
   const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
   return {
@@ -5279,6 +5328,7 @@ function buildTradingConfigPatch(overrides = {}) {
     manipulationDetector: Boolean(manipInput?.checked),
     manipulationSensitivitySec: normalizeManipulationSensitivity(sensInput?.value),
     predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(maxQuoteInput?.value),
+    predictionShiftCents: normalizePredictionShiftCents(shiftInput?.value),
     ...area,
     predictionRightCount: normalizePredictionCount(manipDetectorRuntime.rightCount),
     predictionWrongCount: normalizePredictionCount(manipDetectorRuntime.wrongCount),
@@ -5642,7 +5692,7 @@ function syncPredictionStatusUi() {
     box.classList.add("is-none");
     label.hidden = false;
     label.innerHTML =
-      'Detecting<span class="prediction-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>';
+      'Waiting<span class="prediction-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>';
     icon.hidden = true;
     icon.innerHTML = "";
     return;
@@ -6069,6 +6119,7 @@ function syncManipulationSettingsEnabled(enabled) {
   const card = $("manipulation-detector-card");
   const label = $("manipulation-detector-label");
   const maxQuoteInput = $("prediction-max-quote");
+  const shiftInput = $("prediction-shift");
   const sensInput = $("manipulation-sensitivity");
   const startThumb = $("manipulation-area-start");
   const endThumb = $("manipulation-area-end");
@@ -6076,6 +6127,7 @@ function syncManipulationSettingsEnabled(enabled) {
   if (card) card.classList.toggle("is-disabled", !on);
   if (label) label.textContent = on ? "Prediction · On" : "Prediction · Off";
   if (maxQuoteInput) maxQuoteInput.disabled = !on;
+  if (shiftInput) shiftInput.disabled = !on;
   if (sensInput) sensInput.disabled = !on;
   if (startThumb) startThumb.disabled = !on;
   if (endThumb) endThumb.disabled = !on;
@@ -6230,24 +6282,12 @@ function tickManipulationDetector(state) {
   const gap = Number(state.assetGap);
   const upBuy = Number(state.yesAsk);
   const downBuy = Number(state.noAsk);
-  const upSell = Number(state.yesBid);
-  const downSell = Number(state.noBid);
   if (!Number.isFinite(gap) || gap === 0 || !Number.isFinite(upBuy) || !Number.isFinite(downBuy)) {
     return;
   }
-  // Skip detection when any Buy/Sell quote is at/above the configured Max Quote (¢).
-  const maxQuotePrice =
-    normalizePredictionMaxQuoteCents($("prediction-max-quote")?.value) / 100;
-  if (
-    upBuy >= maxQuotePrice ||
-    downBuy >= maxQuotePrice ||
-    (Number.isFinite(upSell) && upSell >= maxQuotePrice) ||
-    (Number.isFinite(downSell) && downSell >= maxQuotePrice)
-  ) {
-    manipDetectorRuntime.samples = [];
-    return;
-  }
 
+  const maxQuoteCents = normalizePredictionMaxQuoteCents($("prediction-max-quote")?.value);
+  const shiftCents = normalizePredictionShiftCents($("prediction-shift")?.value);
   const sensitivitySec = normalizeManipulationSensitivity($("manipulation-sensitivity")?.value);
   manipDetectorRuntime.samples.push({ tMs: nowMs, gap, upBuy, downBuy });
   const cutoff = nowMs - (sensitivitySec + 2) * 1000;
@@ -6272,12 +6312,23 @@ function tickManipulationDetector(state) {
   }
   if (!baseline || nowMs - baseline.tMs < sensitivitySec * 1000) return;
 
+  const nowBuys = { upBuy, downBuy };
   if (baseline.gap > 0) {
-    if (gap >= baseline.gap && upBuy < baseline.upBuy && downBuy > baseline.downBuy) {
+    if (
+      gap >= baseline.gap &&
+      upBuy < baseline.upBuy &&
+      downBuy > baseline.downBuy &&
+      meetsPredictionMaxQuoteAndShift("down", baseline, nowBuys, maxQuoteCents, shiftCents)
+    ) {
       triggerManipulationFlash(state, "down");
     }
   } else if (baseline.gap < 0) {
-    if (gap <= baseline.gap && upBuy > baseline.upBuy && downBuy < baseline.downBuy) {
+    if (
+      gap <= baseline.gap &&
+      upBuy > baseline.upBuy &&
+      downBuy < baseline.downBuy &&
+      meetsPredictionMaxQuoteAndShift("up", baseline, nowBuys, maxQuoteCents, shiftCents)
+    ) {
       triggerManipulationFlash(state, "up");
     }
   }
@@ -6342,6 +6393,7 @@ function applyTradingConfigToUi(config) {
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const maxQuoteInput = $("prediction-max-quote");
+  const shiftInput = $("prediction-shift");
   const sensInput = $("manipulation-sensitivity");
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
   if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
@@ -6353,6 +6405,9 @@ function applyTradingConfigToUi(config) {
     maxQuoteInput.value = String(
       normalizePredictionMaxQuoteCents(config.predictionMaxQuoteCents),
     );
+  }
+  if (shiftInput) {
+    shiftInput.value = String(normalizePredictionShiftCents(config.predictionShiftCents));
   }
   if (sensInput) {
     sensInput.value = String(
@@ -6418,6 +6473,7 @@ function bindTradeToggles() {
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const maxQuoteInput = $("prediction-max-quote");
+  const shiftInput = $("prediction-shift");
   const sensInput = $("manipulation-sensitivity");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
 
@@ -6509,6 +6565,14 @@ function bindTradeToggles() {
     if (maxQuoteInput.disabled) return;
     const next = normalizePredictionMaxQuoteCents(maxQuoteInput.value);
     maxQuoteInput.value = String(next);
+    manipDetectorRuntime.samples = [];
+    await persistManipulationConfigPatch();
+  });
+
+  shiftInput?.addEventListener("change", async () => {
+    if (shiftInput.disabled) return;
+    const next = normalizePredictionShiftCents(shiftInput.value);
+    shiftInput.value = String(next);
     manipDetectorRuntime.samples = [];
     await persistManipulationConfigPatch();
   });

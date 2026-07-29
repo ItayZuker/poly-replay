@@ -533,6 +533,13 @@ async function runScheduleReplaySse(
     setups: unknown;
     latencyMs?: number;
     fillSuccessPct?: number;
+    prediction?: {
+      sensitivitySec?: number;
+      maxQuoteCents?: number;
+      shiftCents?: number;
+      areaStart?: number;
+      areaEnd?: number;
+    } | null;
   },
 ): Promise<void> {
   let market;
@@ -553,6 +560,8 @@ async function runScheduleReplaySse(
     typeof input.fillSuccessPct === "number" && Number.isFinite(input.fillSuccessPct)
       ? Math.max(0, Math.min(100, input.fillSuccessPct))
       : 100;
+  // null = Prediction Off; object = On; undefined = server default (On with defaults).
+  const prediction = input.prediction === null ? null : input.prediction;
 
   writeSseEvent(res, closed, "progress", {
     completed: 0,
@@ -562,7 +571,7 @@ async function runScheduleReplaySse(
 
   logService.info(
     "replay",
-    `Schedule replay started for ${input.series} (${input.placements.length} placement(s), latency ${latencyMs} ms, fill success ${fillSuccessPct}%) — loads ticks + applies setups`,
+    `Schedule replay started for ${input.series} (${input.placements.length} placement(s), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, prediction ${prediction === null ? "off" : "on"}) — loads ticks + applies setups`,
   );
 
   let lastProgress = { completed: 0, total: Math.max(1, input.placements.length) };
@@ -575,6 +584,7 @@ async function runScheduleReplaySse(
     {
       setupsById: setupsByIdFromBody(input.setups),
       fillSuccessPct,
+      prediction,
       // Always re-sim on interactive Replay so stats match current setups + recordings.
       forceResimulate: true,
       shouldAbort: () => closed.value,
@@ -1661,6 +1671,13 @@ async function runPlacementPlay(
     latencyMs?: number;
     fillSuccessPct?: number;
     phaseSetup?: unknown;
+    prediction?: {
+      sensitivitySec?: number;
+      maxQuoteCents?: number;
+      shiftCents?: number;
+      areaStart?: number;
+      areaEnd?: number;
+    } | null;
   },
 ) {
   const placement = await getSchedulePlacementById(userId, placementId, "replay");
@@ -1688,6 +1705,7 @@ async function runPlacementPlay(
     latencyMs,
     fillSuccessPct,
     phaseSetup: phaseSetup ?? null,
+    prediction: input.prediction === null ? null : input.prediction,
   });
   return { status: 200 as const, body: payload };
 }
@@ -1697,6 +1715,13 @@ function parsePlayRequestBody(req: express.Request): {
   latencyMs?: number;
   fillSuccessPct?: number;
   phaseSetup?: unknown;
+  prediction?: {
+    sensitivitySec?: number;
+    maxQuoteCents?: number;
+    shiftCents?: number;
+    areaStart?: number;
+    areaEnd?: number;
+  } | null;
 } {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const q = req.query;
@@ -1715,11 +1740,19 @@ function parsePlayRequestBody(req: express.Request): {
         ? rawSetup.setup
         : rawSetup
       : undefined;
+  const prediction = Object.prototype.hasOwnProperty.call(body, "prediction")
+    ? body.prediction === null
+      ? null
+      : body.prediction && typeof body.prediction === "object"
+        ? body.prediction
+        : undefined
+    : undefined;
   return {
     series,
     latencyMs: Number.isFinite(latencyRaw) ? latencyRaw : undefined,
     fillSuccessPct: Number.isFinite(fillRaw) ? fillRaw : undefined,
     phaseSetup,
+    prediction,
   };
 }
 
@@ -1750,6 +1783,7 @@ app.post("/api/schedule-placements/:id/play", async (req, res) => {
             latencyMs: parsed.latencyMs,
             fillSuccessPct: parsed.fillSuccessPct,
             setup: parsed.phaseSetup,
+            prediction: parsed.prediction,
           }),
         },
       );
@@ -1844,6 +1878,7 @@ app.post("/api/schedule-replay", async (req, res) => {
         setups,
         latencyMs: req.body?.latencyMs,
         fillSuccessPct: req.body?.fillSuccessPct,
+        prediction: req.body?.prediction,
       });
       responseFinished = true;
       abortSocket?.off("close", onSocketClose);
@@ -1874,6 +1909,7 @@ app.post("/api/schedule-replay", async (req, res) => {
         setups,
         latencyMs: req.body?.latencyMs ?? simulatorService.getSetup().latencyMs,
         fillSuccessPct: req.body?.fillSuccessPct ?? 100,
+        prediction: req.body?.prediction,
       }),
     });
     if (!remoteRes.ok || !remoteRes.body) {
@@ -1947,6 +1983,7 @@ app.post("/api/internal/schedule-replay", async (req, res) => {
       setups: req.body?.setups,
       latencyMs: req.body?.latencyMs,
       fillSuccessPct: req.body?.fillSuccessPct,
+      prediction: req.body?.prediction,
     });
     responseFinished = true;
   } catch (err) {

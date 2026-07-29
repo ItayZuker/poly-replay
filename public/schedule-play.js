@@ -7,6 +7,51 @@
   const CHART_PAD = { top: 10, right: 10, bottom: 22, left: 10 };
   const MARKER_HIT_PX = 10;
   const tickCache = new Map();
+  /** Per-window book top-of-book samples for Open Replay quote boxes. */
+  const bookQuoteCache = new Map();
+
+  const PLAY_QUOTE_BOXES = [
+    {
+      boxId: "play-quote-up-buy-box",
+      lockedId: "play-up-buy-locked",
+      liveId: "play-up-buy",
+      lockKey: "upBuy",
+      side: "up",
+      leg: "buy",
+      tone: "up",
+      liveKey: "yesAsk",
+    },
+    {
+      boxId: "play-quote-up-sell-box",
+      lockedId: "play-up-sell-locked",
+      liveId: "play-up-sell",
+      lockKey: "upSell",
+      side: "up",
+      leg: "sell",
+      tone: "up",
+      liveKey: "yesBid",
+    },
+    {
+      boxId: "play-quote-down-buy-box",
+      lockedId: "play-down-buy-locked",
+      liveId: "play-down-buy",
+      lockKey: "downBuy",
+      side: "down",
+      leg: "buy",
+      tone: "down",
+      liveKey: "noAsk",
+    },
+    {
+      boxId: "play-quote-down-sell-box",
+      lockedId: "play-down-sell-locked",
+      liveId: "play-down-sell",
+      lockKey: "downSell",
+      side: "down",
+      leg: "sell",
+      tone: "down",
+      liveKey: "noBid",
+    },
+  ];
 
   let modal = null;
   let canvas = null;
@@ -34,6 +79,8 @@
   let payload = null;
   /** Series used for this Open session (markers / ticks). */
   let playSeries = "btc-5m";
+  /** Fallback Prediction Duration (sec) from Open request when window payload lacks it. */
+  let playPredictionSensitivitySec = null;
   let selectedIndex = -1;
   let priceHistory = [];
   let playheadSec = 0;
@@ -89,6 +136,10 @@
   const PHASE_LINE_HIT_PX = 6;
   const PHASE_BAND_COLOR = "rgba(110, 118, 129, 0.08)";
   const PHASE_LINE_COLOR = "#6e7681";
+  const PREDICTION_ICON_CHECK =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
+  const PREDICTION_ICON_CROSS =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4 12 12M12 4 4 12"/></svg>';
 
   function $(id) {
     return document.getElementById(id);
@@ -397,6 +448,106 @@
       el.textContent = "—";
       el.className = "sim-value";
     }
+    clearPlayQuoteBoxes();
+  }
+
+  function fmtPlayQuote(v) {
+    if (v == null || !Number.isFinite(v)) return "—";
+    return (v * 100).toFixed(1) + "¢";
+  }
+
+  function bestBookPrice(levels) {
+    if (!Array.isArray(levels) || levels.length === 0) return null;
+    const p = Number(levels[0]?.price);
+    return Number.isFinite(p) ? p : null;
+  }
+
+  function quoteLocksAtPlayhead(win) {
+    const locks = {};
+    const markers = Array.isArray(win?.markers) ? win.markers : [];
+    for (const m of markers) {
+      if (!m || (m.type !== "buy" && m.type !== "sell")) continue;
+      if (!(m.side === "up" || m.side === "down")) continue;
+      if (!Number.isFinite(m.t) || m.t > playheadSec) continue;
+      if (!Number.isFinite(m.price)) continue;
+      const lockKey =
+        m.side === "up"
+          ? m.type === "buy"
+            ? "upBuy"
+            : "upSell"
+          : m.type === "buy"
+            ? "downBuy"
+            : "downSell";
+      // First hit at/before playhead latches (same idea as live quote locks).
+      if (locks[lockKey] == null) locks[lockKey] = m.price;
+    }
+    return locks;
+  }
+
+  function bookQuoteAtPlayhead(samples) {
+    if (!Array.isArray(samples) || samples.length === 0) return null;
+    let best = null;
+    for (const sample of samples) {
+      if (!sample || !Number.isFinite(sample.t)) continue;
+      if (sample.t > playheadSec) break;
+      best = sample;
+    }
+    return best;
+  }
+
+  function clearPlayQuoteBoxes() {
+    for (const cfg of PLAY_QUOTE_BOXES) {
+      const box = $(cfg.boxId);
+      const locked = $(cfg.lockedId);
+      const live = $(cfg.liveId);
+      const values = locked?.parentElement;
+      if (live) live.textContent = "—";
+      if (locked) {
+        locked.hidden = true;
+        locked.textContent = "";
+      }
+      values?.classList.remove("quote-has-locked");
+      box?.classList.remove(
+        "quote-triggered-up",
+        "quote-triggered-down",
+        "quote-box-latched",
+        "quote-box-pressing",
+      );
+    }
+  }
+
+  function updatePlayQuoteBoxes(win) {
+    if (viewMode === "hits" || !win) {
+      clearPlayQuoteBoxes();
+      return;
+    }
+    const samples = bookQuoteCache.get(win.windowStart) || [];
+    const liveSample = bookQuoteAtPlayhead(samples);
+    const locks = quoteLocksAtPlayhead(win);
+    for (const cfg of PLAY_QUOTE_BOXES) {
+      const box = $(cfg.boxId);
+      const locked = $(cfg.lockedId);
+      const live = $(cfg.liveId);
+      const values = locked?.parentElement;
+      if (!box || !locked || !live || !values) continue;
+
+      live.textContent = fmtPlayQuote(liveSample?.[cfg.liveKey]);
+
+      const lockedPrice = locks[cfg.lockKey];
+      if (lockedPrice != null && Number.isFinite(lockedPrice)) {
+        locked.hidden = false;
+        locked.textContent = fmtPlayQuote(lockedPrice);
+        values.classList.add("quote-has-locked");
+        box.classList.add(cfg.tone === "up" ? "quote-triggered-up" : "quote-triggered-down");
+        box.classList.add("quote-box-latched");
+        box.classList.remove("quote-box-pressing");
+      } else {
+        locked.hidden = true;
+        locked.textContent = "";
+        values.classList.remove("quote-has-locked");
+        box.classList.remove("quote-triggered-up", "quote-triggered-down", "quote-box-latched");
+      }
+    }
   }
 
   function updateMetricsPanel() {
@@ -404,6 +555,8 @@
     const win = selectedWindow();
     if (!win || priceHistory.length === 0) {
       clearMetricsPanel();
+      // Still show latched hit prices if markers exist while ticks load.
+      if (win) updatePlayQuoteBoxes(win);
       return;
     }
     const until = playheadSec;
@@ -427,6 +580,7 @@
       gapEl.textContent = "—";
       gapEl.className = "sim-value";
     }
+    updatePlayQuoteBoxes(win);
   }
 
   function setStatus(text) {
@@ -928,6 +1082,59 @@
     const duration = windowDuration(win);
     const elapsed = Math.max(0, Math.min(duration, playheadSec - (win?.windowStart || 0)));
     updateScrubberUi(win, elapsed, duration);
+    syncPlayPredictionBadge(win);
+  }
+
+  /**
+   * Full-height Duration band ending at the Prediction trigger.
+   * Appears as soon as the playhead enters the Duration span (not only at the trigger).
+   * Grows with the playhead until the trigger time.
+   */
+  function buildPredictionDurationBand(win, untilSec) {
+    const side = win?.predictionSide;
+    const triggeredAtMs = Number(win?.predictionTriggeredAtMs);
+    if ((side !== "up" && side !== "down") || !Number.isFinite(triggeredAtMs)) return null;
+    const triggerSec = triggeredAtMs / 1000;
+
+    let durationSec = Number(win?.predictionSensitivitySec);
+    if (!Number.isFinite(durationSec) || durationSec < 1) {
+      durationSec = Number(playPredictionSensitivitySec);
+    }
+    if (!Number.isFinite(durationSec) || durationSec < 1) durationSec = 5;
+
+    const startSec = Math.max(Number(win.windowStart) || 0, triggerSec - durationSec);
+    const fullEndSec = Math.min(Number(win.windowEnd) || triggerSec, triggerSec);
+    if (!(fullEndSec > startSec)) return null;
+    // Reveal once the bar enters the Duration area; clip the right edge to the playhead.
+    if (!(untilSec >= startSec)) return null;
+    const endSec = Math.min(fullEndSec, untilSec);
+    if (!(endSec > startSec)) return null;
+    return { startSec, endSec, side };
+  }
+
+  /** Show Prediction UP/DOWN once the playhead reaches the detector trigger time. */
+  function syncPlayPredictionBadge(win) {
+    const badge = $("schedule-play-prediction");
+    const label = $("schedule-play-prediction-label");
+    if (!badge || !label) return;
+
+    const side = win?.predictionSide;
+    const rawTriggerMs = win?.predictionTriggeredAtMs;
+    const triggeredAtMs = Number(rawTriggerMs);
+    const hasTriggerTime = rawTriggerMs != null && Number.isFinite(triggeredAtMs);
+    const reachedTrigger = hasTriggerTime ? playheadSec * 1000 >= triggeredAtMs : true;
+    const ready =
+      viewMode === "play" && (side === "up" || side === "down") && reachedTrigger;
+
+    badge.classList.remove("is-up", "is-down");
+    if (!ready) {
+      badge.hidden = true;
+      label.textContent = "";
+      return;
+    }
+    badge.hidden = false;
+    badge.classList.add(side === "up" ? "is-up" : "is-down");
+    label.textContent = side === "up" ? "Prediction UP" : "Prediction DOWN";
   }
 
   function scrubberWidthPx() {
@@ -975,6 +1182,13 @@
     scrubber.setAttribute("aria-valuemax", String(duration));
     scrubber.setAttribute("aria-valuenow", String(elapsed));
     scrubber.setAttribute("aria-valuetext", `${formatClock(elapsed)} of ${formatClock(duration)}`);
+
+    const timeEl = $("schedule-play-scrubber-time");
+    if (timeEl) {
+      timeEl.textContent = formatClock(elapsed);
+      // Flip label to the left near the right edge so it stays inside the chart.
+      timeEl.classList.toggle("is-flip-left", x > width - 48);
+    }
     syncScrubberHandlePosition();
   }
 
@@ -1165,6 +1379,8 @@
     // Only reveal markers that have occurred at the current playhead.
     const markers = (win.markers || []).filter((m) => Number(m.t) <= until);
 
+    const predictionBand = buildPredictionDurationBand(win, until);
+
     const layout = window.drawPriceChart(state, {
       canvas,
       setupOverride: payload?.setup,
@@ -1175,6 +1391,7 @@
       // DOM scrubber is the playhead; skip the canvas duplicate.
       showPlayhead: false,
       marketOutcome: resolveMarketOutcome(win),
+      predictionBand,
     });
     playChartLayout = layout;
     updateTimeUi(win);
@@ -1408,6 +1625,31 @@
     if (!res.ok) throw new Error(`Failed to load ticks (${res.status})`);
     const body = await res.json();
     return body.ticks || [];
+  }
+
+  function bookTicksToQuoteSamples(ticks) {
+    const samples = [];
+    for (const tick of ticks || []) {
+      const tMs = Number(tick?.tMs);
+      if (!Number.isFinite(tMs)) continue;
+      samples.push({
+        t: tMs / 1000,
+        yesAsk: bestBookPrice(tick.yesAsks),
+        yesBid: bestBookPrice(tick.yesBids),
+        noAsk: bestBookPrice(tick.noAsks),
+        noBid: bestBookPrice(tick.noBids),
+      });
+    }
+    samples.sort((a, b) => a.t - b.t);
+    return samples;
+  }
+
+  /** Lazy book tops for quote boxes — Open Replay only, per selected window. */
+  async function loadBookQuotes(windowStart) {
+    if (bookQuoteCache.has(windowStart)) return bookQuoteCache.get(windowStart);
+    const samples = bookTicksToQuoteSamples(await fetchTickStream(windowStart, "book"));
+    bookQuoteCache.set(windowStart, samples);
+    return samples;
   }
 
   /** Chainlink-only market price (no book fallback — keeps the line on the asset feed). */
@@ -1668,6 +1910,19 @@
 
       body.append(title, sub);
       btn.append(dot, body);
+
+      const score = win.predictionScore;
+      if (score === "right" || score === "wrong") {
+        const scoreEl = document.createElement("span");
+        scoreEl.className = `schedule-play-prediction-score is-${score}`;
+        scoreEl.setAttribute(
+          "aria-label",
+          score === "right" ? "Prediction right" : "Prediction wrong",
+        );
+        scoreEl.innerHTML = score === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
+        btn.append(scoreEl);
+      }
+
       btn.addEventListener("click", () => {
         if (viewMode !== "play" || windowsLoading || slotSpinning) return;
         void selectWindow(index, { fromSlide: true });
@@ -1733,7 +1988,10 @@
     syncHeaderProgress();
     const token = ++loadToken;
     try {
-      const history = await loadTicks(win.windowStart, win);
+      const [history] = await Promise.all([
+        loadTicks(win.windowStart, win),
+        loadBookQuotes(win.windowStart).catch(() => []),
+      ]);
       if (token !== loadToken) return;
       ticksLoading = false;
       priceHistory = history;
@@ -1760,6 +2018,9 @@
         const nextTickKey = `${next.windowStart}:${next.prevCloseAsset ?? ""}:${next.finalPrice ?? ""}:${resolveMarketOutcome(next) ?? ""}`;
         if (!tickCache.has(nextTickKey)) {
           void loadTicks(next.windowStart, next).catch(() => {});
+        }
+        if (!bookQuoteCache.has(next.windowStart)) {
+          void loadBookQuotes(next.windowStart).catch(() => {});
         }
       }
     } catch (err) {
@@ -1922,6 +2183,7 @@
     priceHistory = [];
     hoverTargets = [];
     playChartLayout = null;
+    playPredictionSensitivitySec = null;
     hidePhaseHover();
     clearHitsHighlight();
     stopSlotSpin();
@@ -1953,6 +2215,7 @@
     selectedIndex = -1;
     priceHistory = [];
     tickCache.clear();
+    bookQuoteCache.clear();
     playheadSec = 0;
     viewMode = "play";
     clearHitsHighlight();
@@ -1968,6 +2231,11 @@
       typeof options.series === "string" && options.series.trim()
         ? options.series.trim()
         : window.getSelectedSeries?.() || "btc-5m";
+    const openPredSens = Number(options.prediction?.sensitivitySec);
+    playPredictionSensitivitySec =
+      Number.isFinite(openPredSens) && openPredSens >= 1
+        ? Math.min(120, Math.round(openPredSens))
+        : null;
 
     const wrap = $("schedule-play-chart-wrap");
     if (wrap && window.ResizeObserver) {
@@ -2025,6 +2293,7 @@
             latencyMs,
             fillSuccessPct,
             setup: options.setup ?? null,
+            prediction: options.prediction ?? null,
           }),
         },
       );

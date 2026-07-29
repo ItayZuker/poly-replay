@@ -618,6 +618,7 @@ function defaultTradingConfig(): TradingConfig {
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     predictionMaxQuoteCents: 90,
+    predictionShiftCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -633,6 +634,11 @@ function normalizePredictionCount(raw: unknown): number {
 function normalizePredictionMaxQuoteCents(raw: unknown, fallback = 90): number {
   const n = Math.round(Number(raw));
   return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
+}
+
+function normalizePredictionShiftCents(raw: unknown, fallback = 5): number {
+  const n = Math.round(Number(raw));
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
 }
 
 function normalizeManipulationArea(startRaw: unknown, endRaw: unknown): {
@@ -677,6 +683,10 @@ function normalizeTradingConfig(
     raw.predictionMaxQuoteCents,
     base.predictionMaxQuoteCents,
   );
+  const predictionShiftCents = normalizePredictionShiftCents(
+    raw.predictionShiftCents,
+    base.predictionShiftCents,
+  );
   const area = normalizeManipulationArea(
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
@@ -692,6 +702,7 @@ function normalizeTradingConfig(
     manipulationDetector: Boolean(raw.manipulationDetector),
     manipulationSensitivitySec,
     predictionMaxQuoteCents,
+    predictionShiftCents,
     ...area,
     predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
     predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),
@@ -1357,6 +1368,12 @@ export class LiveTradingService {
       this.config.predictionMaxQuoteCents = normalizePredictionMaxQuoteCents(
         patch.predictionMaxQuoteCents,
         this.config.predictionMaxQuoteCents,
+      );
+    }
+    if (patch.predictionShiftCents != null) {
+      this.config.predictionShiftCents = normalizePredictionShiftCents(
+        patch.predictionShiftCents,
+        this.config.predictionShiftCents,
       );
     }
     if (patch.manipulationAreaStart != null || patch.manipulationAreaEnd != null) {
