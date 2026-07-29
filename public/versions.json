@@ -1,6 +1,11 @@
 {
-  "current": "1.19.1",
+  "current": "1.19.2",
   "releases": [
+    {
+      "version": "1.19.2",
+      "releasedAt": "2026-07-29T16:04:39.948Z",
+      "notes": "Held bets settle on the same Gamma clock as Prediction (no extra portfolio wait for Win/Loss). Docs updated."
+    },
     {
       "version": "1.19.1",
       "releasedAt": "2026-07-29T15:45:12.727Z",
