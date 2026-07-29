@@ -1,6 +1,11 @@
 {
-  "current": "1.18.0",
+  "current": "1.19.0",
   "releases": [
+    {
+      "version": "1.19.0",
+      "releasedAt": "2026-07-29T15:28:42.368Z",
+      "notes": "Active Prediction status is a Buy shortcut (UP/DOWN): same style and hover lift as quote Buy boxes; click places that Buy with the same Size/Manual Override/armed gates. Docs updated."
+    },
     {
       "version": "1.18.0",
       "releasedAt": "2026-07-29T15:10:41.521Z",
