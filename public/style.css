@@ -5837,6 +5837,9 @@ body.is-column-resizing * {
   align-items: stretch;
   gap: 10px;
   cursor: default;
+  /* Room for Prediction Buy hover lift (same -4px as quote boxes). */
+  overflow: visible;
+  padding-top: 2px;
 }
 
 .manipulation-detector-head {
@@ -6058,7 +6061,59 @@ body.is-column-resizing * {
   border-radius: 4px;
   background: var(--bg);
   box-sizing: border-box;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  user-select: none;
+  transform: translateY(0);
+  transition:
+    transform 0.16s ease,
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.16s ease,
+    opacity 0.12s ease;
+}
+
+/* Active Prediction: same Buy affordance as quote Buy UP/DOWN above the graph. */
+.prediction-status-box.is-buyable {
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+
+.prediction-status-box.is-buyable:not(.is-buy-disabled):not(.quote-box-pending):hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 -1px 0 0 var(--quote-hover-edge, var(--border)),
+    0 4px 12px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+}
+
+.prediction-status-box.is-buyable.is-up:not(.is-buy-disabled):not(.quote-box-pending):hover {
+  --quote-hover-edge: var(--up);
+}
+
+.prediction-status-box.is-buyable.is-down:not(.is-buy-disabled):not(.quote-box-pending):hover {
+  --quote-hover-edge: var(--down);
+}
+
+.prediction-status-box.is-buyable:not(.is-buy-disabled).quote-box-pressing,
+.prediction-status-box.is-buyable:not(.is-buy-disabled):active {
+  transform: translateY(0);
+  box-shadow: none;
+  transition-duration: 0.08s;
+}
+
+.prediction-status-box.is-buyable.is-buy-disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.prediction-status-box.is-buyable.quote-box-pending {
+  pointer-events: none;
+  opacity: 0.65;
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .prediction-status-label {

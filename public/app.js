@@ -1828,6 +1828,7 @@ function updateQuoteBoxes(state) {
       box.classList.remove("quote-triggered-up", "quote-triggered-down", "quote-box-latched");
     }
   }
+  syncPredictionBuyButtonEnabled(state);
 }
 
 let quoteOrderInFlight = false;
@@ -1851,6 +1852,13 @@ async function clickQuoteBox(side, leg) {
   const boxId = QUOTE_BOXES.find((b) => b.side === side && b.leg === leg)?.boxId;
   const box = boxId ? $(boxId) : null;
   if (box) box.classList.add("quote-box-pending");
+  const predBox = $("prediction-status-box");
+  const predPending =
+    leg === "buy" &&
+    predBox?.classList.contains("is-buyable") &&
+    ((side === "up" && predBox.classList.contains("is-up")) ||
+      (side === "down" && predBox.classList.contains("is-down")));
+  if (predPending) predBox.classList.add("quote-box-pending");
 
   try {
     const { ok, status, body } = await postTradingOrder(side, leg);
@@ -1874,6 +1882,7 @@ async function clickQuoteBox(side, leg) {
   } finally {
     quoteOrderInFlight = false;
     if (box) box.classList.remove("quote-box-pending");
+    if (predPending) predBox.classList.remove("quote-box-pending");
   }
 }
 
@@ -5939,6 +5948,39 @@ function stopPredictionResultClearTimer() {
   }
 }
 
+/** Active Prediction status is a manual Buy shortcut for that side (same gates as quote Buy). */
+function syncPredictionBuyButtonEnabled(state = windowState) {
+  const box = $("prediction-status-box");
+  if (!box || !box.classList.contains("is-buyable")) return;
+  const side = box.classList.contains("is-up")
+    ? "up"
+    : box.classList.contains("is-down")
+      ? "down"
+      : null;
+  if (side !== "up" && side !== "down") return;
+  const detectorOn = Boolean($("manipulation-detector")?.checked);
+  const allowed = detectorOn && canQuoteAction(tradingState(state), side, "buy");
+  box.classList.toggle("is-buy-disabled", !allowed);
+  box.setAttribute("aria-disabled", allowed ? "false" : "true");
+}
+
+function setPredictionStatusBuyable(box, side) {
+  const buyable = side === "up" || side === "down";
+  box.classList.toggle("is-buyable", buyable);
+  if (!buyable) {
+    box.classList.remove("is-buy-disabled", "quote-box-pressing", "quote-box-pending");
+    box.removeAttribute("role");
+    box.removeAttribute("tabindex");
+    box.removeAttribute("aria-disabled");
+    box.setAttribute("aria-label", "Prediction status");
+    return;
+  }
+  box.setAttribute("role", "button");
+  box.tabIndex = 0;
+  box.setAttribute("aria-label", `Buy Prediction ${side.toUpperCase()}`);
+  syncPredictionBuyButtonEnabled();
+}
+
 function syncPredictionStatusUi() {
   const box = $("prediction-status-box");
   const label = $("prediction-status-label");
@@ -5959,6 +6001,7 @@ function syncPredictionStatusUi() {
 
   if (phase === "none" || ((side !== "up" && side !== "down") && phase !== "right" && phase !== "wrong")) {
     box.classList.add("is-none");
+    setPredictionStatusBuyable(box, null);
     label.hidden = false;
     label.innerHTML =
       'Waiting<span class="prediction-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>';
@@ -5970,12 +6013,14 @@ function syncPredictionStatusUi() {
   const sideText = side === "up" ? "UP" : "DOWN";
   if (phase === "active") {
     box.classList.add(side === "up" ? "is-up" : "is-down");
+    setPredictionStatusBuyable(box, side);
     label.hidden = false;
     label.textContent = `Prediction ${sideText}`;
     icon.hidden = true;
     icon.innerHTML = "";
     return;
   }
+  setPredictionStatusBuyable(box, null);
   if (phase === "pending") {
     box.classList.add("is-pending");
     label.hidden = false;
@@ -5991,6 +6036,42 @@ function syncPredictionStatusUi() {
     icon.hidden = false;
     icon.innerHTML = phase === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
   }
+}
+
+function bindPredictionStatusBuyButton() {
+  const box = $("prediction-status-box");
+  if (!box || box.dataset.buyBound === "1") return;
+  box.dataset.buyBound = "1";
+
+  box.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (!box.classList.contains("is-buyable") || box.classList.contains("is-buy-disabled")) return;
+    box.classList.add("quote-box-pressing");
+  });
+
+  const releasePress = () => {
+    box.classList.remove("quote-box-pressing");
+  };
+  box.addEventListener("mouseup", releasePress);
+  box.addEventListener("mouseleave", releasePress);
+
+  const activate = () => {
+    if (!box.classList.contains("is-buyable") || box.classList.contains("is-buy-disabled")) return;
+    const side = box.classList.contains("is-up")
+      ? "up"
+      : box.classList.contains("is-down")
+        ? "down"
+        : null;
+    if (side !== "up" && side !== "down") return;
+    void clickQuoteBox(side, "buy");
+  };
+
+  box.addEventListener("click", activate);
+  box.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    activate();
+  });
 }
 
 function syncPredictionStatsUi() {
@@ -6834,6 +6915,7 @@ function bindTradeToggles() {
       manipDetectorRuntime.samples = [];
       clearManipulationFlash();
     }
+    syncPredictionBuyButtonEnabled();
     refreshPositionsForPrediction();
     await persistManipulationConfigPatch();
     appendLogEntry({
@@ -7059,6 +7141,7 @@ async function init() {
   bindPageToggle();
   bindTradeToggles();
   bindQuoteBoxes();
+  bindPredictionStatusBuyButton();
   bindScheduleViewToggle();
   bindSetupSaveModal();
   bindModalKeyboardShortcuts();
