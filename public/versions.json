@@ -1,6 +1,11 @@
 {
-  "current": "1.14.0",
+  "current": "1.15.0",
   "releases": [
+    {
+      "version": "1.15.0",
+      "releasedAt": "2026-07-29T07:54:43.859Z",
+      "notes": "Prediction: persist across refresh; background Pending while a new trigger takes the UI; skip triggers at 90¢+ Buy/Sell; triggers/scoring only on deployed host (settings editable anywhere); clickable info panel; Trigger Area rename and Trade UI polish. Docs updated."
+    },
     {
       "version": "1.14.0",
       "releasedAt": "2026-07-29T07:29:16.491Z",
