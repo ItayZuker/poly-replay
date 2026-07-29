@@ -388,6 +388,8 @@ export interface TradingConfig {
   manipulationDetector: boolean;
   /** Seconds the adverse UP/DOWN vs gap condition must hold. */
   manipulationSensitivitySec: number;
+  /** Skip Prediction triggers when any UP/DOWN Buy or Sell is at/above this many cents (1–99). */
+  predictionMaxQuoteCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */
   manipulationAreaStart: number;
   /** End of detection area as fraction of the market window [0, 1]. */

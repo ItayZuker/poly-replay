@@ -3642,6 +3642,7 @@ async function onMarketSeriesChanged(nextSeries) {
     manualSellOrderType: "FOK",
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
+    predictionMaxQuoteCents: 90,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -5137,6 +5138,11 @@ function normalizeManipulationSensitivity(value) {
   return Math.max(1, Math.min(120, Math.round(Number.isFinite(n) ? n : 5)));
 }
 
+function normalizePredictionMaxQuoteCents(value) {
+  const n = Math.round(Number(value));
+  return Math.max(1, Math.min(99, Number.isFinite(n) ? n : 90));
+}
+
 function normalizeManipulationArea(startRaw, endRaw) {
   let start = Number(startRaw);
   let end = Number(endRaw);
@@ -5183,6 +5189,7 @@ function readLocalTradingConfig() {
       manualSellOrderType: normalizeManualOrderType(parsed.manualSellOrderType),
       manipulationDetector: Boolean(parsed.manipulationDetector),
       manipulationSensitivitySec: normalizeManipulationSensitivity(parsed.manipulationSensitivitySec),
+      predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(parsed.predictionMaxQuoteCents),
       ...area,
       predictionRightCount: normalizePredictionCount(parsed.predictionRightCount),
       predictionWrongCount: normalizePredictionCount(parsed.predictionWrongCount),
@@ -5209,6 +5216,7 @@ function writeLocalTradingConfig(config) {
         manualSellOrderType: normalizeManualOrderType(config.manualSellOrderType),
         manipulationDetector: Boolean(config.manipulationDetector),
         manipulationSensitivitySec: normalizeManipulationSensitivity(config.manipulationSensitivitySec),
+        predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(config.predictionMaxQuoteCents),
         ...area,
         predictionRightCount: normalizePredictionCount(config.predictionRightCount),
         predictionWrongCount: normalizePredictionCount(config.predictionWrongCount),
@@ -5257,6 +5265,7 @@ function buildTradingConfigPatch(overrides = {}) {
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const sensInput = $("manipulation-sensitivity");
+  const maxQuoteInput = $("prediction-max-quote");
   const manualOrderUnit = unitSelect?.value === "usdc" ? "usdc" : "shares";
   const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
   return {
@@ -5269,6 +5278,7 @@ function buildTradingConfigPatch(overrides = {}) {
     manualSellOrderType: normalizeManualOrderType(sellTypeSelect?.value),
     manipulationDetector: Boolean(manipInput?.checked),
     manipulationSensitivitySec: normalizeManipulationSensitivity(sensInput?.value),
+    predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(maxQuoteInput?.value),
     ...area,
     predictionRightCount: normalizePredictionCount(manipDetectorRuntime.rightCount),
     predictionWrongCount: normalizePredictionCount(manipDetectorRuntime.wrongCount),
@@ -5288,8 +5298,6 @@ function coalesceTradingConfig(serverConfig, localPatch) {
 const MANIP_SAMPLE_MAX = 600;
 const PREDICTION_RESOLVE_MAX_MS = 45000;
 const PREDICTION_RESOLVE_INTERVAL_MS = 2000;
-/** Do not trigger when any UP/DOWN Buy or Sell quote is at/above this price. */
-const PREDICTION_MAX_QUOTE_PRICE = 0.9;
 const PREDICTION_RUNTIME_STORAGE_KEY = "poly-prediction-runtime";
 
 /**
@@ -6060,12 +6068,14 @@ function syncManipulationAreaUi() {
 function syncManipulationSettingsEnabled(enabled) {
   const card = $("manipulation-detector-card");
   const label = $("manipulation-detector-label");
+  const maxQuoteInput = $("prediction-max-quote");
   const sensInput = $("manipulation-sensitivity");
   const startThumb = $("manipulation-area-start");
   const endThumb = $("manipulation-area-end");
   const on = Boolean(enabled);
   if (card) card.classList.toggle("is-disabled", !on);
   if (label) label.textContent = on ? "Prediction · On" : "Prediction · Off";
+  if (maxQuoteInput) maxQuoteInput.disabled = !on;
   if (sensInput) sensInput.disabled = !on;
   if (startThumb) startThumb.disabled = !on;
   if (endThumb) endThumb.disabled = !on;
@@ -6225,12 +6235,14 @@ function tickManipulationDetector(state) {
   if (!Number.isFinite(gap) || gap === 0 || !Number.isFinite(upBuy) || !Number.isFinite(downBuy)) {
     return;
   }
-  // Near-certain quotes: skip detection (no trigger at 90¢+ Buy/Sell).
+  // Skip detection when any Buy/Sell quote is at/above the configured Max Quote (¢).
+  const maxQuotePrice =
+    normalizePredictionMaxQuoteCents($("prediction-max-quote")?.value) / 100;
   if (
-    upBuy >= PREDICTION_MAX_QUOTE_PRICE ||
-    downBuy >= PREDICTION_MAX_QUOTE_PRICE ||
-    (Number.isFinite(upSell) && upSell >= PREDICTION_MAX_QUOTE_PRICE) ||
-    (Number.isFinite(downSell) && downSell >= PREDICTION_MAX_QUOTE_PRICE)
+    upBuy >= maxQuotePrice ||
+    downBuy >= maxQuotePrice ||
+    (Number.isFinite(upSell) && upSell >= maxQuotePrice) ||
+    (Number.isFinite(downSell) && downSell >= maxQuotePrice)
   ) {
     manipDetectorRuntime.samples = [];
     return;
@@ -6329,6 +6341,7 @@ function applyTradingConfigToUi(config) {
   const buyTypeSelect = $("manual-buy-order-type");
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
+  const maxQuoteInput = $("prediction-max-quote");
   const sensInput = $("manipulation-sensitivity");
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
   if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
@@ -6336,6 +6349,11 @@ function applyTradingConfigToUi(config) {
   if (buyTypeSelect) buyTypeSelect.value = normalizeManualOrderType(config.manualBuyOrderType);
   if (sellTypeSelect) sellTypeSelect.value = normalizeManualOrderType(config.manualSellOrderType);
   if (manipInput) manipInput.checked = Boolean(config.manipulationDetector);
+  if (maxQuoteInput) {
+    maxQuoteInput.value = String(
+      normalizePredictionMaxQuoteCents(config.predictionMaxQuoteCents),
+    );
+  }
   if (sensInput) {
     sensInput.value = String(
       normalizeManipulationSensitivity(config.manipulationSensitivitySec),
@@ -6399,6 +6417,7 @@ function bindTradeToggles() {
   const buyTypeSelect = $("manual-buy-order-type");
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
+  const maxQuoteInput = $("prediction-max-quote");
   const sensInput = $("manipulation-sensitivity");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
 
@@ -6484,6 +6503,14 @@ function bindTradeToggles() {
       source: "client",
       message: manipInput.checked ? "Prediction enabled" : "Prediction disabled",
     });
+  });
+
+  maxQuoteInput?.addEventListener("change", async () => {
+    if (maxQuoteInput.disabled) return;
+    const next = normalizePredictionMaxQuoteCents(maxQuoteInput.value);
+    maxQuoteInput.value = String(next);
+    manipDetectorRuntime.samples = [];
+    await persistManipulationConfigPatch();
   });
 
   sensInput?.addEventListener("change", async () => {

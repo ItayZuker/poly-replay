@@ -515,16 +515,28 @@
                         the set Duration inside the Trigger Area.
                       </p>
                       <p>
-                        Rule: if any UP or DOWN Buy or Sell price is 90¢ or more, Prediction does not
-                        trigger.
-                      </p>
-                      <p>
-                        Triggers and scoring run only on the deployed app (not localhost). Settings can
-                        still be changed from any host.
+                        Rule: if any UP or DOWN Buy or Sell price is at or above Max Quote (¢),
+                        Prediction does not trigger.
                       </p>
                     </div>
                   </div>
                   <div id="manipulation-detector-settings" class="manipulation-detector-settings">
+                    <div class="manipulation-detector-row">
+                      <label class="wallet-control-label" for="prediction-max-quote">Max Quote (¢)</label>
+                      <div class="schedule-replay-latency-field">
+                        <input
+                          type="number"
+                          id="prediction-max-quote"
+                          class="schedule-replay-latency-input"
+                          min="1"
+                          max="99"
+                          step="1"
+                          value="90"
+                          inputmode="numeric"
+                          aria-label="Skip prediction when any Buy or Sell quote is at or above this many cents"
+                        />
+                      </div>
+                    </div>
                     <div class="manipulation-detector-row">
                       <label class="wallet-control-label" for="manipulation-sensitivity">Duration (Sec)</label>
                       <div class="schedule-replay-latency-field">

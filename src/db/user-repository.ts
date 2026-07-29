@@ -102,6 +102,7 @@ function defaultTrading(): TradingConfig {
     manualSellOrderType: "FOK",
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
+    predictionMaxQuoteCents: 90,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -112,6 +113,11 @@ function defaultTrading(): TradingConfig {
 function normalizePredictionCount(raw: unknown): number {
   const n = Math.floor(Number(raw));
   return Number.isFinite(n) && n > 0 ? Math.min(1_000_000, n) : 0;
+}
+
+function normalizePredictionMaxQuoteCents(raw: unknown, fallback = 90): number {
+  const n = Math.round(Number(raw));
+  return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
 }
 
 function normalizeManipulationArea(startRaw: unknown, endRaw: unknown): {
@@ -150,6 +156,10 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     1,
     Math.min(120, Math.round(Number.isFinite(sensRaw) ? sensRaw : base.manipulationSensitivitySec)),
   );
+  const predictionMaxQuoteCents = normalizePredictionMaxQuoteCents(
+    raw.predictionMaxQuoteCents,
+    base.predictionMaxQuoteCents,
+  );
   const area = normalizeManipulationArea(
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
@@ -164,6 +174,7 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
     manipulationSensitivitySec,
+    predictionMaxQuoteCents,
     ...area,
     predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
     predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),

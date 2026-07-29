@@ -617,6 +617,7 @@ function defaultTradingConfig(): TradingConfig {
     manualSellOrderType: "FOK",
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
+    predictionMaxQuoteCents: 90,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -627,6 +628,11 @@ function defaultTradingConfig(): TradingConfig {
 function normalizePredictionCount(raw: unknown): number {
   const n = Math.floor(Number(raw));
   return Number.isFinite(n) && n > 0 ? Math.min(1_000_000, n) : 0;
+}
+
+function normalizePredictionMaxQuoteCents(raw: unknown, fallback = 90): number {
+  const n = Math.round(Number(raw));
+  return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
 }
 
 function normalizeManipulationArea(startRaw: unknown, endRaw: unknown): {
@@ -667,6 +673,10 @@ function normalizeTradingConfig(
     1,
     Math.min(120, Math.round(Number.isFinite(sensRaw) ? sensRaw : base.manipulationSensitivitySec)),
   );
+  const predictionMaxQuoteCents = normalizePredictionMaxQuoteCents(
+    raw.predictionMaxQuoteCents,
+    base.predictionMaxQuoteCents,
+  );
   const area = normalizeManipulationArea(
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
@@ -681,6 +691,7 @@ function normalizeTradingConfig(
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
     manipulationSensitivitySec,
+    predictionMaxQuoteCents,
     ...area,
     predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
     predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),
@@ -1340,6 +1351,12 @@ export class LiveTradingService {
       this.config.manipulationSensitivitySec = Math.max(
         1,
         Math.min(120, Math.round(Number.isFinite(sens) ? sens : 5)),
+      );
+    }
+    if (patch.predictionMaxQuoteCents != null) {
+      this.config.predictionMaxQuoteCents = normalizePredictionMaxQuoteCents(
+        patch.predictionMaxQuoteCents,
+        this.config.predictionMaxQuoteCents,
       );
     }
     if (patch.manipulationAreaStart != null || patch.manipulationAreaEnd != null) {
