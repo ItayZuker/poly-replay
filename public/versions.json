@@ -1,6 +1,11 @@
 {
-  "current": "1.15.1",
+  "current": "1.16.0",
   "releases": [
+    {
+      "version": "1.16.0",
+      "releasedAt": "2026-07-29T10:25:11.054Z",
+      "notes": "Replay Prediction: Max Quote, Shift, Duration, Trigger Area, On/Off (collapses to switcher when Off), Right/Wrong totals; Open Replay prediction badge, scores, and Duration band. Market Prediction Shift (¢). Fill Success label and Trigger Area spacing. Docs updated."
+    },
     {
       "version": "1.15.1",
       "releasedAt": "2026-07-29T08:15:09.296Z",
