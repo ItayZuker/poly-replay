@@ -1,6 +1,11 @@
 {
-  "current": "1.15.0",
+  "current": "1.15.1",
   "releases": [
+    {
+      "version": "1.15.1",
+      "releasedAt": "2026-07-29T08:15:09.296Z",
+      "notes": "Prediction: configurable Max Quote (¢) above Duration (default 90); trim info tip copy. Docs updated."
+    },
     {
       "version": "1.15.0",
       "releasedAt": "2026-07-29T07:54:43.859Z",
