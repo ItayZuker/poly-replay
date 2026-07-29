@@ -30,12 +30,14 @@ import {
   findResolvedPosition,
   findTrade,
   pollUntil,
+  isClearlyResolvedTokenPrice,
   isValidSharePrice,
   isValidShareSize,
   type PolymarketClosedPosition,
   type PolymarketPosition,
   type PolymarketTrade,
 } from "./polymarket-portfolio.js";
+import { fetchGammaWindowResolution } from "./gamma-window-resolution.js";
 import {
   DEFAULT_CRYPTO_TAKER_FEE_PARAMS,
   estimateTakerFeeUsd,
@@ -1816,6 +1818,69 @@ export class LiveTradingService {
     return simulatorService.getPhaseSetup();
   }
 
+  /** Official market UP/DOWN for a card (Gamma by slug), when resolved. */
+  private async fetchOfficialMarketOutcome(
+    card: TradingPositionCard,
+  ): Promise<"up" | "down" | null> {
+    const slug = typeof card.slug === "string" ? card.slug.trim() : "";
+    if (!slug) return null;
+    try {
+      const resolution = await fetchGammaWindowResolution(slug);
+      if (resolution?.outcome === "up" || resolution?.outcome === "down") {
+        return resolution.outcome;
+      }
+    } catch {
+      // keep polling
+    }
+    return null;
+  }
+
+  /**
+   * Finalize held settlement onto a card once the token mark is clear and/or Gamma
+   * has an official market outcome. Avoids mid-book marks flipping Market UP/DOWN.
+   */
+  private applyHeldSettlementToCard(
+    card: TradingPositionCard,
+    opts: {
+      curPrice?: number | null;
+      grossPl?: number | null;
+      officialOutcome?: "up" | "down" | null;
+    },
+  ): boolean {
+    const curClear = isClearlyResolvedTokenPrice(opts.curPrice);
+    const official =
+      opts.officialOutcome === "up" || opts.officialOutcome === "down"
+        ? opts.officialOutcome
+        : null;
+    // Need a definitive signal — do not lock Loss/Win from a mid-book mark alone.
+    if (!curClear && !official) return false;
+
+    const settled = resolveHeldSettlement(card, {
+      curPrice: curClear ? opts.curPrice : null,
+      grossPl: opts.grossPl,
+    });
+
+    if (official) {
+      const won = card.side === official;
+      card.outcome = official;
+      card.status = won ? "win" : "loss";
+      if (curClear) {
+        const tokenWon = Number(opts.curPrice) >= 0.5;
+        card.pl = tokenWon === won ? settled.pl : feeAwarePlHeld(card, won);
+      } else {
+        card.pl = feeAwarePlHeld(card, won);
+      }
+    } else {
+      card.status = settled.status;
+      card.outcome = settled.outcome;
+      card.pl = settled.pl;
+    }
+
+    if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
+    card.confirmed = true;
+    return true;
+  }
+
   /**
    * Apply Polymarket closed-position data onto a held card. Returns true when confirmed.
    * Losses often never appear here — use redeemable open positions instead.
@@ -1837,16 +1902,12 @@ export class LiveTradingService {
     card.conditionId = card.conditionId ?? closed.conditionId;
     card.slug = card.slug ?? closed.slug;
     card.buyFees = await estimateLiveTakerFee(this.userId, card.asset, card.shares, card.buyPrice);
-    const settled = resolveHeldSettlement(card, {
+    const officialOutcome = await this.fetchOfficialMarketOutcome(card);
+    return this.applyHeldSettlementToCard(card, {
       curPrice: closed.curPrice,
       grossPl,
+      officialOutcome,
     });
-    card.status = settled.status;
-    card.outcome = settled.outcome;
-    card.pl = settled.pl;
-    if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
-    card.confirmed = true;
-    return true;
   }
 
   /** Apply redeemable / near-settled open position (typical path for held losses). */
@@ -1866,16 +1927,12 @@ export class LiveTradingService {
     card.conditionId = card.conditionId ?? openPos.conditionId;
     card.slug = card.slug ?? openPos.slug;
     card.buyFees = await estimateLiveTakerFee(this.userId, card.asset, card.shares, card.buyPrice);
-    const settled = resolveHeldSettlement(card, {
+    const officialOutcome = await this.fetchOfficialMarketOutcome(card);
+    return this.applyHeldSettlementToCard(card, {
       curPrice: openPos.curPrice,
       grossPl: Number.isFinite(grossPl) ? grossPl : null,
+      officialOutcome,
     });
-    card.status = settled.status;
-    card.outcome = settled.outcome;
-    card.pl = settled.pl;
-    if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
-    card.confirmed = true;
-    return true;
   }
 
   /** Fetch a resolved open position; broaden beyond market filter when needed. */
@@ -1891,6 +1948,7 @@ export class LiveTradingService {
     let match = findResolvedPosition(rows, {
       asset: card.asset,
       conditionId: card.conditionId,
+      side: card.side,
     });
     if (match) return match;
 
@@ -1903,6 +1961,7 @@ export class LiveTradingService {
       match = findResolvedPosition(broad, {
         asset: card.asset,
         conditionId: card.conditionId,
+        side: card.side,
       });
       if (match) return match;
     }
@@ -1922,6 +1981,7 @@ export class LiveTradingService {
         asset: card.asset,
         conditionId: card.conditionId,
         afterTs: card.buyAt - 30,
+        side: card.side,
       });
       if (closed) {
         return await this.applyClosedHeldSettlement(card, closed);
@@ -1957,6 +2017,7 @@ export class LiveTradingService {
               asset: card.asset,
               conditionId: card.conditionId,
               afterTs: card.buyAt - 5,
+              side: card.side,
             }) ?? null
           );
         },
@@ -4099,6 +4160,7 @@ export class LiveTradingService {
         asset: card.asset,
         conditionId: card.conditionId,
         afterTs: card.buyAt - 30,
+        side: card.side,
       });
 
       if (closed?.realizedPnl != null && Number.isFinite(Number(closed.realizedPnl))) {

@@ -174,6 +174,26 @@ export function isValidShareSize(size: unknown): boolean {
   return Number.isFinite(n) && n > 0;
 }
 
+/** Polymarket position `outcome` is the token held (Up/Down), not the market winner. */
+export function outcomeLabelMatchesSide(
+  outcome: string | undefined | null,
+  side: "up" | "down",
+): boolean {
+  const o = String(outcome ?? "")
+    .trim()
+    .toLowerCase();
+  if (!o) return false;
+  if (side === "up") return o === "up" || o === "yes";
+  return o === "down" || o === "no";
+}
+
+/** Token mark is final enough to settle (~0¢ or ~100¢). */
+export function isClearlyResolvedTokenPrice(curPrice: unknown): boolean {
+  if (curPrice == null || !Number.isFinite(Number(curPrice))) return false;
+  const cur = Number(curPrice);
+  return cur <= 0.02 || cur >= 0.98;
+}
+
 export function findTrade(
   trades: PolymarketTrade[],
   opts: {
@@ -228,26 +248,48 @@ export function isResolvedPosition(p: PolymarketPosition): boolean {
 
 /**
  * Find a resolved open position for held-to-settlement confirmation.
- * Prefer exact asset match; fall back to conditionId (token id can drift).
+ * Prefer exact asset match; fall back to conditionId + side (never the opposite token).
  */
 export function findResolvedPosition(
   positions: PolymarketPosition[],
-  opts: { asset?: string; conditionId?: string },
+  opts: { asset?: string; conditionId?: string; side?: "up" | "down" },
 ): PolymarketPosition | undefined {
   if (!opts.asset && !opts.conditionId) return undefined;
+
+  const sideOk = (p: PolymarketPosition) =>
+    !opts.side ||
+    !p.outcome ||
+    outcomeLabelMatchesSide(p.outcome, opts.side);
 
   if (opts.asset) {
     const byAsset = positions.find(
       (p) =>
         p.asset === opts.asset &&
         isResolvedPosition(p) &&
+        sideOk(p) &&
         (!opts.conditionId || p.conditionId === opts.conditionId),
     );
     if (byAsset) return byAsset;
   }
 
   if (opts.conditionId) {
-    return positions.find((p) => p.conditionId === opts.conditionId && isResolvedPosition(p));
+    // Prefer a row whose outcome label matches the bet side.
+    if (opts.side) {
+      const bySide = positions.find(
+        (p) =>
+          p.conditionId === opts.conditionId &&
+          isResolvedPosition(p) &&
+          outcomeLabelMatchesSide(p.outcome, opts.side!),
+      );
+      if (bySide) return bySide;
+    }
+    // Only accept conditionId-only when the row has no outcome label to contradict.
+    return positions.find(
+      (p) =>
+        p.conditionId === opts.conditionId &&
+        isResolvedPosition(p) &&
+        (!p.outcome || (opts.side ? outcomeLabelMatchesSide(p.outcome, opts.side) : true)),
+    );
   }
 
   return undefined;
@@ -255,16 +297,19 @@ export function findResolvedPosition(
 
 export function findClosedPosition(
   closed: PolymarketClosedPosition[],
-  opts: { asset?: string; conditionId?: string; afterTs?: number },
+  opts: { asset?: string; conditionId?: string; afterTs?: number; side?: "up" | "down" },
 ): PolymarketClosedPosition | undefined {
   if (!opts.asset && !opts.conditionId) return undefined;
   const afterTs = opts.afterTs ?? 0;
-  return closed.find((p) => {
+  const matches = closed.filter((p) => {
     if (opts.asset) {
       if (!p.asset || p.asset !== opts.asset) return false;
     }
     if (opts.conditionId) {
       if (!p.conditionId || p.conditionId !== opts.conditionId) return false;
+    }
+    if (opts.side && p.outcome && !outcomeLabelMatchesSide(p.outcome, opts.side)) {
+      return false;
     }
     const ts = Number(p.timestamp);
     if (Number.isFinite(ts) && ts + 2 < afterTs) return false;
@@ -273,4 +318,10 @@ export function findClosedPosition(
     if (p.avgPrice != null && !isValidSharePrice(p.avgPrice)) return false;
     return true;
   });
+  if (matches.length === 0) return undefined;
+  if (opts.side) {
+    const labeled = matches.find((p) => outcomeLabelMatchesSide(p.outcome, opts.side!));
+    if (labeled) return labeled;
+  }
+  return matches[0];
 }
