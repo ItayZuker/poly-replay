@@ -1,6 +1,11 @@
 {
-  "current": "1.19.0",
+  "current": "1.19.1",
   "releases": [
+    {
+      "version": "1.19.1",
+      "releasedAt": "2026-07-29T15:45:12.727Z",
+      "notes": "Prediction Buy status matches quote Buys (fill only after a real buy). Prediction cards: ✓/✕ status; Trigger + Source only (no Market/P/L). Docs updated."
+    },
     {
       "version": "1.19.0",
       "releasedAt": "2026-07-29T15:28:42.368Z",
