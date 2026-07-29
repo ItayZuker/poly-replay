@@ -5321,7 +5321,7 @@ function syncManipulationSettingsEnabled(enabled) {
   const endThumb = $("manipulation-area-end");
   const on = Boolean(enabled);
   if (card) card.classList.toggle("is-disabled", !on);
-  if (label) label.textContent = on ? "Manipulation Detector · On" : "Manipulation Detector · Off";
+  if (label) label.textContent = on ? "Detector · On" : "Detector · Off";
   if (sensInput) sensInput.disabled = !on;
   if (startThumb) startThumb.disabled = !on;
   if (endThumb) endThumb.disabled = !on;
@@ -5616,9 +5616,7 @@ function bindTradeToggles() {
     appendLogEntry({
       level: "info",
       source: "client",
-      message: manipInput.checked
-        ? "Manipulation Detector enabled"
-        : "Manipulation Detector disabled",
+      message: manipInput.checked ? "Detector enabled" : "Detector disabled",
     });
   });
 

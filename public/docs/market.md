@@ -10,7 +10,7 @@ Live trading console for the selected series.
 | **Auto Trade** | Bot may trade using the active setup; label shows **· On** / **· Off** |
 | **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup; label shows **· On** / **· Off** |
 | **Size** | Manual / fallback order size |
-| **Manipulation Detector** | Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Duration (Sec)** and **Window area** stay visible in the same control; they are disabled (muted) when Off |
+| **Detector** | Manipulation detector. Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Duration (Sec)** and **Window area** stay visible in the same control; they are disabled (muted) when Off |
 
 | Setting | Meaning |
 |---------|---------|
