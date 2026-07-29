@@ -1,6 +1,11 @@
 {
-  "current": "1.17.1",
+  "current": "1.17.2",
   "releases": [
+    {
+      "version": "1.17.2",
+      "releasedAt": "2026-07-29T13:49:31.126Z",
+      "notes": "Fix position-card Market outcome: match Polymarket rows to bet side, settle only on clear ~0/~1 marks or official Gamma outcome (no mid-book flips). Docs updated."
+    },
     {
       "version": "1.17.1",
       "releasedAt": "2026-07-29T13:31:11.531Z",
