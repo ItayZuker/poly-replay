@@ -10,7 +10,6 @@ import {
   parseMarketSeries,
 } from "./market-pair.js";
 import { pickDisplayPrice, pickTriggerPrice } from "./quote-price.js";
-import { resolveWindowOutcome } from "./window-outcome.js";
 import { takeLevels } from "./book-depth.js";
 import { makeStoredTickId, roundTo4 } from "./tick-compact.js";
 import { enrichWindowWithUniqueTraders, listUniqueTradersForWindow, resolveConditionIdForSlug } from "./market-participants.js";
@@ -567,7 +566,10 @@ export class MarketRecorder {
       const pair = await fetchMarketPairFromSlug(this.activeWindow.slug);
       const yesInfo = clobMarketFeed.getCachedMarketInfo(pair.yesTokenId);
       const noInfo = clobMarketFeed.getCachedMarketInfo(pair.noTokenId);
-      const gamma = await waitForGammaWindowResolution(this.activeWindow.slug);
+      const gamma = await waitForGammaWindowResolution(this.activeWindow.slug, {
+        maxWaitMs: 120_000,
+        intervalMs: 1000,
+      });
 
       if (yesInfo) this.activeWindow.yesPrice = pickDisplayPrice(yesInfo).price;
       if (noInfo) this.activeWindow.noPrice = pickDisplayPrice(noInfo).price;
@@ -578,17 +580,13 @@ export class MarketRecorder {
         return;
       }
 
-      // Fallback if Gamma has not resolved yet.
+      // Correctness over speed: record Chainlink close/PTB when available, but do not
+      // invent windowOutcome from price — leave unset for later Gamma backfill.
       const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
       this.applyAssetPrices(prices.assetPrice, prices.prevCloseAsset);
-      this.activeWindow.windowOutcome = resolveWindowOutcome(
-        this.activeWindow.assetPrice,
-        this.activeWindow.prevCloseAsset,
-        this.activeWindow.assetGap,
-      );
       logService.warn(
         "recorder",
-        `Gamma resolution unavailable for ${this.activeWindow.slug}; used price fallback`,
+        `Gamma explicit resolution unavailable for ${this.activeWindow.slug}; windowOutcome left unset`,
       );
     } catch {
       // best effort

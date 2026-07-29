@@ -1923,8 +1923,8 @@ export class LiveTradingService {
   }
 
   /**
-   * Finalize held settlement onto a card once the token mark is clear and/or Gamma
-   * has an official market outcome. Avoids mid-book marks flipping Market UP/DOWN.
+   * Finalize held settlement only after Gamma marks the market explicitly resolved.
+   * Portfolio token marks / realized PnL may fill dollars, never Market or Win/Loss alone.
    */
   private applyHeldSettlementToCard(
     card: TradingPositionCard,
@@ -1934,33 +1934,34 @@ export class LiveTradingService {
       officialOutcome?: "up" | "down" | null;
     },
   ): boolean {
-    const curClear = isClearlyResolvedTokenPrice(opts.curPrice);
     const official =
       opts.officialOutcome === "up" || opts.officialOutcome === "down"
         ? opts.officialOutcome
         : null;
-    // Need a definitive signal — do not lock Loss/Win from a mid-book mark alone.
-    if (!curClear && !official) return false;
+    // Correctness over speed — stay Pending until explicit Gamma resolution.
+    if (!official) return false;
 
+    const won = card.side === official;
+    card.outcome = official;
+    card.status = won ? "win" : "loss";
+
+    const curClear = isClearlyResolvedTokenPrice(opts.curPrice);
     const settled = resolveHeldSettlement(card, {
       curPrice: curClear ? opts.curPrice : null,
       grossPl: opts.grossPl,
     });
-
-    if (official) {
-      const won = card.side === official;
-      card.outcome = official;
-      card.status = won ? "win" : "loss";
-      if (curClear) {
-        const tokenWon = Number(opts.curPrice) >= 0.5;
-        card.pl = tokenWon === won ? settled.pl : feeAwarePlHeld(card, won);
-      } else {
-        card.pl = feeAwarePlHeld(card, won);
-      }
+    if (curClear) {
+      const tokenWon = Number(opts.curPrice) >= 0.5;
+      // Prefer fee-aware held P/L when the token mark disagrees with official outcome.
+      card.pl = tokenWon === won ? settled.pl : feeAwarePlHeld(card, won);
+    } else if (
+      opts.grossPl != null &&
+      Number.isFinite(Number(opts.grossPl)) &&
+      (Number(opts.grossPl) >= 0) === won
+    ) {
+      card.pl = feeAwarePlFromGross(Number(opts.grossPl), card);
     } else {
-      card.status = settled.status;
-      card.outcome = settled.outcome;
-      card.pl = settled.pl;
+      card.pl = feeAwarePlHeld(card, won);
     }
 
     if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;

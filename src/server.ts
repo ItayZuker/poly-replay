@@ -1038,7 +1038,7 @@ app.get("/api/window", async (req, res) => {
   }
 });
 
-/** Official Polymarket/Gamma resolution for a finished market window (by slug). */
+/** Explicit Gamma resolution for a finished market window (by slug). Pending until resolved. */
 app.get("/api/window-resolution", async (req, res) => {
   try {
     const slug = String(req.query.slug || "").trim();

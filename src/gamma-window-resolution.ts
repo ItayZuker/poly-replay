@@ -4,8 +4,9 @@ import type { WindowOutcome } from "./types.js";
 
 const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 
-/** Only treat near-settled token prices as official (~1 / ~0). */
-const RESOLVED_PRICE_MIN = 0.95;
+/** Settled payout prices once Gamma has explicitly resolved (~1 / ~0). */
+const SETTLED_WIN_MIN = 0.99;
+const SETTLED_LOSS_MAX = 0.01;
 
 export interface GammaWindowResolution {
   outcome: WindowOutcome;
@@ -59,24 +60,48 @@ export function pricesFromGammaMarket(market: Record<string, unknown>): {
 }
 
 /**
- * Resolved Gamma markets expose ~1 / ~0 on the winning side.
- * Do not treat mid-book prices (e.g. 0.85) as resolved — those are common
- * right after the window ends and often disagree with the eventual winner.
+ * True when Gamma has explicitly finished resolving the market.
+ * Do not treat mid-book prices or final-vs-PTB metadata as resolved.
+ */
+export function isGammaMarketExplicitlyResolved(
+  market: Record<string, unknown>,
+  event?: Record<string, unknown> | null,
+): boolean {
+  const status = normalizeOutcomeLabel(market.umaResolutionStatus);
+  if (status === "resolved") return true;
+
+  // Some payloads omit umaResolutionStatus briefly but already flip closed + auto-resolved.
+  const marketClosed = market.closed === true;
+  const eventClosed = event?.closed === true;
+  const auto =
+    market.automaticallyResolved === true || event?.automaticallyResolved === true;
+  return (marketClosed || eventClosed) && auto;
+}
+
+/**
+ * Outcome from settled Gamma payout prices only (winning side ~1, losing ~0).
+ * Rejects mid-book marks that appear right after the window ends.
  */
 export function outcomeFromGammaPrices(
   yesPrice?: number,
   noPrice?: number,
 ): WindowOutcome | undefined {
-  if (yesPrice != null && Number.isFinite(yesPrice) && yesPrice >= RESOLVED_PRICE_MIN) {
-    return "up";
+  if (
+    yesPrice == null ||
+    noPrice == null ||
+    !Number.isFinite(yesPrice) ||
+    !Number.isFinite(noPrice)
+  ) {
+    return undefined;
   }
-  if (noPrice != null && Number.isFinite(noPrice) && noPrice >= RESOLVED_PRICE_MIN) {
-    return "down";
-  }
+  const upWins = yesPrice >= SETTLED_WIN_MIN && noPrice <= SETTLED_LOSS_MAX;
+  const downWins = noPrice >= SETTLED_WIN_MIN && yesPrice <= SETTLED_LOSS_MAX;
+  if (upWins && !downWins) return "up";
+  if (downWins && !upWins) return "down";
   return undefined;
 }
 
-/** Official Chainlink close vs PTB (Polymarket Up = close >= open). */
+/** Official Chainlink close vs PTB (Polymarket Up = close >= open). Kept for tooling; not used to settle. */
 export function outcomeFromFinalVsPtb(
   finalPrice?: number,
   priceToBeat?: number,
@@ -92,7 +117,10 @@ export function outcomeFromFinalVsPtb(
   return finalPrice >= priceToBeat ? "up" : "down";
 }
 
-/** One-shot Gamma lookup by market/event slug. Returns null if not resolved yet. */
+/**
+ * One-shot Gamma lookup by market/event slug.
+ * Returns null until the market is explicitly resolved and payout prices are ~1/~0.
+ */
 export async function fetchGammaWindowResolution(
   slug: string,
   signal?: AbortSignal,
@@ -116,7 +144,11 @@ export async function fetchGammaWindowResolution(
   const market = markets?.[0];
   if (!market) return null;
 
+  if (!isGammaMarketExplicitlyResolved(market, event)) return null;
+
   const { yesPrice, noPrice } = pricesFromGammaMarket(market);
+  const outcome = outcomeFromGammaPrices(yesPrice, noPrice);
+  if (!outcome) return null;
 
   const meta = event.eventMetadata as
     | { finalPrice?: number; priceToBeat?: number }
@@ -130,26 +162,19 @@ export async function fetchGammaWindowResolution(
       ? roundTo4(meta.priceToBeat)
       : undefined;
 
-  // Prefer settled ~1/0 token prices (payout truth). Fall back to Chainlink
-  // final vs PTB when tokens are not settled yet (mid-book is ignored).
-  const outcome =
-    outcomeFromGammaPrices(yesPrice, noPrice) ??
-    outcomeFromFinalVsPtb(finalPrice, priceToBeat);
-  if (!outcome) return null;
-
   return { outcome, finalPrice, priceToBeat, yesPrice, noPrice };
 }
 
 /**
- * Wait until Gamma marks the market resolved (outcomePrices ~1/0 or final vs PTB).
- * Used at live window finalize — resolution can lag a few seconds.
+ * Wait until Gamma marks the market explicitly resolved with settled ~1/~0 prices.
+ * Used at live window finalize — resolution can lag well past window end.
  */
 export async function waitForGammaWindowResolution(
   slug: string,
   options: { maxWaitMs?: number; intervalMs?: number } = {},
 ): Promise<GammaWindowResolution | null> {
-  const maxWaitMs = options.maxWaitMs ?? 25_000;
-  const intervalMs = options.intervalMs ?? 500;
+  const maxWaitMs = options.maxWaitMs ?? 90_000;
+  const intervalMs = options.intervalMs ?? 1000;
   const startedAt = Date.now();
 
   while (Date.now() - startedAt <= maxWaitMs) {

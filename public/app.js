@@ -5606,7 +5606,6 @@ function coalesceTradingConfig(serverConfig, localPatch) {
 }
 
 const MANIP_SAMPLE_MAX = 600;
-const PREDICTION_RESOLVE_MAX_MS = 45000;
 const PREDICTION_RESOLVE_INTERVAL_MS = 2000;
 const PREDICTION_RUNTIME_STORAGE_KEY = "poly-prediction-runtime";
 
@@ -6013,11 +6012,6 @@ function persistPredictionStats() {
   return manipDetectorRuntime.statsPersistChain;
 }
 
-function resolveWindowOutcomeFromPrices(closePrice, ptb) {
-  if (!Number.isFinite(closePrice) || !Number.isFinite(ptb)) return null;
-  return closePrice >= ptb ? "up" : "down";
-}
-
 function recordPredictionScore(side, windowStart, outcome, { showResultUi, source } = {}) {
   if (side !== "up" && side !== "down") return false;
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
@@ -6119,20 +6113,7 @@ async function pollBackgroundPredictionOutcome(job) {
         }
       }
     } catch {
-      // keep polling / fall back
-    }
-  }
-
-  const elapsed = Date.now() - (job.resolveStartedAt || Date.now());
-  if (elapsed >= PREDICTION_RESOLVE_MAX_MS) {
-    const fallback = resolveWindowOutcomeFromPrices(job.lastPrice, job.lastPtb);
-    if (fallback) {
-      removeBackgroundResolution(job.windowStart);
-      recordPredictionScore(job.side, job.windowStart, fallback, {
-        showResultUi: false,
-        source: "fallback-close",
-      });
-      return;
+      // keep polling until Gamma explicitly resolves
     }
   }
 
@@ -6230,19 +6211,7 @@ async function pollPredictionOfficialOutcome() {
         }
       }
     } catch {
-      // keep polling / fall back
-    }
-  }
-
-  const elapsed = Date.now() - manipDetectorRuntime.resolveStartedAt;
-  if (elapsed >= PREDICTION_RESOLVE_MAX_MS) {
-    const fallback = resolveWindowOutcomeFromPrices(
-      manipDetectorRuntime.lastPrice,
-      manipDetectorRuntime.lastPtb,
-    );
-    if (fallback) {
-      applyPredictionOutcome(fallback, "fallback-close");
-      return;
+      // keep polling until Gamma explicitly resolves
     }
   }
 
