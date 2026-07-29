@@ -5017,6 +5017,29 @@ body.is-row-resizing .panel-header-drag-handle {
   margin-left: auto;
 }
 
+.wallet-control-field--manual .manual-order-type-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.manual-order-type-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.manual-order-type-caption {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wallet-control-field--manual .wallet-order-unit {
+  min-width: 3.4rem;
+}
+
 .wallet-order-unit {
   border: 1px solid var(--border);
   background: var(--bg);
@@ -5649,8 +5672,36 @@ body.is-column-resizing * {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  cursor: pointer;
   user-select: none;
+}
+
+.manipulation-detector-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.prediction-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.prediction-info-btn:hover {
+  color: var(--accent);
+}
+
+.manipulation-detector-label-row .wallet-control-label {
+  cursor: pointer;
 }
 
 .manipulation-detector-settings {
@@ -5674,16 +5725,18 @@ body.is-column-resizing * {
 }
 
 .manipulation-area-slider {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
   min-width: 0;
+  padding-bottom: 16px;
 }
 
 .manipulation-area-track {
   position: relative;
   height: 18px;
-  margin: 2px 0;
+  margin: 2px 0 0;
   background: transparent;
   touch-action: none;
 }
@@ -5702,20 +5755,29 @@ body.is-column-resizing * {
 }
 
 .manipulation-area-range {
-  display: none;
+  position: absolute;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .manipulation-area-thumb {
+  --manip-thumb-size: 12px;
   position: absolute;
   top: 50%;
-  width: 12px;
-  height: 12px;
+  width: var(--manip-thumb-size);
+  height: var(--manip-thumb-size);
   margin: 0;
   padding: 0;
   border: none;
   border-radius: 50%;
   background: var(--accent);
-  transform: translate(-50%, -50%);
+  /* Left edge at travel start; right edge flush with track end at 100%. */
+  transform: translateY(-50%);
   cursor: grab;
   z-index: 1;
 }
@@ -5734,21 +5796,186 @@ body.is-column-resizing * {
   background: #484f58;
 }
 
-.manipulation-area-labels {
-  display: flex;
-  justify-content: space-between;
+.manipulation-area-thumb-label {
+  position: absolute;
+  bottom: 0;
   font-size: 11px;
+  line-height: 1;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
 }
 
 .wallet-control-field--manipulation.is-disabled .manipulation-detector-settings .wallet-control-label,
-.wallet-control-field--manipulation.is-disabled .manipulation-area-labels {
+.wallet-control-field--manipulation.is-disabled .manipulation-area-thumb-label {
   color: #484f58;
 }
 
 .wallet-control-field--manipulation.is-disabled .manipulation-area-track::before {
   background: #30363d;
+}
+
+.wallet-control-field--manipulation.is-disabled .manipulation-area-range {
+  background: #484f58;
+}
+
+.prediction-status-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  box-sizing: border-box;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.prediction-status-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  text-align: center;
+}
+
+.prediction-status-label[hidden] {
+  display: none !important;
+}
+
+.prediction-loading-dots {
+  display: inline-flex;
+  width: 1.1em;
+  justify-content: flex-start;
+  letter-spacing: 0.02em;
+}
+
+.prediction-loading-dots span {
+  opacity: 0.2;
+  animation: prediction-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.prediction-loading-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.prediction-loading-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes prediction-dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* Match quote Buy boxes when latched / triggered. */
+.prediction-status-box.is-up {
+  border-color: var(--up);
+  background: rgba(63, 185, 80, 0.24);
+  color: var(--up);
+}
+
+.prediction-status-box.is-up .prediction-status-label {
+  color: var(--up);
+}
+
+.prediction-status-box.is-down {
+  border-color: var(--down);
+  background: rgba(248, 81, 73, 0.24);
+  color: var(--down);
+}
+
+.prediction-status-box.is-down .prediction-status-label {
+  color: var(--down);
+}
+
+.prediction-status-box.is-pending {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+}
+
+.prediction-status-box.is-pending .prediction-status-label {
+  color: var(--accent);
+}
+
+.prediction-status-box.is-result-only {
+  border-color: var(--border);
+  background: var(--bg);
+}
+
+.prediction-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.prediction-status-icon[hidden] {
+  display: none !important;
+}
+
+.prediction-status-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.prediction-status-box.is-right .prediction-status-icon {
+  color: var(--up);
+}
+
+.prediction-status-box.is-wrong .prediction-status-icon {
+  color: var(--down);
+}
+
+.prediction-stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prediction-stats-counts {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.prediction-stat {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.prediction-stat strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
+.prediction-stats-reset {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.wallet-control-field--manipulation.is-disabled .prediction-status-box,
+.wallet-control-field--manipulation.is-disabled .prediction-stats-row {
+  opacity: 0.55;
 }
 
 #price-chart {

@@ -87,6 +87,10 @@ export interface UpdateWalletInput {
   signatureType?: number;
 }
 
+function normalizeManualOrderType(raw: unknown): "FAK" | "FOK" {
+  return raw === "FAK" ? "FAK" : "FOK";
+}
+
 function defaultTrading(): TradingConfig {
   return {
     autoTrade: false,
@@ -94,11 +98,20 @@ function defaultTrading(): TradingConfig {
     startTrading: false,
     manualShares: 10,
     manualOrderUnit: "shares",
+    manualBuyOrderType: "FOK",
+    manualSellOrderType: "FOK",
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
+    predictionRightCount: 0,
+    predictionWrongCount: 0,
   };
+}
+
+function normalizePredictionCount(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? Math.min(1_000_000, n) : 0;
 }
 
 function normalizeManipulationArea(startRaw: unknown, endRaw: unknown): {
@@ -147,9 +160,13 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     startTrading: Boolean(raw.startTrading),
     manualShares: amount,
     manualOrderUnit: unit,
+    manualBuyOrderType: normalizeManualOrderType(raw.manualBuyOrderType),
+    manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
     manipulationSensitivitySec,
     ...area,
+    predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
+    predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),
   };
   if (!next.autoTrade) {
     next.useSchedule = false;

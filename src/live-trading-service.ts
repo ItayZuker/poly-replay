@@ -602,6 +602,10 @@ function newCardId(): string {
   return `pos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeManualOrderType(raw: unknown): "FAK" | "FOK" {
+  return raw === "FAK" ? "FAK" : "FOK";
+}
+
 function defaultTradingConfig(): TradingConfig {
   return {
     autoTrade: false,
@@ -609,11 +613,20 @@ function defaultTradingConfig(): TradingConfig {
     startTrading: false,
     manualShares: 10,
     manualOrderUnit: "shares",
+    manualBuyOrderType: "FOK",
+    manualSellOrderType: "FOK",
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
+    predictionRightCount: 0,
+    predictionWrongCount: 0,
   };
+}
+
+function normalizePredictionCount(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? Math.min(1_000_000, n) : 0;
 }
 
 function normalizeManipulationArea(startRaw: unknown, endRaw: unknown): {
@@ -664,9 +677,13 @@ function normalizeTradingConfig(
     startTrading: Boolean(raw.startTrading),
     manualShares: amount,
     manualOrderUnit: unit,
+    manualBuyOrderType: normalizeManualOrderType(raw.manualBuyOrderType),
+    manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
     manipulationSensitivitySec,
     ...area,
+    predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
+    predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),
   };
   if (!next.autoTrade) {
     next.useSchedule = false;
@@ -1295,6 +1312,12 @@ export class LiveTradingService {
     if (patch.manualOrderUnit === "shares" || patch.manualOrderUnit === "usdc") {
       this.config.manualOrderUnit = patch.manualOrderUnit;
     }
+    if (patch.manualBuyOrderType === "FAK" || patch.manualBuyOrderType === "FOK") {
+      this.config.manualBuyOrderType = patch.manualBuyOrderType;
+    }
+    if (patch.manualSellOrderType === "FAK" || patch.manualSellOrderType === "FOK") {
+      this.config.manualSellOrderType = patch.manualSellOrderType;
+    }
     if (patch.manualShares != null) {
       const amount = Number(patch.manualShares);
       if (this.config.manualOrderUnit === "usdc") {
@@ -1326,6 +1349,12 @@ export class LiveTradingService {
       );
       this.config.manipulationAreaStart = area.manipulationAreaStart;
       this.config.manipulationAreaEnd = area.manipulationAreaEnd;
+    }
+    if (patch.predictionRightCount != null) {
+      this.config.predictionRightCount = normalizePredictionCount(patch.predictionRightCount);
+    }
+    if (patch.predictionWrongCount != null) {
+      this.config.predictionWrongCount = normalizePredictionCount(patch.predictionWrongCount);
     }
     // Re-normalize amount if unit changed after amount in the same patch
     if (patch.manualOrderUnit != null && patch.manualShares == null) {
@@ -3636,7 +3665,17 @@ export class LiveTradingService {
     }
 
     try {
-      const result = await this.executeOrder(state, side, leg, size, "manual", sizeUnit);
+      const orderType =
+        leg === "buy" ? this.config.manualBuyOrderType : this.config.manualSellOrderType;
+      const result = await this.executeOrder(
+        state,
+        side,
+        leg,
+        size,
+        "manual",
+        sizeUnit,
+        orderType,
+      );
       if (result.ok) {
         if (leg === "buy") {
           if (!this.isLiveArmed()) {
@@ -4076,11 +4115,11 @@ export class LiveTradingService {
         leg,
         size,
         sizeUnit: leg === "sell" ? "shares" : sizeUnit,
-        orderType: leg === "buy" ? orderType : "FOK",
+        orderType,
         maxPrice: leg === "buy" ? maxPrice : undefined,
         state,
       });
-      const fillKind: FillOrderKind = leg === "buy" ? orderType : "FOK";
+      const fillKind: FillOrderKind = orderType;
       if (!result.success || result.fillPrice == null || result.fillShares == null) {
         if (leg === "buy" && result.ambiguous) {
           const reason = result.error ?? "ambiguous buy response";

@@ -380,6 +380,10 @@ export interface TradingConfig {
   /** Manual buy size (share count or USDC, depending on manualOrderUnit). */
   manualShares: number;
   manualOrderUnit: "shares" | "usdc";
+  /** Order type for manual quote Buy clicks. */
+  manualBuyOrderType: "FAK" | "FOK";
+  /** Order type for manual quote Sell clicks. */
+  manualSellOrderType: "FAK" | "FOK";
   /** Client-side manipulation detector (visual flag only; no orders). */
   manipulationDetector: boolean;
   /** Seconds the adverse UP/DOWN vs gap condition must hold. */
@@ -388,6 +392,10 @@ export interface TradingConfig {
   manipulationAreaStart: number;
   /** End of detection area as fraction of the market window [0, 1]. */
   manipulationAreaEnd: number;
+  /** Prediction detector: windows scored correct (per series). */
+  predictionRightCount: number;
+  /** Prediction detector: windows scored incorrect (per series). */
+  predictionWrongCount: number;
 }
 
 export interface LiveSidePosition {

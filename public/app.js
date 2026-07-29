@@ -3638,10 +3638,14 @@ async function onMarketSeriesChanged(nextSeries) {
     startTrading: false,
     manualOrderUnit: "shares",
     manualShares: 10,
+    manualBuyOrderType: "FOK",
+    manualSellOrderType: "FOK",
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
+    predictionRightCount: 0,
+    predictionWrongCount: 0,
   });
   resetManipulationDetector();
   void loadHeatmap();
@@ -5123,6 +5127,10 @@ function tradingConfigStorageKey(series = selectedSeries) {
   return userScopedStorageKey(base);
 }
 
+function normalizeManualOrderType(value) {
+  return value === "FAK" ? "FAK" : "FOK";
+}
+
 function normalizeManipulationSensitivity(value) {
   const n = Number(value);
   return Math.max(1, Math.min(120, Math.round(Number.isFinite(n) ? n : 5)));
@@ -5170,9 +5178,13 @@ function readLocalTradingConfig() {
       startTrading: Boolean(parsed.startTrading),
       manualOrderUnit,
       manualShares: normalizeManualAmount(parsed.manualShares, manualOrderUnit),
+      manualBuyOrderType: normalizeManualOrderType(parsed.manualBuyOrderType),
+      manualSellOrderType: normalizeManualOrderType(parsed.manualSellOrderType),
       manipulationDetector: Boolean(parsed.manipulationDetector),
       manipulationSensitivitySec: normalizeManipulationSensitivity(parsed.manipulationSensitivitySec),
       ...area,
+      predictionRightCount: normalizePredictionCount(parsed.predictionRightCount),
+      predictionWrongCount: normalizePredictionCount(parsed.predictionWrongCount),
     };
   } catch {
     return null;
@@ -5192,9 +5204,13 @@ function writeLocalTradingConfig(config) {
         startTrading: Boolean(config.startTrading),
         manualOrderUnit,
         manualShares: normalizeManualAmount(config.manualShares, manualOrderUnit),
+        manualBuyOrderType: normalizeManualOrderType(config.manualBuyOrderType),
+        manualSellOrderType: normalizeManualOrderType(config.manualSellOrderType),
         manipulationDetector: Boolean(config.manipulationDetector),
         manipulationSensitivitySec: normalizeManipulationSensitivity(config.manipulationSensitivitySec),
         ...area,
+        predictionRightCount: normalizePredictionCount(config.predictionRightCount),
+        predictionWrongCount: normalizePredictionCount(config.predictionWrongCount),
       }),
     );
   } catch {
@@ -5236,6 +5252,8 @@ function buildTradingConfigPatch(overrides = {}) {
   const startTradingInput = $("start-trading");
   const sharesInput = $("manual-shares");
   const unitSelect = $("manual-order-unit");
+  const buyTypeSelect = $("manual-buy-order-type");
+  const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const sensInput = $("manipulation-sensitivity");
   const manualOrderUnit = unitSelect?.value === "usdc" ? "usdc" : "shares";
@@ -5246,9 +5264,13 @@ function buildTradingConfigPatch(overrides = {}) {
     startTrading: Boolean(startTradingInput?.checked),
     manualOrderUnit,
     manualShares: normalizeManualAmount(sharesInput?.value, manualOrderUnit),
+    manualBuyOrderType: normalizeManualOrderType(buyTypeSelect?.value),
+    manualSellOrderType: normalizeManualOrderType(sellTypeSelect?.value),
     manipulationDetector: Boolean(manipInput?.checked),
     manipulationSensitivitySec: normalizeManipulationSensitivity(sensInput?.value),
     ...area,
+    predictionRightCount: normalizePredictionCount(manipDetectorRuntime.rightCount),
+    predictionWrongCount: normalizePredictionCount(manipDetectorRuntime.wrongCount),
     ...overrides,
   };
 }
@@ -5264,13 +5286,253 @@ function coalesceTradingConfig(serverConfig, localPatch) {
 
 const MANIP_FLASH_MS = 10000;
 const MANIP_SAMPLE_MAX = 600;
+const PREDICTION_RESOLVE_MAX_MS = 45000;
+const PREDICTION_RESOLVE_INTERVAL_MS = 2000;
+const PREDICTION_ICON_CHECK =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
+const PREDICTION_ICON_CROSS =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4 12 12M12 4 4 12"/></svg>';
+
 const manipDetectorRuntime = {
   samples: [],
   windowStart: null,
   flashTimer: null,
   flashUntilMs: 0,
   cooldownUntilMs: 0,
+  /** @type {"up"|"down"|null} */
+  predictionSide: null,
+  predictionWindowStart: null,
+  predictionSlug: null,
+  /** @type {"none"|"active"|"pending"|"right"|"wrong"} */
+  uiPhase: "none",
+  scoredWindowStart: null,
+  lastPrice: null,
+  lastPtb: null,
+  resolveTimer: null,
+  resolveStartedAt: 0,
+  resultClearTimer: null,
+  rightCount: 0,
+  wrongCount: 0,
+  statsPersistChain: Promise.resolve(),
 };
+
+const PREDICTION_RESULT_SHOW_MS = 5000;
+
+function normalizePredictionCount(value) {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n > 0 ? Math.min(1_000_000, n) : 0;
+}
+
+function stopPredictionResolveLoop() {
+  if (manipDetectorRuntime.resolveTimer != null) {
+    clearTimeout(manipDetectorRuntime.resolveTimer);
+    manipDetectorRuntime.resolveTimer = null;
+  }
+  manipDetectorRuntime.resolveStartedAt = 0;
+}
+
+function stopPredictionResultClearTimer() {
+  if (manipDetectorRuntime.resultClearTimer != null) {
+    clearTimeout(manipDetectorRuntime.resultClearTimer);
+    manipDetectorRuntime.resultClearTimer = null;
+  }
+}
+
+function syncPredictionStatusUi() {
+  const box = $("prediction-status-box");
+  const label = $("prediction-status-label");
+  const icon = $("prediction-status-icon");
+  if (!box || !label || !icon) return;
+
+  const side = manipDetectorRuntime.predictionSide;
+  const phase = manipDetectorRuntime.uiPhase;
+  box.classList.remove(
+    "is-none",
+    "is-up",
+    "is-down",
+    "is-pending",
+    "is-right",
+    "is-wrong",
+    "is-result-only",
+  );
+
+  if (phase === "none" || ((side !== "up" && side !== "down") && phase !== "right" && phase !== "wrong")) {
+    box.classList.add("is-none");
+    label.hidden = false;
+    label.innerHTML =
+      'Detecting<span class="prediction-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>';
+    icon.hidden = true;
+    icon.innerHTML = "";
+    return;
+  }
+
+  const sideText = side === "up" ? "UP" : "DOWN";
+  if (phase === "active") {
+    box.classList.add(side === "up" ? "is-up" : "is-down");
+    label.hidden = false;
+    label.textContent = `Prediction ${sideText}`;
+    icon.hidden = true;
+    icon.innerHTML = "";
+    return;
+  }
+  if (phase === "pending") {
+    box.classList.add("is-pending");
+    label.hidden = false;
+    label.textContent = `Prediction ${sideText} · Pending`;
+    icon.hidden = true;
+    icon.innerHTML = "";
+    return;
+  }
+  if (phase === "right" || phase === "wrong") {
+    box.classList.add(phase === "right" ? "is-right" : "is-wrong", "is-result-only");
+    label.hidden = true;
+    label.textContent = "";
+    icon.hidden = false;
+    icon.innerHTML = phase === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
+  }
+}
+
+function syncPredictionStatsUi() {
+  const rightEl = $("prediction-stats-right");
+  const wrongEl = $("prediction-stats-wrong");
+  if (rightEl) rightEl.textContent = String(manipDetectorRuntime.rightCount);
+  if (wrongEl) wrongEl.textContent = String(manipDetectorRuntime.wrongCount);
+}
+
+function persistPredictionStats() {
+  const patch = buildTradingConfigPatch({
+    predictionRightCount: manipDetectorRuntime.rightCount,
+    predictionWrongCount: manipDetectorRuntime.wrongCount,
+  });
+  writeLocalTradingConfig(patch);
+  manipDetectorRuntime.statsPersistChain = manipDetectorRuntime.statsPersistChain
+    .then(() => pushTradingConfig(patch))
+    .catch(() => null);
+  return manipDetectorRuntime.statsPersistChain;
+}
+
+function resolveWindowOutcomeFromPrices(closePrice, ptb) {
+  if (!Number.isFinite(closePrice) || !Number.isFinite(ptb)) return null;
+  return closePrice >= ptb ? "up" : "down";
+}
+
+function applyPredictionOutcome(outcome) {
+  const side = manipDetectorRuntime.predictionSide;
+  const windowStart = manipDetectorRuntime.predictionWindowStart;
+  if (side !== "up" && side !== "down") return;
+  if (windowStart == null || !Number.isFinite(windowStart)) return;
+  if (manipDetectorRuntime.scoredWindowStart === windowStart) return;
+  if (outcome !== "up" && outcome !== "down") return;
+
+  stopPredictionResolveLoop();
+  stopPredictionResultClearTimer();
+  manipDetectorRuntime.scoredWindowStart = windowStart;
+  const right = side === outcome;
+  if (right) manipDetectorRuntime.rightCount += 1;
+  else manipDetectorRuntime.wrongCount += 1;
+  manipDetectorRuntime.uiPhase = right ? "right" : "wrong";
+  syncPredictionStatusUi();
+  syncPredictionStatsUi();
+  void persistPredictionStats();
+  appendLogEntry({
+    level: "info",
+    source: "client",
+    message: `Prediction ${side.toUpperCase()} → ${outcome.toUpperCase()} (${right ? "right" : "wrong"})`,
+  });
+  manipDetectorRuntime.resultClearTimer = setTimeout(() => {
+    manipDetectorRuntime.resultClearTimer = null;
+    if (manipDetectorRuntime.uiPhase !== "right" && manipDetectorRuntime.uiPhase !== "wrong") {
+      return;
+    }
+    manipDetectorRuntime.predictionSide = null;
+    manipDetectorRuntime.predictionWindowStart = null;
+    manipDetectorRuntime.predictionSlug = null;
+    manipDetectorRuntime.uiPhase = "none";
+    syncPredictionStatusUi();
+  }, PREDICTION_RESULT_SHOW_MS);
+}
+
+async function pollPredictionOfficialOutcome() {
+  manipDetectorRuntime.resolveTimer = null;
+  if (manipDetectorRuntime.uiPhase !== "pending") return;
+  if (manipDetectorRuntime.predictionSide !== "up" && manipDetectorRuntime.predictionSide !== "down") {
+    return;
+  }
+
+  const slug = manipDetectorRuntime.predictionSlug;
+  if (slug) {
+    try {
+      const res = await fetch(`/api/window-resolution?slug=${encodeURIComponent(slug)}`);
+      if (res.ok) {
+        const body = await res.json();
+        if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
+          applyPredictionOutcome(body.outcome);
+          return;
+        }
+      }
+    } catch {
+      // keep polling / fall back
+    }
+  }
+
+  const elapsed = Date.now() - manipDetectorRuntime.resolveStartedAt;
+  if (elapsed >= PREDICTION_RESOLVE_MAX_MS) {
+    const fallback = resolveWindowOutcomeFromPrices(
+      manipDetectorRuntime.lastPrice,
+      manipDetectorRuntime.lastPtb,
+    );
+    if (fallback) {
+      applyPredictionOutcome(fallback);
+      return;
+    }
+  }
+
+  manipDetectorRuntime.resolveTimer = setTimeout(() => {
+    void pollPredictionOfficialOutcome();
+  }, PREDICTION_RESOLVE_INTERVAL_MS);
+}
+
+function beginPredictionPending() {
+  if (manipDetectorRuntime.predictionSide !== "up" && manipDetectorRuntime.predictionSide !== "down") {
+    return;
+  }
+  if (manipDetectorRuntime.uiPhase === "pending" || manipDetectorRuntime.uiPhase === "right" || manipDetectorRuntime.uiPhase === "wrong") {
+    return;
+  }
+  if (manipDetectorRuntime.scoredWindowStart === manipDetectorRuntime.predictionWindowStart) {
+    return;
+  }
+  manipDetectorRuntime.uiPhase = "pending";
+  syncPredictionStatusUi();
+  stopPredictionResolveLoop();
+  manipDetectorRuntime.resolveStartedAt = Date.now();
+  manipDetectorRuntime.resolveTimer = setTimeout(() => {
+    void pollPredictionOfficialOutcome();
+  }, 400);
+}
+
+function clearPredictionForNewWindow() {
+  if (manipDetectorRuntime.uiPhase === "pending") return;
+  // Keep ✓/✕ visible for their timed window.
+  if (manipDetectorRuntime.uiPhase === "right" || manipDetectorRuntime.uiPhase === "wrong") return;
+  stopPredictionResolveLoop();
+  manipDetectorRuntime.predictionSide = null;
+  manipDetectorRuntime.predictionWindowStart = null;
+  manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.uiPhase = "none";
+  syncPredictionStatusUi();
+}
+
+function setActivePrediction(side, state) {
+  if (side !== "up" && side !== "down") return;
+  if (manipDetectorRuntime.predictionSide != null) return;
+  manipDetectorRuntime.predictionSide = side;
+  manipDetectorRuntime.predictionWindowStart = state?.windowStart ?? null;
+  manipDetectorRuntime.predictionSlug =
+    typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
+  manipDetectorRuntime.uiPhase = "active";
+  syncPredictionStatusUi();
+}
 
 function manipulationWindowDurationSec(state = windowState) {
   const ws = state?.windowStart;
@@ -5293,6 +5555,21 @@ function fmtManipAreaTime(frac, durationSec = manipulationWindowDurationSec()) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+/** Thumb diameter (px) — keep in sync with --manip-thumb-size in CSS. */
+const MANIP_THUMB_PX = 12;
+
+/** CSS left for thumb left-edge travel across (trackWidth - thumb). */
+function manipThumbLeftCss(frac) {
+  const f = Math.max(0, Math.min(1, Number(frac) || 0));
+  return `calc(${f} * (100% - ${MANIP_THUMB_PX}px))`;
+}
+
+/** CSS left for label centered under the thumb. */
+function manipThumbCenterCss(frac) {
+  const f = Math.max(0, Math.min(1, Number(frac) || 0));
+  return `calc(${f} * (100% - ${MANIP_THUMB_PX}px) + ${MANIP_THUMB_PX / 2}px)`;
+}
+
 function syncManipulationAreaUi() {
   const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
   manipAreaStart = area.manipulationAreaStart;
@@ -5303,14 +5580,22 @@ function syncManipulationAreaUi() {
   const endThumb = $("manipulation-area-end");
   const startLabel = $("manipulation-area-start-label");
   const endLabel = $("manipulation-area-end-label");
+  const span = Math.max(0, manipAreaEnd - manipAreaStart);
   if (range) {
-    range.style.left = `${manipAreaStart * 100}%`;
-    range.style.width = `${(manipAreaEnd - manipAreaStart) * 100}%`;
+    // Blue segment between thumb centers.
+    range.style.left = manipThumbCenterCss(manipAreaStart);
+    range.style.width = `calc(${span} * (100% - ${MANIP_THUMB_PX}px))`;
   }
-  if (startThumb) startThumb.style.left = `${manipAreaStart * 100}%`;
-  if (endThumb) endThumb.style.left = `${manipAreaEnd * 100}%`;
-  if (startLabel) startLabel.textContent = fmtManipAreaTime(manipAreaStart, durationSec);
-  if (endLabel) endLabel.textContent = fmtManipAreaTime(manipAreaEnd, durationSec);
+  if (startThumb) startThumb.style.left = manipThumbLeftCss(manipAreaStart);
+  if (endThumb) endThumb.style.left = manipThumbLeftCss(manipAreaEnd);
+  if (startLabel) {
+    startLabel.textContent = fmtManipAreaTime(manipAreaStart, durationSec);
+    startLabel.style.left = manipThumbCenterCss(manipAreaStart);
+  }
+  if (endLabel) {
+    endLabel.textContent = fmtManipAreaTime(manipAreaEnd, durationSec);
+    endLabel.style.left = manipThumbCenterCss(manipAreaEnd);
+  }
 }
 
 function syncManipulationSettingsEnabled(enabled) {
@@ -5321,7 +5606,7 @@ function syncManipulationSettingsEnabled(enabled) {
   const endThumb = $("manipulation-area-end");
   const on = Boolean(enabled);
   if (card) card.classList.toggle("is-disabled", !on);
-  if (label) label.textContent = on ? "Detector · On" : "Detector · Off";
+  if (label) label.textContent = on ? "Prediction · On" : "Prediction · Off";
   if (sensInput) sensInput.disabled = !on;
   if (startThumb) startThumb.disabled = !on;
   if (endThumb) endThumb.disabled = !on;
@@ -5340,10 +5625,20 @@ function resetManipulationDetector() {
   manipDetectorRuntime.samples = [];
   manipDetectorRuntime.windowStart = null;
   manipDetectorRuntime.cooldownUntilMs = 0;
+  stopPredictionResolveLoop();
+  stopPredictionResultClearTimer();
+  manipDetectorRuntime.predictionSide = null;
+  manipDetectorRuntime.predictionWindowStart = null;
+  manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.uiPhase = "none";
+  manipDetectorRuntime.scoredWindowStart = null;
+  manipDetectorRuntime.lastPrice = null;
+  manipDetectorRuntime.lastPtb = null;
   clearManipulationFlash();
+  syncPredictionStatusUi();
 }
 
-function triggerManipulationFlash(state) {
+function triggerManipulationFlash(state, predictionSide) {
   const wrap = $("price-graph-wrap");
   if (!wrap) return;
   const now = Date.now();
@@ -5353,6 +5648,10 @@ function triggerManipulationFlash(state) {
       : now + MANIP_FLASH_MS;
   const duration = Math.max(0, Math.min(MANIP_FLASH_MS, windowEndMs - now));
   if (duration <= 0) return;
+
+  if (predictionSide === "up" || predictionSide === "down") {
+    setActivePrediction(predictionSide, state);
+  }
 
   wrap.classList.add("price-graph-wrap--manipulation");
   if (manipDetectorRuntime.flashTimer != null) clearTimeout(manipDetectorRuntime.flashTimer);
@@ -5385,17 +5684,66 @@ function isInManipulationArea(state, areaStart, areaEnd) {
 function tickManipulationDetector(state) {
   if (!state) return;
 
+  if (
+    Number.isFinite(state.assetPrice) &&
+    Number.isFinite(state.prevCloseAsset) &&
+    (
+      state.windowStart === manipDetectorRuntime.windowStart ||
+      state.windowStart === manipDetectorRuntime.predictionWindowStart
+    )
+  ) {
+    manipDetectorRuntime.lastPrice = state.assetPrice;
+    manipDetectorRuntime.lastPtb = state.prevCloseAsset;
+  }
+
   if (state.windowStart !== manipDetectorRuntime.windowStart) {
+    const prevStart = manipDetectorRuntime.windowStart;
+    if (
+      prevStart != null &&
+      manipDetectorRuntime.predictionWindowStart === prevStart &&
+      manipDetectorRuntime.uiPhase === "active"
+    ) {
+      beginPredictionPending();
+    } else if (manipDetectorRuntime.uiPhase !== "pending") {
+      // Keep Pending until official outcome; otherwise reset for the new window.
+      clearPredictionForNewWindow();
+    }
     manipDetectorRuntime.windowStart = state.windowStart ?? null;
     manipDetectorRuntime.samples = [];
+    if (
+      manipDetectorRuntime.uiPhase !== "pending" &&
+      Number.isFinite(state.assetPrice) &&
+      Number.isFinite(state.prevCloseAsset)
+    ) {
+      manipDetectorRuntime.lastPrice = state.assetPrice;
+      manipDetectorRuntime.lastPtb = state.prevCloseAsset;
+    }
     clearManipulationFlash();
   }
 
   const nowMs = Date.now();
   if (state.windowEnd != null && Number.isFinite(state.windowEnd) && nowMs >= state.windowEnd * 1000) {
+    if (
+      manipDetectorRuntime.predictionWindowStart === state.windowStart &&
+      manipDetectorRuntime.uiPhase === "active"
+    ) {
+      if (Number.isFinite(state.assetPrice)) manipDetectorRuntime.lastPrice = state.assetPrice;
+      if (Number.isFinite(state.prevCloseAsset)) manipDetectorRuntime.lastPtb = state.prevCloseAsset;
+      beginPredictionPending();
+    }
     if (manipDetectorRuntime.flashUntilMs > 0) clearManipulationFlash();
     manipDetectorRuntime.samples = [];
     return;
+  }
+
+  if (
+    !manipDetectorRuntime.predictionSlug &&
+    typeof state.slug === "string" &&
+    state.slug.trim() &&
+    (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending") &&
+    manipDetectorRuntime.predictionWindowStart === state.windowStart
+  ) {
+    manipDetectorRuntime.predictionSlug = state.slug.trim();
   }
 
   if (!Boolean($("manipulation-detector")?.checked)) {
@@ -5444,11 +5792,11 @@ function tickManipulationDetector(state) {
 
   if (baseline.gap > 0) {
     if (gap >= baseline.gap && upBuy < baseline.upBuy && downBuy > baseline.downBuy) {
-      triggerManipulationFlash(state);
+      triggerManipulationFlash(state, "down");
     }
   } else if (baseline.gap < 0) {
     if (gap <= baseline.gap && upBuy > baseline.upBuy && downBuy < baseline.downBuy) {
-      triggerManipulationFlash(state);
+      triggerManipulationFlash(state, "up");
     }
   }
 }
@@ -5466,8 +5814,10 @@ function bindManipulationAreaSlider() {
 
   const fracFromEvent = (event) => {
     const rect = track.getBoundingClientRect();
-    if (rect.width <= 0) return 0;
-    return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const travel = rect.width - MANIP_THUMB_PX;
+    if (travel <= 0) return 0;
+    // Map pointer to thumb-center travel so edges flush at 0% / 100%.
+    return Math.max(0, Math.min(1, (event.clientX - rect.left - MANIP_THUMB_PX / 2) / travel));
   };
 
   const onMove = (event) => {
@@ -5506,11 +5856,15 @@ function applyTradingConfigToUi(config) {
   const autoTradeInput = $("auto-trade");
   const useScheduleInput = $("use-schedule");
   const startTradingInput = $("start-trading");
+  const buyTypeSelect = $("manual-buy-order-type");
+  const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const sensInput = $("manipulation-sensitivity");
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
   if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
   if (startTradingInput) startTradingInput.checked = Boolean(config.startTrading);
+  if (buyTypeSelect) buyTypeSelect.value = normalizeManualOrderType(config.manualBuyOrderType);
+  if (sellTypeSelect) sellTypeSelect.value = normalizeManualOrderType(config.manualSellOrderType);
   if (manipInput) manipInput.checked = Boolean(config.manipulationDetector);
   if (sensInput) {
     sensInput.value = String(
@@ -5525,6 +5879,10 @@ function applyTradingConfigToUi(config) {
   manipAreaEnd = area.manipulationAreaEnd;
   syncManipulationAreaUi();
   syncManipulationSettingsEnabled(Boolean(config.manipulationDetector));
+  manipDetectorRuntime.rightCount = normalizePredictionCount(config.predictionRightCount);
+  manipDetectorRuntime.wrongCount = normalizePredictionCount(config.predictionWrongCount);
+  syncPredictionStatsUi();
+  syncPredictionStatusUi();
   syncWalletControls(config);
 }
 
@@ -5534,6 +5892,8 @@ function bindTradeToggles() {
   const startTradingInput = $("start-trading");
   const sharesInput = $("manual-shares");
   const unitSelect = $("manual-order-unit");
+  const buyTypeSelect = $("manual-buy-order-type");
+  const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const sensInput = $("manipulation-sensitivity");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
@@ -5616,7 +5976,7 @@ function bindTradeToggles() {
     appendLogEntry({
       level: "info",
       source: "client",
-      message: manipInput.checked ? "Detector enabled" : "Detector disabled",
+      message: manipInput.checked ? "Prediction enabled" : "Prediction disabled",
     });
   });
 
@@ -5647,6 +6007,34 @@ function bindTradeToggles() {
     const patch = buildTradingConfigPatch({ manualShares, manualOrderUnit });
     writeLocalTradingConfig(patch);
     await pushTradingConfig(patch);
+  });
+
+  const persistManualOrderTypes = async () => {
+    const patch = buildTradingConfigPatch({
+      manualBuyOrderType: normalizeManualOrderType(buyTypeSelect?.value),
+      manualSellOrderType: normalizeManualOrderType(sellTypeSelect?.value),
+    });
+    writeLocalTradingConfig(patch);
+    const config = await pushTradingConfig(patch);
+    applyTradingConfigToUi(coalesceTradingConfig(config, patch) ?? patch);
+  };
+  buyTypeSelect?.addEventListener("change", () => {
+    void persistManualOrderTypes();
+  });
+  sellTypeSelect?.addEventListener("change", () => {
+    void persistManualOrderTypes();
+  });
+
+  $("prediction-stats-reset")?.addEventListener("click", () => {
+    manipDetectorRuntime.rightCount = 0;
+    manipDetectorRuntime.wrongCount = 0;
+    syncPredictionStatsUi();
+    void persistPredictionStats();
+    appendLogEntry({
+      level: "info",
+      source: "client",
+      message: "Prediction stats reset",
+    });
   });
 
 }

@@ -7,15 +7,18 @@ Live trading console for the selected series.
 | Control | Meaning |
 |---------|---------|
 | **Allow trade** | Off = demo; on = real orders when other gates pass |
+| **Manual Override** | Per-series **Buy** and **Sell** dropdowns (`FAK` or `FOK`, default **FOK**). Used when you click the quote Buy/Sell boxes (not phase Auto Trade) |
 | **Auto Trade** | Bot may trade using the active setup; label shows **· On** / **· Off** |
-| **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup; label shows **· On** / **· Off** |
 | **Size** | Manual / fallback order size |
-| **Detector** | Manipulation detector. Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Duration (Sec)** and **Window area** stay visible in the same control; they are disabled (muted) when Off |
+| **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup; label shows **· On** / **· Off** |
+| **Prediction** | Manipulation / prediction detector. Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Duration (Sec)** and **Window area** stay visible in the same control; they are disabled (muted) when Off. Active window span between the handles is shown in blue |
 
 | Setting | Meaning |
 |---------|---------|
 | **Duration (Sec)** | Seconds the condition must hold (compare now vs that many seconds ago) |
-| **Window area** | Dual-handle bar over the market window timeline (`0:00` → window length, e.g. `5:00` for a 5m market). Only the span between the handles is watched |
+| **Window area** | Dual-handle bar over the market window timeline. Time labels under each handle move with the dots (`0:00` → window length, e.g. `5:00` for a 5m market). Only the span between the handles is watched |
+| **Prediction** | Full-width status under Window area: **Detecting…** (animated dots) → **Prediction UP/DOWN** on trigger (same green/red fill as triggered Buy quote boxes). Window end → **Pending**, then only a ✓ / ✕ for **5 seconds** after the official outcome. Info icon on the switcher explains the Gap vs UP/DOWN Buy trigger |
+| **Right / Wrong** | Per-series counts updated when the official outcome arrives. **Reset** clears both counts for the selected market |
 
 **Trigger:** while Gap stays the same or stronger in its direction, UP Buy gets cheaper and DOWN Buy gets more expensive (mirror for a negative Gap). On trigger, the price graph container border turns **blue** for up to **10 seconds**, or until the window ends — whichever is sooner.
 
@@ -40,7 +43,7 @@ Field reference: [Setups & phases](doc:setups-phases).
 
 ## Quotes, positions, log
 
-- Up/Down quotes; click to place manual orders when trading is armed
+- Up/Down quotes; click to place manual orders when trading is armed (order type from Trade → **Manual Override**)
 - Live and Demo position cards (buy times in UTC)
 - Log of bot / order activity
 

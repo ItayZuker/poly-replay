@@ -1027,6 +1027,27 @@ app.get("/api/window", async (req, res) => {
   }
 });
 
+/** Official Polymarket/Gamma resolution for a finished market window (by slug). */
+app.get("/api/window-resolution", async (req, res) => {
+  try {
+    const slug = String(req.query.slug || "").trim();
+    if (!slug) {
+      res.status(400).json({ error: "slug required" });
+      return;
+    }
+    const { fetchGammaWindowResolution } = await import("./gamma-window-resolution.js");
+    const resolution = await fetchGammaWindowResolution(slug);
+    if (!resolution?.outcome) {
+      res.json({ resolved: false });
+      return;
+    }
+    res.json({ resolved: true, outcome: resolution.outcome });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: message });
+  }
+});
+
 app.get("/api/sim/setup", (_req, res) => {
   res.json(simulatorService.getSetup());
 });
