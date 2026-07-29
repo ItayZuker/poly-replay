@@ -2987,6 +2987,8 @@ function positionStatusLabel(status) {
   if (status === "sold") return "Sold";
   if (status === "win") return "Win";
   if (status === "loss") return "Loss";
+  if (status === "right") return "Prediction was right";
+  if (status === "wrong") return "Prediction was wrong";
   return status || "—";
 }
 
@@ -3000,29 +3002,44 @@ function formatPositionBuyTime(buyAt) {
   return date.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" });
 }
 
+function isPredictionPositionCard(card) {
+  return card?.kind === "prediction" || String(card?.id || "").startsWith("prediction:");
+}
+
 function renderPositionCard(card) {
   const sideClass = card.side === "up" ? "is-up" : "is-down";
   const status = card.status || "open";
-  const isDemo = card.demo === true || String(card.id || "").startsWith("demo:");
-  const settled = status === "sold" || status === "win" || status === "loss";
-  const plPending = settled && !isDemo && card.confirmed !== true;
+  const isPrediction = isPredictionPositionCard(card);
+  const isDemo = !isPrediction && (card.demo === true || String(card.id || "").startsWith("demo:"));
+  const settled =
+    status === "sold" ||
+    status === "win" ||
+    status === "loss" ||
+    status === "right" ||
+    status === "wrong";
+  const plPending = !isPrediction && settled && !isDemo && card.confirmed !== true;
   // Open and waiting-for-settlement cards render the same skeleton:
   // all labels present, all values empty, so the card height never changes.
-  const isLoading = !isDemo && (status === "open" || plPending);
+  const isLoading =
+    isPrediction
+      ? status === "open"
+      : !isDemo && (status === "open" || plPending);
 
   const buyTime = formatPositionBuyTime(card.buyAt);
+  const timeLabel = isPrediction ? "Trigger" : "Buy";
   const buyLabel = buyTime
-    ? `Buy <span class="position-card-buy-time">${buyTime}</span>`
-    : "Buy";
+    ? `${timeLabel} <span class="position-card-buy-time">${buyTime}</span>`
+    : timeLabel;
   // Buy fill is known at trigger time — show it immediately, even while the
-  // card is still open / waiting for confirmation.
+  // card is still open / waiting for confirmation. Prediction cards have no fill.
   const hasBuyFill =
+    !isPrediction &&
     card.shares != null && Number.isFinite(Number(card.shares)) &&
     card.buyPrice != null && Number.isFinite(Number(card.buyPrice));
   const buyValue = hasBuyFill ? `${card.shares} @ ${fmtPriceCents(card.buyPrice)}` : "";
   let detailHtml = `<div class="position-card-row"><span>${buyLabel}</span><strong>${buyValue}</strong></div>`;
 
-  if (status === "sold") {
+  if (!isPrediction && status === "sold") {
     detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${isLoading ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
   } else {
     const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
@@ -3030,7 +3047,10 @@ function renderPositionCard(card) {
     detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${isLoading ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
   }
 
-  if (isLoading) {
+  if (isPrediction) {
+    // Keep card height aligned with trade cards (empty P/L slot).
+    detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
+  } else if (isLoading) {
     detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
   } else {
     const hasPl = card.pl != null && Number.isFinite(card.pl);
@@ -3043,9 +3063,12 @@ function renderPositionCard(card) {
     ? "Waiting"
     : positionStatusLabel(status);
   const sourceNote = isDemo ? "Demo" : isLoading ? "Pending…" : "Confirmed";
-  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isLoading ? " is-loading" : ""}" data-position-id="${card.id}">
+  const sideLabel = isPrediction
+    ? `Prediction ${(card.side || "").toUpperCase()}`
+    : `Bet ${(card.side || "").toUpperCase()}`;
+  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${isLoading ? " is-loading" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
-      <span class="position-card-side ${sideClass}">Bet ${(card.side || "").toUpperCase()}</span>
+      <span class="position-card-side ${sideClass}">${sideLabel}</span>
       <span class="position-card-status">${statusLabel}</span>
     </div>
     ${detailHtml}
@@ -3054,14 +3077,185 @@ function renderPositionCard(card) {
 }
 
 const DEMO_POSITION_CARDS_KEY = "poly-real:demo-position-cards";
+const PREDICTION_POSITION_CARDS_KEY = "poly-prediction-position-cards";
 const POSITIONS_VIEW_KEY = "poly-real:positions-view";
 const APP_PAGE_KEY = "poly-real:app-page";
 const SCHEDULE_VIEW_KEY = "poly-real:schedule-view";
 
 let positionsView = "live";
 let demoPositionCards = [];
+/** @type {Array<Record<string, unknown>>} */
+let predictionPositionCards = [];
 let lastPositionsFingerprint = "";
 let lastDemoLastWindowKey = null;
+
+function predictionPositionCardsStorageKey(series = selectedSeries) {
+  return userScopedStorageKey(
+    `${PREDICTION_POSITION_CARDS_KEY}:${series || "btc-5m"}`,
+  );
+}
+
+function predictionCardId(series, windowStart) {
+  return `prediction:${series || "btc-5m"}:${windowStart}`;
+}
+
+function persistPredictionPositionCards() {
+  try {
+    localStorage.setItem(
+      predictionPositionCardsStorageKey(),
+      JSON.stringify(predictionPositionCards.slice(0, MAX_POSITION_CARDS)),
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function loadPredictionPositionCards(series = selectedSeries) {
+  try {
+    const raw = localStorage.getItem(predictionPositionCardsStorageKey(series));
+    if (!raw) {
+      predictionPositionCards = [];
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    predictionPositionCards = Array.isArray(parsed)
+      ? parsed
+          .filter((c) => c && typeof c === "object" && c.id && (c.side === "up" || c.side === "down"))
+          .map((c) => ({
+            ...c,
+            kind: "prediction",
+            series: c.series || series,
+            status:
+              c.status === "right" || c.status === "wrong" || c.status === "open"
+                ? c.status
+                : "open",
+            confirmed: c.status === "right" || c.status === "wrong",
+          }))
+          .slice(0, MAX_POSITION_CARDS)
+      : [];
+  } catch {
+    predictionPositionCards = [];
+  }
+}
+
+function refreshPositionsForPrediction() {
+  lastPositionsFingerprint = "";
+  updatePositionsPanel(windowState);
+}
+
+function upsertPredictionPositionCard(card, { refresh = true } = {}) {
+  if (!card?.id) return;
+  const next = {
+    ...card,
+    kind: "prediction",
+    series: card.series || selectedSeries,
+  };
+  const idx = predictionPositionCards.findIndex((c) => c.id === next.id);
+  if (idx >= 0) {
+    predictionPositionCards[idx] = { ...predictionPositionCards[idx], ...next };
+  } else {
+    predictionPositionCards.unshift(next);
+  }
+  if (predictionPositionCards.length > MAX_POSITION_CARDS) {
+    predictionPositionCards.length = MAX_POSITION_CARDS;
+  }
+  persistPredictionPositionCards();
+  if (refresh) refreshPositionsForPrediction();
+}
+
+function ensurePredictionPositionCard(
+  { side, windowStart, windowEnd, slug, buyAt },
+  { refresh = true } = {},
+) {
+  if (side !== "up" && side !== "down") return null;
+  if (windowStart == null || !Number.isFinite(windowStart)) return null;
+  const series = selectedSeries || "btc-5m";
+  const id = predictionCardId(series, windowStart);
+  const existing = predictionPositionCards.find((c) => c.id === id);
+  if (existing && (existing.status === "right" || existing.status === "wrong")) {
+    return existing;
+  }
+  upsertPredictionPositionCard(
+    {
+      id,
+      windowKey: `${series}:${windowStart}`,
+      series,
+      side,
+      buyAt:
+        buyAt != null && Number.isFinite(buyAt)
+          ? buyAt
+          : existing?.buyAt != null && Number.isFinite(existing.buyAt)
+            ? existing.buyAt
+            : Date.now() / 1000,
+      status: "open",
+      confirmed: false,
+      slug: typeof slug === "string" && slug.trim() ? slug.trim() : existing?.slug || null,
+      windowEnd:
+        windowEnd != null && Number.isFinite(windowEnd)
+          ? windowEnd
+          : existing?.windowEnd ?? null,
+    },
+    { refresh },
+  );
+  return predictionPositionCards.find((c) => c.id === id) || null;
+}
+
+function settlePredictionPositionCard(side, windowStart, outcome) {
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (outcome !== "up" && outcome !== "down") return false;
+  const series = selectedSeries || "btc-5m";
+  const id = predictionCardId(series, windowStart);
+  let card = predictionPositionCards.find((c) => c.id === id);
+  if (!card) {
+    ensurePredictionPositionCard({ side, windowStart }, { refresh: false });
+    card = predictionPositionCards.find((c) => c.id === id);
+  }
+  if (!card) return false;
+  if (card.status === "right" || card.status === "wrong") return false;
+  const right = (side === "up" || side === "down" ? side : card.side) === outcome;
+  upsertPredictionPositionCard({
+    ...card,
+    side: side === "up" || side === "down" ? side : card.side,
+    status: right ? "right" : "wrong",
+    outcome,
+    confirmed: true,
+  });
+  return true;
+}
+
+function syncPredictionCardsFromRuntime() {
+  const side = manipDetectorRuntime.predictionSide;
+  const windowStart = manipDetectorRuntime.predictionWindowStart;
+  if (
+    (side === "up" || side === "down") &&
+    windowStart != null &&
+    Number.isFinite(windowStart) &&
+    (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending")
+  ) {
+    ensurePredictionPositionCard(
+      {
+        side,
+        windowStart,
+        windowEnd: manipDetectorRuntime.predictionWindowEnd,
+        slug: manipDetectorRuntime.predictionSlug,
+      },
+      { refresh: false },
+    );
+  }
+  for (const job of manipDetectorRuntime.backgroundResolutions) {
+    if (!job || (job.side !== "up" && job.side !== "down")) continue;
+    if (job.windowStart == null || !Number.isFinite(job.windowStart)) continue;
+    ensurePredictionPositionCard(
+      {
+        side: job.side,
+        windowStart: job.windowStart,
+        slug: job.slug,
+      },
+      { refresh: false },
+    );
+  }
+  refreshPositionsForPrediction();
+}
 
 function loadPositionsViewPref() {
   try {
@@ -3284,10 +3478,38 @@ function positionsFingerprint(cards) {
     cards
       .map(
         (c) =>
-          `${c.id}:${c.status}:${c.shares}:${c.buyPrice}:${c.buyCost}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.confirmed ? 1 : 0}`,
+          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}`,
       )
       .join("|")
   );
+}
+
+function shouldShowPredictionCardsInPositions() {
+  // Live always includes Prediction cards. Demo includes them while Prediction is On.
+  if (positionsView === "live") return true;
+  return Boolean($("manipulation-detector")?.checked);
+}
+
+function mergePredictionCardsIntoPositions(tradeCards, series) {
+  const trades = Array.isArray(tradeCards)
+    ? tradeCards.filter((c) => !c?.series || c.series === series)
+    : [];
+  if (!shouldShowPredictionCardsInPositions()) {
+    return trades.slice(0, MAX_POSITION_CARDS);
+  }
+  const preds = predictionPositionCards.filter((c) => !c?.series || c.series === series);
+  if (preds.length === 0) return trades.slice(0, MAX_POSITION_CARDS);
+  return [...preds, ...trades]
+    .sort((a, b) => {
+      const ta = Number(a?.buyAt);
+      const tb = Number(b?.buyAt);
+      const aOk = Number.isFinite(ta);
+      const bOk = Number.isFinite(tb);
+      if (aOk && bOk && tb !== ta) return tb - ta;
+      if (aOk !== bOk) return aOk ? -1 : 1;
+      return 0;
+    })
+    .slice(0, MAX_POSITION_CARDS);
 }
 
 function syncPositionsScrollable() {
@@ -3310,10 +3532,7 @@ function updatePositionsPanel(state) {
     positionsView === "demo"
       ? demoPositionCards
       : state?.trading?.positionCards;
-  const cards = (Array.isArray(rawCards)
-    ? rawCards.filter((c) => !c?.series || c.series === series)
-    : []
-  ).slice(0, MAX_POSITION_CARDS);
+  const cards = mergePredictionCardsIntoPositions(rawCards, series);
 
   const fingerprint = positionsFingerprint(cards);
   if (fingerprint === lastPositionsFingerprint) return;
@@ -3676,7 +3895,9 @@ async function onMarketSeriesChanged(nextSeries) {
     predictionWrongCount: 0,
   });
   resetManipulationDetector();
+  loadPredictionPositionCards(selectedSeries);
   if (isPredictionTriggerHost()) restorePredictionRuntime();
+  else syncPredictionCardsFromRuntime();
   void loadHeatmap();
   if (walletsListOpen) void loadTraderWalletsList();
   if (window.SchedulePlacements?.loadPlacements) {
@@ -5615,9 +5836,15 @@ function restoreBackgroundResolutions(rawList) {
 function restorePredictionRuntime() {
   try {
     const raw = localStorage.getItem(predictionRuntimeStorageKey());
-    if (!raw) return;
+    if (!raw) {
+      syncPredictionCardsFromRuntime();
+      return;
+    }
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return;
+    if (!parsed || typeof parsed !== "object") {
+      syncPredictionCardsFromRuntime();
+      return;
+    }
 
     manipDetectorRuntime.scoredWindowStarts = normalizeScoredWindowStarts(
       parsed.scoredWindowStarts ?? parsed.scoredWindowStart,
@@ -5640,6 +5867,7 @@ function restorePredictionRuntime() {
     if (!side || windowStart == null || phase === "none") {
       syncPredictionStatusUi();
       persistPredictionRuntime();
+      syncPredictionCardsFromRuntime();
       return;
     }
 
@@ -5647,6 +5875,7 @@ function restorePredictionRuntime() {
     if (isPredictionWindowScored(windowStart)) {
       persistPredictionRuntime();
       syncPredictionStatusUi();
+      syncPredictionCardsFromRuntime();
       return;
     }
 
@@ -5668,6 +5897,7 @@ function restorePredictionRuntime() {
 
     if (phase === "active" && windowEndMs != null && nowMs >= windowEndMs) {
       beginPredictionPending();
+      syncPredictionCardsFromRuntime();
       return;
     }
 
@@ -5684,6 +5914,7 @@ function restorePredictionRuntime() {
         void pollPredictionOfficialOutcome();
       }, 400);
     }
+    syncPredictionCardsFromRuntime();
   } catch {
     // ignore corrupt storage
   }
@@ -5799,6 +6030,7 @@ function recordPredictionScore(side, windowStart, outcome, { showResultUi, sourc
   else manipDetectorRuntime.wrongCount += 1;
   syncPredictionStatsUi();
   void persistPredictionStats();
+  settlePredictionPositionCard(side, windowStart, outcome);
   appendLogEntry({
     level: "info",
     source: "client",
@@ -6035,6 +6267,12 @@ function beginPredictionPending() {
   stopPredictionResolveLoop();
   manipDetectorRuntime.resolveStartedAt = Date.now();
   persistPredictionRuntime();
+  ensurePredictionPositionCard({
+    side: manipDetectorRuntime.predictionSide,
+    windowStart: manipDetectorRuntime.predictionWindowStart,
+    windowEnd: manipDetectorRuntime.predictionWindowEnd,
+    slug: manipDetectorRuntime.predictionSlug,
+  });
   manipDetectorRuntime.resolveTimer = setTimeout(() => {
     void pollPredictionOfficialOutcome();
   }, 400);
@@ -6093,6 +6331,13 @@ function setActivePrediction(side, state) {
   manipDetectorRuntime.uiPhase = "active";
   syncPredictionStatusUi();
   persistPredictionRuntime();
+  ensurePredictionPositionCard({
+    side,
+    windowStart,
+    windowEnd: manipDetectorRuntime.predictionWindowEnd,
+    slug: manipDetectorRuntime.predictionSlug,
+    buyAt: Date.now() / 1000,
+  });
   return true;
 }
 
@@ -6542,11 +6787,15 @@ function bindTradeToggles() {
 
   // Restore immediately from localStorage, then sync from server
   applyTradingConfigToUi(readLocalTradingConfig());
+  loadPredictionPositionCards();
   if (isPredictionTriggerHost()) restorePredictionRuntime();
+  else syncPredictionCardsFromRuntime();
+  refreshPositionsForPrediction();
   void loadTradingConfig().then((config) => {
     applyTradingConfigToUi(coalesceTradingConfig(config, readLocalTradingConfig()) ?? config);
     syncGraphSaveBtn(windowState);
     if (windowState) drawPriceChart(windowState);
+    refreshPositionsForPrediction();
   });
 
   bindManipulationAreaSlider();
@@ -6616,6 +6865,7 @@ function bindTradeToggles() {
       manipDetectorRuntime.samples = [];
       clearManipulationFlash();
     }
+    refreshPositionsForPrediction();
     await persistManipulationConfigPatch();
     appendLogEntry({
       level: "info",

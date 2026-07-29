@@ -5377,18 +5377,29 @@ body.is-row-resizing .panel-header-drag-handle {
   border-radius: 3px;
 }
 
-.position-card.is-win .position-card-status {
+.position-card.is-win .position-card-status,
+.position-card.is-right .position-card-status {
   color: #fff;
   background: var(--accent);
   padding: 2px 6px;
   border-radius: 3px;
 }
 
-.position-card.is-loss .position-card-status {
+.position-card.is-loss .position-card-status,
+.position-card.is-wrong .position-card-status {
   color: #fff;
   background: var(--down);
   padding: 2px 6px;
   border-radius: 3px;
+}
+
+.position-card.is-prediction .position-card-status {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 10px;
+  text-align: right;
+  line-height: 1.25;
+  max-width: 58%;
 }
 
 /* Open or waiting for Polymarket settlement — gray pulsing badge. */
