@@ -8,6 +8,11 @@ export interface PredictionDetectorConfig {
    * (UP Buy for Prediction DOWN, DOWN Buy for Prediction UP).
    */
   maxQuoteCents: number;
+  /**
+   * Min Buy price (¢) allowed when Duration starts on the cheapening side
+   * (same side as Max Quote). Must be ≤ Max Quote.
+   */
+  minQuoteCents: number;
   /** Minimum drop (¢) of that cheapening Buy over Duration. */
   shiftCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */
@@ -39,9 +44,26 @@ export function normalizePredictionMaxQuoteCents(value: unknown, fallback = 90):
   return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
 }
 
+export function normalizePredictionMinQuoteCents(value: unknown, fallback = 70): number {
+  const n = Math.round(Number(value));
+  return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
+}
+
 export function normalizePredictionShiftCents(value: unknown, fallback = 5): number {
   const n = Math.round(Number(value));
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
+}
+
+/** Normalize Min/Max Quote band; clamps Min so it never exceeds Max. */
+export function normalizePredictionQuoteBand(
+  minRaw: unknown,
+  maxRaw: unknown,
+  fallbacks: { min?: number; max?: number } = {},
+): { minQuoteCents: number; maxQuoteCents: number } {
+  const maxQuoteCents = normalizePredictionMaxQuoteCents(maxRaw, fallbacks.max ?? 90);
+  let minQuoteCents = normalizePredictionMinQuoteCents(minRaw, fallbacks.min ?? 70);
+  if (minQuoteCents > maxQuoteCents) minQuoteCents = maxQuoteCents;
+  return { minQuoteCents, maxQuoteCents };
 }
 
 export function normalizePredictionArea(
@@ -70,9 +92,10 @@ export function normalizePredictionDetectorConfig(
   raw: Partial<PredictionDetectorConfig> | null | undefined,
 ): PredictionDetectorConfig {
   const area = normalizePredictionArea(raw?.areaStart, raw?.areaEnd);
+  const quotes = normalizePredictionQuoteBand(raw?.minQuoteCents, raw?.maxQuoteCents);
   return {
     sensitivitySec: normalizePredictionSensitivitySec(raw?.sensitivitySec),
-    maxQuoteCents: normalizePredictionMaxQuoteCents(raw?.maxQuoteCents),
+    ...quotes,
     shiftCents: normalizePredictionShiftCents(raw?.shiftCents),
     ...area,
   };
@@ -106,8 +129,9 @@ function isInArea(
 }
 
 /**
- * On top of Gap/adverse-buy rules: the cheapening Buy must be ≤ Max Quote when
- * Duration starts, and must drop by at least Shift over Duration.
+ * On top of Gap/adverse-buy rules: the cheapening Buy must be within
+ * [Min Quote, Max Quote] when Duration starts, and must drop by at least Shift
+ * over Duration.
  */
 export function meetsPredictionMaxQuoteAndShift(
   predictionSide: WindowOutcome,
@@ -115,15 +139,21 @@ export function meetsPredictionMaxQuoteAndShift(
   now: { upBuy: number; downBuy: number },
   maxQuoteCents: number,
   shiftCents: number,
+  minQuoteCents = 70,
 ): boolean {
-  const maxP = maxQuoteCents / 100;
+  const { minQuoteCents: minQ, maxQuoteCents: maxQ } = normalizePredictionQuoteBand(
+    minQuoteCents,
+    maxQuoteCents,
+  );
+  const minP = minQ / 100;
+  const maxP = maxQ / 100;
   const shiftP = shiftCents / 100;
   if (predictionSide === "down") {
-    if (!(baseline.upBuy <= maxP + 1e-12)) return false;
+    if (!(baseline.upBuy >= minP - 1e-12 && baseline.upBuy <= maxP + 1e-12)) return false;
     return now.upBuy <= baseline.upBuy - shiftP + 1e-12;
   }
   if (predictionSide === "up") {
-    if (!(baseline.downBuy <= maxP + 1e-12)) return false;
+    if (!(baseline.downBuy >= minP - 1e-12 && baseline.downBuy <= maxP + 1e-12)) return false;
     return now.downBuy <= baseline.downBuy - shiftP + 1e-12;
   }
   return false;
@@ -199,6 +229,7 @@ export function evaluateWindowPrediction(
           nowBuys,
           config.maxQuoteCents,
           config.shiftCents,
+          config.minQuoteCents,
         )
       ) {
         return { side: "down", triggeredAtMs: nowMs };
@@ -214,6 +245,7 @@ export function evaluateWindowPrediction(
           nowBuys,
           config.maxQuoteCents,
           config.shiftCents,
+          config.minQuoteCents,
         )
       ) {
         return { side: "up", triggeredAtMs: nowMs };

@@ -515,8 +515,9 @@
                         the set Duration inside the Trigger Area.
                       </p>
                       <p>
-                        On top of that: when Duration starts, the cheapening Buy must be at or below
-                        Max Quote (¢), and over Duration it must drop by at least Shift (¢).
+                        On top of that: when Duration starts, the cheapening Buy must be between
+                        Min Quote (¢) and Max Quote (¢), and over Duration it must drop by at least
+                        Shift (¢).
                       </p>
                     </div>
                   </div>
@@ -534,6 +535,22 @@
                           value="90"
                           inputmode="numeric"
                           aria-label="Max Buy price in cents when Duration starts on the cheapening side"
+                        />
+                      </div>
+                    </div>
+                    <div class="manipulation-detector-row">
+                      <label class="wallet-control-label" for="prediction-min-quote">Min Quote (¢)</label>
+                      <div class="schedule-replay-latency-field">
+                        <input
+                          type="number"
+                          id="prediction-min-quote"
+                          class="schedule-replay-latency-input"
+                          min="1"
+                          max="99"
+                          step="1"
+                          value="70"
+                          inputmode="numeric"
+                          aria-label="Min Buy price in cents when Duration starts on the cheapening side"
                         />
                       </div>
                     </div>
@@ -1186,6 +1203,25 @@
                         inputmode="numeric"
                         tabindex="-1"
                         title="Replay Prediction: max Buy price (¢) when Duration starts on the cheapening side."
+                      />
+                    </div>
+                  </div>
+                  <div class="schedule-replay-latency">
+                    <label class="schedule-replay-latency-label" for="replay-prediction-min-quote"
+                      >Min Quote (¢)</label
+                    >
+                    <div class="schedule-replay-latency-field">
+                      <input
+                        id="replay-prediction-min-quote"
+                        class="schedule-replay-latency-input"
+                        type="number"
+                        min="1"
+                        max="99"
+                        step="1"
+                        value="70"
+                        inputmode="numeric"
+                        tabindex="-1"
+                        title="Replay Prediction: min Buy price (¢) when Duration starts on the cheapening side."
                       />
                     </div>
                   </div>

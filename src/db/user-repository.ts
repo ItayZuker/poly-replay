@@ -103,6 +103,7 @@ function defaultTrading(): TradingConfig {
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     predictionMaxQuoteCents: 90,
+    predictionMinQuoteCents: 70,
     predictionShiftCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
@@ -119,6 +120,30 @@ function normalizePredictionCount(raw: unknown): number {
 function normalizePredictionMaxQuoteCents(raw: unknown, fallback = 90): number {
   const n = Math.round(Number(raw));
   return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
+}
+
+function normalizePredictionMinQuoteCents(raw: unknown, fallback = 70): number {
+  const n = Math.round(Number(raw));
+  return Math.max(1, Math.min(99, Number.isFinite(n) ? n : fallback));
+}
+
+function normalizePredictionQuoteBand(
+  minRaw: unknown,
+  maxRaw: unknown,
+  fallbacks: { min?: number; max?: number } = {},
+): { predictionMinQuoteCents: number; predictionMaxQuoteCents: number } {
+  const predictionMaxQuoteCents = normalizePredictionMaxQuoteCents(
+    maxRaw,
+    fallbacks.max ?? 90,
+  );
+  let predictionMinQuoteCents = normalizePredictionMinQuoteCents(
+    minRaw,
+    fallbacks.min ?? 70,
+  );
+  if (predictionMinQuoteCents > predictionMaxQuoteCents) {
+    predictionMinQuoteCents = predictionMaxQuoteCents;
+  }
+  return { predictionMinQuoteCents, predictionMaxQuoteCents };
 }
 
 function normalizePredictionShiftCents(raw: unknown, fallback = 5): number {
@@ -162,9 +187,13 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     1,
     Math.min(120, Math.round(Number.isFinite(sensRaw) ? sensRaw : base.manipulationSensitivitySec)),
   );
-  const predictionMaxQuoteCents = normalizePredictionMaxQuoteCents(
+  const quotes = normalizePredictionQuoteBand(
+    raw.predictionMinQuoteCents,
     raw.predictionMaxQuoteCents,
-    base.predictionMaxQuoteCents,
+    {
+      min: base.predictionMinQuoteCents,
+      max: base.predictionMaxQuoteCents,
+    },
   );
   const predictionShiftCents = normalizePredictionShiftCents(
     raw.predictionShiftCents,
@@ -184,7 +213,7 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
     manipulationSensitivitySec,
-    predictionMaxQuoteCents,
+    ...quotes,
     predictionShiftCents,
     ...area,
     predictionRightCount: normalizePredictionCount(raw.predictionRightCount),

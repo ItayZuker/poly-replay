@@ -393,6 +393,11 @@ export interface TradingConfig {
    * (UP Buy for Prediction DOWN, DOWN Buy for Prediction UP).
    */
   predictionMaxQuoteCents: number;
+  /**
+   * Min Buy price (¢) allowed when Duration starts on the cheapening side
+   * (same side as Max Quote). Must be ≤ Max Quote.
+   */
+  predictionMinQuoteCents: number;
   /** Minimum drop (¢) of that cheapening Buy over Duration (1–50). */
   predictionShiftCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */

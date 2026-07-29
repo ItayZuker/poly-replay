@@ -1501,6 +1501,27 @@ body {
   color: color-mix(in srgb, var(--muted) 65%, transparent);
 }
 
+/* While a Run is active, mute the Prediction switcher (already disabled in JS). */
+.schedule-replay-controls.is-locked .schedule-replay-prediction-head .switch-slider {
+  background: #21262d;
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-prediction-head .switch-slider::before {
+  background: #484f58;
+}
+
+.schedule-replay-controls.is-locked
+  .schedule-replay-prediction-head
+  input:checked
+  + .switch-slider {
+  background: #21262d;
+}
+
+.schedule-replay-controls.is-locked .schedule-replay-prediction-head {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .schedule-replay-prediction {
   display: flex;
   flex-direction: column;

@@ -536,6 +536,7 @@ async function runScheduleReplaySse(
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
+      minQuoteCents?: number;
       shiftCents?: number;
       areaStart?: number;
       areaEnd?: number;
@@ -1674,6 +1675,7 @@ async function runPlacementPlay(
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
+      minQuoteCents?: number;
       shiftCents?: number;
       areaStart?: number;
       areaEnd?: number;
@@ -1718,6 +1720,7 @@ function parsePlayRequestBody(req: express.Request): {
   prediction?: {
     sensitivitySec?: number;
     maxQuoteCents?: number;
+    minQuoteCents?: number;
     shiftCents?: number;
     areaStart?: number;
     areaEnd?: number;

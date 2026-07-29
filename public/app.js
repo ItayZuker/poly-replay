@@ -3668,6 +3668,7 @@ async function onMarketSeriesChanged(nextSeries) {
     manipulationDetector: false,
     manipulationSensitivitySec: 5,
     predictionMaxQuoteCents: 90,
+    predictionMinQuoteCents: 70,
     predictionShiftCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
@@ -5169,21 +5170,42 @@ function normalizePredictionMaxQuoteCents(value) {
   return Math.max(1, Math.min(99, Number.isFinite(n) ? n : 90));
 }
 
+function normalizePredictionMinQuoteCents(value) {
+  const n = Math.round(Number(value));
+  return Math.max(1, Math.min(99, Number.isFinite(n) ? n : 70));
+}
+
+function normalizePredictionQuoteBand(minRaw, maxRaw) {
+  const maxQuoteCents = normalizePredictionMaxQuoteCents(maxRaw);
+  let minQuoteCents = normalizePredictionMinQuoteCents(minRaw);
+  if (minQuoteCents > maxQuoteCents) minQuoteCents = maxQuoteCents;
+  return { minQuoteCents, maxQuoteCents };
+}
+
 function normalizePredictionShiftCents(value) {
   const n = Math.round(Number(value));
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : 5));
 }
 
-/** Cheapening Buy ≤ Max Quote at Duration start, and drops by ≥ Shift over Duration. */
-function meetsPredictionMaxQuoteAndShift(predictionSide, baseline, now, maxQuoteCents, shiftCents) {
-  const maxP = maxQuoteCents / 100;
+/** Cheapening Buy within [Min, Max] Quote at Duration start, and drops by ≥ Shift over Duration. */
+function meetsPredictionMaxQuoteAndShift(
+  predictionSide,
+  baseline,
+  now,
+  maxQuoteCents,
+  shiftCents,
+  minQuoteCents = 70,
+) {
+  const band = normalizePredictionQuoteBand(minQuoteCents, maxQuoteCents);
+  const minP = band.minQuoteCents / 100;
+  const maxP = band.maxQuoteCents / 100;
   const shiftP = shiftCents / 100;
   if (predictionSide === "down") {
-    if (!(baseline.upBuy <= maxP + 1e-12)) return false;
+    if (!(baseline.upBuy >= minP - 1e-12 && baseline.upBuy <= maxP + 1e-12)) return false;
     return now.upBuy <= baseline.upBuy - shiftP + 1e-12;
   }
   if (predictionSide === "up") {
-    if (!(baseline.downBuy <= maxP + 1e-12)) return false;
+    if (!(baseline.downBuy >= minP - 1e-12 && baseline.downBuy <= maxP + 1e-12)) return false;
     return now.downBuy <= baseline.downBuy - shiftP + 1e-12;
   }
   return false;
@@ -5235,7 +5257,16 @@ function readLocalTradingConfig() {
       manualSellOrderType: normalizeManualOrderType(parsed.manualSellOrderType),
       manipulationDetector: Boolean(parsed.manipulationDetector),
       manipulationSensitivitySec: normalizeManipulationSensitivity(parsed.manipulationSensitivitySec),
-      predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(parsed.predictionMaxQuoteCents),
+      ...(() => {
+        const quotes = normalizePredictionQuoteBand(
+          parsed.predictionMinQuoteCents,
+          parsed.predictionMaxQuoteCents,
+        );
+        return {
+          predictionMaxQuoteCents: quotes.maxQuoteCents,
+          predictionMinQuoteCents: quotes.minQuoteCents,
+        };
+      })(),
       predictionShiftCents: normalizePredictionShiftCents(parsed.predictionShiftCents),
       ...area,
       predictionRightCount: normalizePredictionCount(parsed.predictionRightCount),
@@ -5251,6 +5282,10 @@ function writeLocalTradingConfig(config) {
   try {
     const manualOrderUnit = config.manualOrderUnit === "usdc" ? "usdc" : "shares";
     const area = normalizeManipulationArea(config.manipulationAreaStart, config.manipulationAreaEnd);
+    const quotes = normalizePredictionQuoteBand(
+      config.predictionMinQuoteCents,
+      config.predictionMaxQuoteCents,
+    );
     localStorage.setItem(
       tradingConfigStorageKey(),
       JSON.stringify({
@@ -5263,7 +5298,8 @@ function writeLocalTradingConfig(config) {
         manualSellOrderType: normalizeManualOrderType(config.manualSellOrderType),
         manipulationDetector: Boolean(config.manipulationDetector),
         manipulationSensitivitySec: normalizeManipulationSensitivity(config.manipulationSensitivitySec),
-        predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(config.predictionMaxQuoteCents),
+        predictionMaxQuoteCents: quotes.maxQuoteCents,
+        predictionMinQuoteCents: quotes.minQuoteCents,
         predictionShiftCents: normalizePredictionShiftCents(config.predictionShiftCents),
         ...area,
         predictionRightCount: normalizePredictionCount(config.predictionRightCount),
@@ -5314,9 +5350,11 @@ function buildTradingConfigPatch(overrides = {}) {
   const manipInput = $("manipulation-detector");
   const sensInput = $("manipulation-sensitivity");
   const maxQuoteInput = $("prediction-max-quote");
+  const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
   const manualOrderUnit = unitSelect?.value === "usdc" ? "usdc" : "shares";
   const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
+  const quotes = normalizePredictionQuoteBand(minQuoteInput?.value, maxQuoteInput?.value);
   return {
     autoTrade: Boolean(autoTradeInput?.checked),
     useSchedule: Boolean(useScheduleInput?.checked),
@@ -5327,7 +5365,8 @@ function buildTradingConfigPatch(overrides = {}) {
     manualSellOrderType: normalizeManualOrderType(sellTypeSelect?.value),
     manipulationDetector: Boolean(manipInput?.checked),
     manipulationSensitivitySec: normalizeManipulationSensitivity(sensInput?.value),
-    predictionMaxQuoteCents: normalizePredictionMaxQuoteCents(maxQuoteInput?.value),
+    predictionMaxQuoteCents: quotes.maxQuoteCents,
+    predictionMinQuoteCents: quotes.minQuoteCents,
     predictionShiftCents: normalizePredictionShiftCents(shiftInput?.value),
     ...area,
     predictionRightCount: normalizePredictionCount(manipDetectorRuntime.rightCount),
@@ -6119,6 +6158,7 @@ function syncManipulationSettingsEnabled(enabled) {
   const card = $("manipulation-detector-card");
   const label = $("manipulation-detector-label");
   const maxQuoteInput = $("prediction-max-quote");
+  const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
   const sensInput = $("manipulation-sensitivity");
   const startThumb = $("manipulation-area-start");
@@ -6127,6 +6167,7 @@ function syncManipulationSettingsEnabled(enabled) {
   if (card) card.classList.toggle("is-disabled", !on);
   if (label) label.textContent = on ? "Prediction · On" : "Prediction · Off";
   if (maxQuoteInput) maxQuoteInput.disabled = !on;
+  if (minQuoteInput) minQuoteInput.disabled = !on;
   if (shiftInput) shiftInput.disabled = !on;
   if (sensInput) sensInput.disabled = !on;
   if (startThumb) startThumb.disabled = !on;
@@ -6286,7 +6327,12 @@ function tickManipulationDetector(state) {
     return;
   }
 
-  const maxQuoteCents = normalizePredictionMaxQuoteCents($("prediction-max-quote")?.value);
+  const quoteBand = normalizePredictionQuoteBand(
+    $("prediction-min-quote")?.value,
+    $("prediction-max-quote")?.value,
+  );
+  const maxQuoteCents = quoteBand.maxQuoteCents;
+  const minQuoteCents = quoteBand.minQuoteCents;
   const shiftCents = normalizePredictionShiftCents($("prediction-shift")?.value);
   const sensitivitySec = normalizeManipulationSensitivity($("manipulation-sensitivity")?.value);
   manipDetectorRuntime.samples.push({ tMs: nowMs, gap, upBuy, downBuy });
@@ -6318,7 +6364,14 @@ function tickManipulationDetector(state) {
       gap >= baseline.gap &&
       upBuy < baseline.upBuy &&
       downBuy > baseline.downBuy &&
-      meetsPredictionMaxQuoteAndShift("down", baseline, nowBuys, maxQuoteCents, shiftCents)
+      meetsPredictionMaxQuoteAndShift(
+        "down",
+        baseline,
+        nowBuys,
+        maxQuoteCents,
+        shiftCents,
+        minQuoteCents,
+      )
     ) {
       triggerManipulationFlash(state, "down");
     }
@@ -6327,7 +6380,14 @@ function tickManipulationDetector(state) {
       gap <= baseline.gap &&
       upBuy > baseline.upBuy &&
       downBuy < baseline.downBuy &&
-      meetsPredictionMaxQuoteAndShift("up", baseline, nowBuys, maxQuoteCents, shiftCents)
+      meetsPredictionMaxQuoteAndShift(
+        "up",
+        baseline,
+        nowBuys,
+        maxQuoteCents,
+        shiftCents,
+        minQuoteCents,
+      )
     ) {
       triggerManipulationFlash(state, "up");
     }
@@ -6393,6 +6453,7 @@ function applyTradingConfigToUi(config) {
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const maxQuoteInput = $("prediction-max-quote");
+  const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
   const sensInput = $("manipulation-sensitivity");
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
@@ -6401,11 +6462,12 @@ function applyTradingConfigToUi(config) {
   if (buyTypeSelect) buyTypeSelect.value = normalizeManualOrderType(config.manualBuyOrderType);
   if (sellTypeSelect) sellTypeSelect.value = normalizeManualOrderType(config.manualSellOrderType);
   if (manipInput) manipInput.checked = Boolean(config.manipulationDetector);
-  if (maxQuoteInput) {
-    maxQuoteInput.value = String(
-      normalizePredictionMaxQuoteCents(config.predictionMaxQuoteCents),
-    );
-  }
+  const quotes = normalizePredictionQuoteBand(
+    config.predictionMinQuoteCents,
+    config.predictionMaxQuoteCents,
+  );
+  if (maxQuoteInput) maxQuoteInput.value = String(quotes.maxQuoteCents);
+  if (minQuoteInput) minQuoteInput.value = String(quotes.minQuoteCents);
   if (shiftInput) {
     shiftInput.value = String(normalizePredictionShiftCents(config.predictionShiftCents));
   }
@@ -6473,6 +6535,7 @@ function bindTradeToggles() {
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
   const maxQuoteInput = $("prediction-max-quote");
+  const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
   const sensInput = $("manipulation-sensitivity");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
@@ -6561,12 +6624,21 @@ function bindTradeToggles() {
     });
   });
 
-  maxQuoteInput?.addEventListener("change", async () => {
-    if (maxQuoteInput.disabled) return;
-    const next = normalizePredictionMaxQuoteCents(maxQuoteInput.value);
-    maxQuoteInput.value = String(next);
+  const commitPredictionQuotes = async () => {
+    if (maxQuoteInput?.disabled || minQuoteInput?.disabled) return;
+    const band = normalizePredictionQuoteBand(minQuoteInput?.value, maxQuoteInput?.value);
+    if (maxQuoteInput) maxQuoteInput.value = String(band.maxQuoteCents);
+    if (minQuoteInput) minQuoteInput.value = String(band.minQuoteCents);
     manipDetectorRuntime.samples = [];
     await persistManipulationConfigPatch();
+  };
+
+  maxQuoteInput?.addEventListener("change", () => {
+    void commitPredictionQuotes();
+  });
+
+  minQuoteInput?.addEventListener("change", () => {
+    void commitPredictionQuotes();
   });
 
   shiftInput?.addEventListener("change", async () => {
