@@ -2,15 +2,19 @@
 
 ## Account tabs
 
-**User**, **Session**, and **Credentials** share one Settings card (tab switcher).
+**User**, **Stats**, and **Credentials** share one Settings card (tab switcher).
 
 ### User
 
-Display name and email for your account.
+Display name and email for your account. Also log out, or permanently delete your account.
 
-### Session
+### Stats
 
-Log out, or permanently delete your account.
+| Metric | Meaning |
+|--------|---------|
+| **Fill success** | Rolling last **7 days** (independent of the ~14-day weekday×hour recording overlay). Shows a **total %** plus **FAK / FOK / GTD** rows (`successes/attempts · %`). **Partial fill = success**. **FAK/FOK:** count when the order is fired/sent. **GTD:** count only when the limit was **touched** while live (ask/bid/trade at the limit) — strategy cancels with no touch are ignored (neither success nor miss). **—** until the first countable attempt |
+
+Feed **Latency (ms)** is shown in the Settings page header (not in this tab).
 
 ### Credentials
 

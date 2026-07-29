@@ -3367,6 +3367,8 @@ function updateWindowUI(state) {
   updateQuoteBoxes(state);
   updateCountdown(state);
   updateGraphPanel(state);
+  syncManipulationAreaUi();
+  tickManipulationDetector(state);
 
   if (state?.trading && !isReplayWorkspace() && window.SchedulePlacements?.applyLivePlacementStats) {
     window.SchedulePlacements.applyLivePlacementStats(
@@ -3422,6 +3424,8 @@ function appendChainlinkTick(tick, redraw = true) {
   }
   window.windowState = windowState;
 
+  tickManipulationDetector(windowState);
+
   if (!redraw || chainlinkChartFrame != null) return;
   chainlinkChartFrame = requestAnimationFrame(() => {
     chainlinkChartFrame = null;
@@ -3444,17 +3448,15 @@ function applyQuotesUpdate(quotes) {
   updateQuoteBoxes(windowState);
   syncLatencyDisplay(windowState);
   if (quotes.windowEnd != null) updateCountdown(windowState);
+  tickManipulationDetector(windowState);
 }
 
 function syncLatencyDisplay(state) {
   const ms = state?.feedLatencyMs;
-  const text = Number.isFinite(ms) ? `${Math.round(ms)} ms` : "—";
   const settingsEl = $("feed-latency-ms");
   if (settingsEl) {
     settingsEl.textContent = Number.isFinite(ms) ? String(Math.round(ms)) : "—";
   }
-  const tradeEl = $("trade-feed-latency-ms");
-  if (tradeEl) tradeEl.textContent = text;
 }
 
 function formatFillSuccessPct(rate) {
@@ -3636,7 +3638,12 @@ async function onMarketSeriesChanged(nextSeries) {
     startTrading: false,
     manualOrderUnit: "shares",
     manualShares: 10,
+    manipulationDetector: false,
+    manipulationSensitivitySec: 5,
+    manipulationAreaStart: 0,
+    manipulationAreaEnd: 1,
   });
+  resetManipulationDetector();
   void loadHeatmap();
   if (walletsListOpen) void loadTraderWalletsList();
   if (window.SchedulePlacements?.loadPlacements) {
@@ -5058,8 +5065,14 @@ function bindScheduleViewToggle() {
   showView(loadScheduleViewPref(), { persist: false });
 }
 
+function syncTradeToggleLabel(labelId, name, on) {
+  const el = $(labelId);
+  if (el) el.textContent = `${name} · ${on ? "On" : "Off"}`;
+}
+
 function syncWalletControls(config) {
   const autoTradeOn = Boolean(config?.autoTrade);
+  const useScheduleOn = Boolean(config?.useSchedule);
   const sharesField = $("wallet-shares-field");
   const useScheduleField = $("wallet-use-schedule-field");
   const startTradingField = $("wallet-start-trading-field");
@@ -5070,6 +5083,8 @@ function syncWalletControls(config) {
   if (useScheduleField) useScheduleField.hidden = !autoTradeOn;
   // Allow trade stays visible per market (header control), even when Auto Trade is off.
   if (startTradingField) startTradingField.hidden = false;
+  syncTradeToggleLabel("auto-trade-label", "Auto Trade", autoTradeOn);
+  syncTradeToggleLabel("use-schedule-label", "Use Schedule", useScheduleOn);
   if (unitSelect) {
     unitSelect.value = config?.manualOrderUnit === "usdc" ? "usdc" : "shares";
     syncManualAmountInputAttrs(unitSelect.value);
@@ -5108,6 +5123,34 @@ function tradingConfigStorageKey(series = selectedSeries) {
   return userScopedStorageKey(base);
 }
 
+function normalizeManipulationSensitivity(value) {
+  const n = Number(value);
+  return Math.max(1, Math.min(120, Math.round(Number.isFinite(n) ? n : 5)));
+}
+
+function normalizeManipulationArea(startRaw, endRaw) {
+  let start = Number(startRaw);
+  let end = Number(endRaw);
+  if (!Number.isFinite(start)) start = 0;
+  if (!Number.isFinite(end)) end = 1;
+  start = Math.max(0, Math.min(1, start));
+  end = Math.max(0, Math.min(1, end));
+  const minSpan = 0.02;
+  if (end - start < minSpan) {
+    if (start > 1 - minSpan) {
+      start = 1 - minSpan;
+      end = 1;
+    } else {
+      end = Math.min(1, start + minSpan);
+    }
+  }
+  return { manipulationAreaStart: start, manipulationAreaEnd: end };
+}
+
+let manipAreaStart = 0;
+let manipAreaEnd = 1;
+let manipAreaDrag = null;
+
 function readLocalTradingConfig() {
   try {
     const legacySeries = `${TRADING_CONFIG_STORAGE_KEY}:${selectedSeries || "btc-5m"}`;
@@ -5120,12 +5163,16 @@ function readLocalTradingConfig() {
     if (!parsed || typeof parsed !== "object") return null;
     const autoTrade = Boolean(parsed.autoTrade);
     const manualOrderUnit = parsed.manualOrderUnit === "usdc" ? "usdc" : "shares";
+    const area = normalizeManipulationArea(parsed.manipulationAreaStart, parsed.manipulationAreaEnd);
     return {
       autoTrade,
       useSchedule: Boolean(parsed.useSchedule),
       startTrading: Boolean(parsed.startTrading),
       manualOrderUnit,
       manualShares: normalizeManualAmount(parsed.manualShares, manualOrderUnit),
+      manipulationDetector: Boolean(parsed.manipulationDetector),
+      manipulationSensitivitySec: normalizeManipulationSensitivity(parsed.manipulationSensitivitySec),
+      ...area,
     };
   } catch {
     return null;
@@ -5136,6 +5183,7 @@ function writeLocalTradingConfig(config) {
   if (!config) return;
   try {
     const manualOrderUnit = config.manualOrderUnit === "usdc" ? "usdc" : "shares";
+    const area = normalizeManipulationArea(config.manipulationAreaStart, config.manipulationAreaEnd);
     localStorage.setItem(
       tradingConfigStorageKey(),
       JSON.stringify({
@@ -5144,6 +5192,9 @@ function writeLocalTradingConfig(config) {
         startTrading: Boolean(config.startTrading),
         manualOrderUnit,
         manualShares: normalizeManualAmount(config.manualShares, manualOrderUnit),
+        manipulationDetector: Boolean(config.manipulationDetector),
+        manipulationSensitivitySec: normalizeManipulationSensitivity(config.manipulationSensitivitySec),
+        ...area,
       }),
     );
   } catch {
@@ -5185,13 +5236,19 @@ function buildTradingConfigPatch(overrides = {}) {
   const startTradingInput = $("start-trading");
   const sharesInput = $("manual-shares");
   const unitSelect = $("manual-order-unit");
+  const manipInput = $("manipulation-detector");
+  const sensInput = $("manipulation-sensitivity");
   const manualOrderUnit = unitSelect?.value === "usdc" ? "usdc" : "shares";
+  const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
   return {
     autoTrade: Boolean(autoTradeInput?.checked),
     useSchedule: Boolean(useScheduleInput?.checked),
     startTrading: Boolean(startTradingInput?.checked),
     manualOrderUnit,
     manualShares: normalizeManualAmount(sharesInput?.value, manualOrderUnit),
+    manipulationDetector: Boolean(manipInput?.checked),
+    manipulationSensitivitySec: normalizeManipulationSensitivity(sensInput?.value),
+    ...area,
     ...overrides,
   };
 }
@@ -5205,14 +5262,269 @@ function coalesceTradingConfig(serverConfig, localPatch) {
   };
 }
 
+const MANIP_FLASH_MS = 10000;
+const MANIP_SAMPLE_MAX = 600;
+const manipDetectorRuntime = {
+  samples: [],
+  windowStart: null,
+  flashTimer: null,
+  flashUntilMs: 0,
+  cooldownUntilMs: 0,
+};
+
+function manipulationWindowDurationSec(state = windowState) {
+  const ws = state?.windowStart;
+  const we = state?.windowEnd;
+  if (ws != null && we != null && Number.isFinite(ws) && Number.isFinite(we) && we > ws) {
+    return we - ws;
+  }
+  return 300;
+}
+
+/** Format a fraction of the market window as m:ss (or h:mm:ss if needed). */
+function fmtManipAreaTime(frac, durationSec = manipulationWindowDurationSec()) {
+  const total = Math.max(0, Math.round(Number(frac) * Number(durationSec)));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function syncManipulationAreaUi() {
+  const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
+  manipAreaStart = area.manipulationAreaStart;
+  manipAreaEnd = area.manipulationAreaEnd;
+  const durationSec = manipulationWindowDurationSec();
+  const range = $("manipulation-area-range");
+  const startThumb = $("manipulation-area-start");
+  const endThumb = $("manipulation-area-end");
+  const startLabel = $("manipulation-area-start-label");
+  const endLabel = $("manipulation-area-end-label");
+  if (range) {
+    range.style.left = `${manipAreaStart * 100}%`;
+    range.style.width = `${(manipAreaEnd - manipAreaStart) * 100}%`;
+  }
+  if (startThumb) startThumb.style.left = `${manipAreaStart * 100}%`;
+  if (endThumb) endThumb.style.left = `${manipAreaEnd * 100}%`;
+  if (startLabel) startLabel.textContent = fmtManipAreaTime(manipAreaStart, durationSec);
+  if (endLabel) endLabel.textContent = fmtManipAreaTime(manipAreaEnd, durationSec);
+}
+
+function syncManipulationSettingsEnabled(enabled) {
+  const card = $("manipulation-detector-card");
+  const label = $("manipulation-detector-label");
+  const sensInput = $("manipulation-sensitivity");
+  const startThumb = $("manipulation-area-start");
+  const endThumb = $("manipulation-area-end");
+  const on = Boolean(enabled);
+  if (card) card.classList.toggle("is-disabled", !on);
+  if (label) label.textContent = on ? "Manipulation Detector · On" : "Manipulation Detector · Off";
+  if (sensInput) sensInput.disabled = !on;
+  if (startThumb) startThumb.disabled = !on;
+  if (endThumb) endThumb.disabled = !on;
+}
+
+function clearManipulationFlash() {
+  if (manipDetectorRuntime.flashTimer != null) {
+    clearTimeout(manipDetectorRuntime.flashTimer);
+    manipDetectorRuntime.flashTimer = null;
+  }
+  manipDetectorRuntime.flashUntilMs = 0;
+  $("price-graph-wrap")?.classList.remove("price-graph-wrap--manipulation");
+}
+
+function resetManipulationDetector() {
+  manipDetectorRuntime.samples = [];
+  manipDetectorRuntime.windowStart = null;
+  manipDetectorRuntime.cooldownUntilMs = 0;
+  clearManipulationFlash();
+}
+
+function triggerManipulationFlash(state) {
+  const wrap = $("price-graph-wrap");
+  if (!wrap) return;
+  const now = Date.now();
+  const windowEndMs =
+    state?.windowEnd != null && Number.isFinite(state.windowEnd)
+      ? state.windowEnd * 1000
+      : now + MANIP_FLASH_MS;
+  const duration = Math.max(0, Math.min(MANIP_FLASH_MS, windowEndMs - now));
+  if (duration <= 0) return;
+
+  wrap.classList.add("price-graph-wrap--manipulation");
+  if (manipDetectorRuntime.flashTimer != null) clearTimeout(manipDetectorRuntime.flashTimer);
+  manipDetectorRuntime.flashUntilMs = now + duration;
+  manipDetectorRuntime.cooldownUntilMs = manipDetectorRuntime.flashUntilMs;
+  manipDetectorRuntime.samples = [];
+  manipDetectorRuntime.flashTimer = setTimeout(() => {
+    manipDetectorRuntime.flashTimer = null;
+    manipDetectorRuntime.flashUntilMs = 0;
+    wrap.classList.remove("price-graph-wrap--manipulation");
+  }, duration);
+}
+
+function isInManipulationArea(state, areaStart, areaEnd) {
+  const ws = state?.windowStart;
+  const we = state?.windowEnd;
+  if (ws == null || we == null || !Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) {
+    return false;
+  }
+  const nowSec = Date.now() / 1000;
+  const t =
+    Number.isFinite(state.lastTickMs) && state.lastTickMs > 0
+      ? state.lastTickMs / 1000
+      : nowSec;
+  if (t < ws || t >= we) return false;
+  const frac = (t - ws) / (we - ws);
+  return frac >= areaStart && frac <= areaEnd;
+}
+
+function tickManipulationDetector(state) {
+  if (!state) return;
+
+  if (state.windowStart !== manipDetectorRuntime.windowStart) {
+    manipDetectorRuntime.windowStart = state.windowStart ?? null;
+    manipDetectorRuntime.samples = [];
+    clearManipulationFlash();
+  }
+
+  const nowMs = Date.now();
+  if (state.windowEnd != null && Number.isFinite(state.windowEnd) && nowMs >= state.windowEnd * 1000) {
+    if (manipDetectorRuntime.flashUntilMs > 0) clearManipulationFlash();
+    manipDetectorRuntime.samples = [];
+    return;
+  }
+
+  if (!Boolean($("manipulation-detector")?.checked)) {
+    manipDetectorRuntime.samples = [];
+    return;
+  }
+
+  if (nowMs < manipDetectorRuntime.cooldownUntilMs) return;
+
+  const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
+  if (!isInManipulationArea(state, area.manipulationAreaStart, area.manipulationAreaEnd)) {
+    manipDetectorRuntime.samples = [];
+    return;
+  }
+
+  const gap = Number(state.assetGap);
+  const upBuy = Number(state.yesAsk);
+  const downBuy = Number(state.noAsk);
+  if (!Number.isFinite(gap) || gap === 0 || !Number.isFinite(upBuy) || !Number.isFinite(downBuy)) {
+    return;
+  }
+
+  const sensitivitySec = normalizeManipulationSensitivity($("manipulation-sensitivity")?.value);
+  manipDetectorRuntime.samples.push({ tMs: nowMs, gap, upBuy, downBuy });
+  const cutoff = nowMs - (sensitivitySec + 2) * 1000;
+  while (
+    manipDetectorRuntime.samples.length > 0 &&
+    manipDetectorRuntime.samples[0].tMs < cutoff
+  ) {
+    manipDetectorRuntime.samples.shift();
+  }
+  if (manipDetectorRuntime.samples.length > MANIP_SAMPLE_MAX) {
+    manipDetectorRuntime.samples.splice(
+      0,
+      manipDetectorRuntime.samples.length - MANIP_SAMPLE_MAX,
+    );
+  }
+
+  const targetT = nowMs - sensitivitySec * 1000;
+  let baseline = null;
+  for (const sample of manipDetectorRuntime.samples) {
+    if (sample.tMs <= targetT) baseline = sample;
+    else break;
+  }
+  if (!baseline || nowMs - baseline.tMs < sensitivitySec * 1000) return;
+
+  if (baseline.gap > 0) {
+    if (gap >= baseline.gap && upBuy < baseline.upBuy && downBuy > baseline.downBuy) {
+      triggerManipulationFlash(state);
+    }
+  } else if (baseline.gap < 0) {
+    if (gap <= baseline.gap && upBuy > baseline.upBuy && downBuy < baseline.downBuy) {
+      triggerManipulationFlash(state);
+    }
+  }
+}
+
+async function persistManipulationConfigPatch() {
+  const patch = buildTradingConfigPatch();
+  writeLocalTradingConfig(patch);
+  const config = await pushTradingConfig(patch);
+  applyTradingConfigToUi(coalesceTradingConfig(config, patch) ?? patch);
+}
+
+function bindManipulationAreaSlider() {
+  const track = $("manipulation-area-slider")?.querySelector(".manipulation-area-track");
+  if (!track) return;
+
+  const fracFromEvent = (event) => {
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  };
+
+  const onMove = (event) => {
+    if (!manipAreaDrag) return;
+    const frac = fracFromEvent(event);
+    if (manipAreaDrag === "start") {
+      manipAreaStart = Math.min(frac, manipAreaEnd - 0.02);
+    } else {
+      manipAreaEnd = Math.max(frac, manipAreaStart + 0.02);
+    }
+    syncManipulationAreaUi();
+  };
+
+  const onUp = async () => {
+    if (!manipAreaDrag) return;
+    manipAreaDrag = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    await persistManipulationConfigPatch();
+  };
+
+  for (const thumb of track.querySelectorAll("[data-thumb]")) {
+    thumb.addEventListener("pointerdown", (event) => {
+      if (thumb.disabled || !$("manipulation-detector")?.checked) return;
+      event.preventDefault();
+      manipAreaDrag = thumb.getAttribute("data-thumb") === "end" ? "end" : "start";
+      thumb.setPointerCapture?.(event.pointerId);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  }
+}
+
 function applyTradingConfigToUi(config) {
   if (!config) return;
   const autoTradeInput = $("auto-trade");
   const useScheduleInput = $("use-schedule");
   const startTradingInput = $("start-trading");
+  const manipInput = $("manipulation-detector");
+  const sensInput = $("manipulation-sensitivity");
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
   if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
   if (startTradingInput) startTradingInput.checked = Boolean(config.startTrading);
+  if (manipInput) manipInput.checked = Boolean(config.manipulationDetector);
+  if (sensInput) {
+    sensInput.value = String(
+      normalizeManipulationSensitivity(config.manipulationSensitivitySec),
+    );
+  }
+  const area = normalizeManipulationArea(
+    config.manipulationAreaStart,
+    config.manipulationAreaEnd,
+  );
+  manipAreaStart = area.manipulationAreaStart;
+  manipAreaEnd = area.manipulationAreaEnd;
+  syncManipulationAreaUi();
+  syncManipulationSettingsEnabled(Boolean(config.manipulationDetector));
   syncWalletControls(config);
 }
 
@@ -5222,6 +5534,8 @@ function bindTradeToggles() {
   const startTradingInput = $("start-trading");
   const sharesInput = $("manual-shares");
   const unitSelect = $("manual-order-unit");
+  const manipInput = $("manipulation-detector");
+  const sensInput = $("manipulation-sensitivity");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
 
   // Restore immediately from localStorage, then sync from server
@@ -5231,6 +5545,8 @@ function bindTradeToggles() {
     syncGraphSaveBtn(windowState);
     if (windowState) drawPriceChart(windowState);
   });
+
+  bindManipulationAreaSlider();
 
   autoTradeInput.addEventListener("change", async () => {
     // Use Schedule only makes sense with Auto Trade; do not touch Allow trade.
@@ -5288,6 +5604,30 @@ function bindTradeToggles() {
         ? "Allow trade enabled (real hits)"
         : "Allow trade disabled (demo hits)",
     });
+  });
+
+  manipInput?.addEventListener("change", async () => {
+    syncManipulationSettingsEnabled(Boolean(manipInput.checked));
+    if (!manipInput.checked) {
+      manipDetectorRuntime.samples = [];
+      clearManipulationFlash();
+    }
+    await persistManipulationConfigPatch();
+    appendLogEntry({
+      level: "info",
+      source: "client",
+      message: manipInput.checked
+        ? "Manipulation Detector enabled"
+        : "Manipulation Detector disabled",
+    });
+  });
+
+  sensInput?.addEventListener("change", async () => {
+    if (sensInput.disabled) return;
+    const next = normalizeManipulationSensitivity(sensInput.value);
+    sensInput.value = String(next);
+    manipDetectorRuntime.samples = [];
+    await persistManipulationConfigPatch();
   });
 
   unitSelect?.addEventListener("change", async () => {

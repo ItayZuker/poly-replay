@@ -7,16 +7,19 @@ Live trading console for the selected series.
 | Control | Meaning |
 |---------|---------|
 | **Allow trade** | Off = demo; on = real orders when other gates pass |
-| **Auto Trade** | Bot may trade using the active setup |
-| **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup |
+| **Auto Trade** | Bot may trade using the active setup; label shows **· On** / **· Off** |
+| **Use Schedule** | With Auto Trade: the UTC schedule cell picks the setup; label shows **· On** / **· Off** |
 | **Size** | Manual / fallback order size |
+| **Manipulation Detector** | Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap (visual flag only — does not place or cancel orders). **Duration (Sec)** and **Window area** stay visible in the same control; they are disabled (muted) when Off |
 
-Trade also shows live execution metrics (each on its own row):
+| Setting | Meaning |
+|---------|---------|
+| **Duration (Sec)** | Seconds the condition must hold (compare now vs that many seconds ago) |
+| **Window area** | Dual-handle bar over the market window timeline (`0:00` → window length, e.g. `5:00` for a 5m market). Only the span between the handles is watched |
 
-| Metric | Meaning |
-|--------|---------|
-| **Latency** | Same feed latency as the Settings header (ms) |
-| **Fill success** | Rolling last **7 days** (independent of the ~14-day weekday×hour recording overlay). Shows a **total %** plus **FAK / FOK / GTD** rows (`successes/attempts · %`). **Partial fill = success**. **FAK/FOK:** count when the order is fired/sent. **GTD:** count only when the limit was **touched** while live (ask/bid/trade at the limit) — strategy cancels with no touch are ignored (neither success nor miss). **—** until the first countable attempt |
+**Trigger:** while Gap stays the same or stronger in its direction, UP Buy gets cheaper and DOWN Buy gets more expensive (mirror for a negative Gap). On trigger, the price graph container border turns **blue** for up to **10 seconds**, or until the window ends — whichever is sooner.
+
+Feed **Latency** is shown in the Settings page header. **Fill success** lives under Settings → **Stats**. See [Settings & wallet](doc:settings).
 
 **Available markets**, **Recording**, and per-series **retention** are managed in the separate **Admin CRM** (not in this trader UI). Only available series appear in the market picker; trading APIs reject unavailable series. Recording still runs only on non-`TRADING_EXECUTOR` processes. On the recorder, stalled Chainlink (~20s) discards the active window and reconnects; a broader silence watchdog (~60s with no book/Chainlink ticks) reconnects feeds and restarts that series’ recorder. See [Information flow](doc:data-flow).
 

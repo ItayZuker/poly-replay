@@ -413,7 +413,7 @@
             <div class="wallet-summary-rows">
               <div class="wallet-control-fields">
                 <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade">
-                  <span class="wallet-control-label">Auto Trade</span>
+                  <span class="wallet-control-label" id="auto-trade-label">Auto Trade · Off</span>
                   <span class="switch">
                     <input type="checkbox" id="auto-trade" />
                     <span class="switch-slider"></span>
@@ -439,37 +439,72 @@
                   </div>
                 </div>
                 <label id="wallet-use-schedule-field" class="wallet-control-field wallet-control-field--toggle" for="use-schedule" hidden>
-                  <span class="wallet-control-label">Use Schedule</span>
+                  <span class="wallet-control-label" id="use-schedule-label">Use Schedule · Off</span>
                   <span class="switch">
                     <input type="checkbox" id="use-schedule" />
                     <span class="switch-slider"></span>
                   </span>
                 </label>
-                <div class="wallet-control-field trade-metric-field" aria-label="Latency">
-                  <span class="wallet-control-label">Latency</span>
-                  <span id="trade-feed-latency-ms" class="trade-metric-value">—</span>
-                </div>
                 <div
-                  class="wallet-control-field trade-metric-field trade-fill-success-field"
-                  aria-label="Fill success"
-                  title="Fill success by order type (last 7 days). Partial fill = success. GTD counts only when the limit was touched while live."
+                  id="manipulation-detector-card"
+                  class="wallet-control-field wallet-control-field--manipulation"
                 >
-                  <div class="trade-fill-success-head">
-                    <span class="wallet-control-label">Fill success</span>
-                    <span id="trade-fill-success" class="trade-metric-value">—</span>
-                  </div>
-                  <div id="trade-fill-success-breakdown" class="trade-fill-success-breakdown" hidden>
-                    <div class="trade-fill-success-row">
-                      <span>FAK</span>
-                      <span id="trade-fill-success-fak" class="trade-metric-value">—</span>
+                  <label class="manipulation-detector-head" for="manipulation-detector">
+                    <span class="wallet-control-label" id="manipulation-detector-label"
+                      >Manipulation Detector · Off</span
+                    >
+                    <span class="switch">
+                      <input type="checkbox" id="manipulation-detector" />
+                      <span class="switch-slider"></span>
+                    </span>
+                  </label>
+                  <div id="manipulation-detector-settings" class="manipulation-detector-settings">
+                    <div class="manipulation-detector-row">
+                      <label class="wallet-control-label" for="manipulation-sensitivity">Duration (Sec)</label>
+                      <div class="schedule-replay-latency-field">
+                        <input
+                          type="number"
+                          id="manipulation-sensitivity"
+                          class="schedule-replay-latency-input"
+                          min="1"
+                          max="120"
+                          step="1"
+                          value="5"
+                          inputmode="numeric"
+                          aria-label="Manipulation duration in seconds"
+                        />
+                      </div>
                     </div>
-                    <div class="trade-fill-success-row">
-                      <span>FOK</span>
-                      <span id="trade-fill-success-fok" class="trade-metric-value">—</span>
-                    </div>
-                    <div class="trade-fill-success-row">
-                      <span>GTD</span>
-                      <span id="trade-fill-success-gtd" class="trade-metric-value">—</span>
+                    <div class="manipulation-detector-row manipulation-detector-row--area">
+                      <span class="wallet-control-label" id="manipulation-area-label">Window area</span>
+                      <div
+                        class="manipulation-area-slider"
+                        id="manipulation-area-slider"
+                        role="group"
+                        aria-labelledby="manipulation-area-label"
+                      >
+                        <div class="manipulation-area-track">
+                          <div class="manipulation-area-range" id="manipulation-area-range"></div>
+                          <button
+                            type="button"
+                            class="manipulation-area-thumb"
+                            id="manipulation-area-start"
+                            data-thumb="start"
+                            aria-label="Detection area start"
+                          ></button>
+                          <button
+                            type="button"
+                            class="manipulation-area-thumb"
+                            id="manipulation-area-end"
+                            data-thumb="end"
+                            aria-label="Detection area end"
+                          ></button>
+                        </div>
+                        <div class="manipulation-area-labels">
+                          <span id="manipulation-area-start-label">0:00</span>
+                          <span id="manipulation-area-end-label">5:00</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -621,7 +656,7 @@
         </div>
         </div>
 
-        <div class="price-graph-wrap">
+        <div id="price-graph-wrap" class="price-graph-wrap">
           <canvas id="price-chart" aria-label="Market price chart"></canvas>
           <div id="sim-phase-hover" class="sim-phase-hover" hidden></div>
           <div id="sim-marker-tooltip" class="sim-marker-tooltip" hidden></div>
@@ -682,13 +717,13 @@
                 type="button"
                 class="settings-tab"
                 role="tab"
-                id="settings-tab-session"
-                data-settings-tab="session"
+                id="settings-tab-stats"
+                data-settings-tab="stats"
                 aria-selected="false"
-                aria-controls="settings-tab-panel-session"
+                aria-controls="settings-tab-panel-stats"
                 tabindex="-1"
               >
-                Session
+                Stats
               </button>
               <button
                 type="button"
@@ -726,21 +761,48 @@
                 <button type="button" id="settings-user-save" class="settings-primary-btn">Save profile</button>
                 <span id="settings-user-status" class="settings-inline-status" hidden></span>
               </div>
+              <div class="settings-user-session">
+                <p class="settings-card-desc">Sign out of this browser, or permanently delete your account</p>
+                <div class="settings-card-actions settings-card-actions--stack">
+                  <button type="button" id="settings-logout-btn" class="settings-secondary-btn">Log out</button>
+                  <button type="button" id="settings-delete-account-btn" class="settings-danger-btn">Delete account</button>
+                  <span id="settings-session-status" class="settings-inline-status" hidden></span>
+                </div>
+              </div>
             </div>
 
             <div
               class="settings-tab-panel"
               role="tabpanel"
-              id="settings-tab-panel-session"
-              data-settings-tab-panel="session"
-              aria-labelledby="settings-tab-session"
+              id="settings-tab-panel-stats"
+              data-settings-tab-panel="stats"
+              aria-labelledby="settings-tab-stats"
               hidden
             >
-              <p class="settings-card-desc">Sign out of this browser, or permanently delete your account</p>
-              <div class="settings-card-actions settings-card-actions--stack">
-                <button type="button" id="settings-logout-btn" class="settings-secondary-btn">Log out</button>
-                <button type="button" id="settings-delete-account-btn" class="settings-danger-btn">Delete account</button>
-                <span id="settings-session-status" class="settings-inline-status" hidden></span>
+              <p class="settings-card-desc">Rolling execution stats for your account</p>
+              <div
+                class="wallet-control-field trade-metric-field trade-fill-success-field"
+                aria-label="Fill success"
+                title="Fill success by order type (last 7 days). Partial fill = success. GTD counts only when the limit was touched while live."
+              >
+                <div class="trade-fill-success-head">
+                  <span class="wallet-control-label">Fill success</span>
+                  <span id="trade-fill-success" class="trade-metric-value">—</span>
+                </div>
+                <div id="trade-fill-success-breakdown" class="trade-fill-success-breakdown" hidden>
+                  <div class="trade-fill-success-row">
+                    <span>FAK</span>
+                    <span id="trade-fill-success-fak" class="trade-metric-value">—</span>
+                  </div>
+                  <div class="trade-fill-success-row">
+                    <span>FOK</span>
+                    <span id="trade-fill-success-fok" class="trade-metric-value">—</span>
+                  </div>
+                  <div class="trade-fill-success-row">
+                    <span>GTD</span>
+                    <span id="trade-fill-success-gtd" class="trade-metric-value">—</span>
+                  </div>
+                </div>
               </div>
             </div>
 

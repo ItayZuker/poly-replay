@@ -609,7 +609,33 @@ function defaultTradingConfig(): TradingConfig {
     startTrading: false,
     manualShares: 10,
     manualOrderUnit: "shares",
+    manipulationDetector: false,
+    manipulationSensitivitySec: 5,
+    manipulationAreaStart: 0,
+    manipulationAreaEnd: 1,
   };
+}
+
+function normalizeManipulationArea(startRaw: unknown, endRaw: unknown): {
+  manipulationAreaStart: number;
+  manipulationAreaEnd: number;
+} {
+  let start = Number(startRaw);
+  let end = Number(endRaw);
+  if (!Number.isFinite(start)) start = 0;
+  if (!Number.isFinite(end)) end = 1;
+  start = Math.max(0, Math.min(1, start));
+  end = Math.max(0, Math.min(1, end));
+  const minSpan = 0.02;
+  if (end - start < minSpan) {
+    if (start > 1 - minSpan) {
+      start = 1 - minSpan;
+      end = 1;
+    } else {
+      end = Math.min(1, start + minSpan);
+    }
+  }
+  return { manipulationAreaStart: start, manipulationAreaEnd: end };
 }
 
 function normalizeTradingConfig(
@@ -623,12 +649,24 @@ function normalizeTradingConfig(
     unit === "usdc"
       ? Math.max(0.01, Math.min(100000, Math.round((Number.isFinite(amountRaw) ? amountRaw : 10) * 100) / 100))
       : Math.max(1, Math.min(100000, Math.floor(Number.isFinite(amountRaw) ? amountRaw : 10) || 10));
+  const sensRaw = Number(raw.manipulationSensitivitySec);
+  const manipulationSensitivitySec = Math.max(
+    1,
+    Math.min(120, Math.round(Number.isFinite(sensRaw) ? sensRaw : base.manipulationSensitivitySec)),
+  );
+  const area = normalizeManipulationArea(
+    raw.manipulationAreaStart ?? base.manipulationAreaStart,
+    raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
+  );
   const next: TradingConfig = {
     autoTrade: Boolean(raw.autoTrade),
     useSchedule: Boolean(raw.useSchedule),
     startTrading: Boolean(raw.startTrading),
     manualShares: amount,
     manualOrderUnit: unit,
+    manipulationDetector: Boolean(raw.manipulationDetector),
+    manipulationSensitivitySec,
+    ...area,
   };
   if (!next.autoTrade) {
     next.useSchedule = false;
@@ -1270,6 +1308,24 @@ export class LiveTradingService {
           Math.min(100000, Math.floor(Number.isFinite(amount) ? amount : 10) || 10),
         );
       }
+    }
+    if (patch.manipulationDetector != null) {
+      this.config.manipulationDetector = Boolean(patch.manipulationDetector);
+    }
+    if (patch.manipulationSensitivitySec != null) {
+      const sens = Number(patch.manipulationSensitivitySec);
+      this.config.manipulationSensitivitySec = Math.max(
+        1,
+        Math.min(120, Math.round(Number.isFinite(sens) ? sens : 5)),
+      );
+    }
+    if (patch.manipulationAreaStart != null || patch.manipulationAreaEnd != null) {
+      const area = normalizeManipulationArea(
+        patch.manipulationAreaStart ?? this.config.manipulationAreaStart,
+        patch.manipulationAreaEnd ?? this.config.manipulationAreaEnd,
+      );
+      this.config.manipulationAreaStart = area.manipulationAreaStart;
+      this.config.manipulationAreaEnd = area.manipulationAreaEnd;
     }
     // Re-normalize amount if unit changed after amount in the same patch
     if (patch.manualOrderUnit != null && patch.manualShares == null) {

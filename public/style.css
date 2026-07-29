@@ -3738,6 +3738,19 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   color: var(--muted);
 }
 
+.settings-user-session {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-user-session .settings-card-desc {
+  margin: 0;
+}
+
 .settings-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5616,6 +5629,126 @@ body.is-column-resizing * {
   border-radius: 4px;
   overflow: hidden;
   position: relative;
+  transition: border-color 0.15s ease;
+}
+
+.price-graph-wrap--manipulation {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.wallet-control-field--manipulation {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  cursor: default;
+}
+
+.manipulation-detector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.manipulation-detector-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manipulation-detector-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.manipulation-detector-row--area {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.manipulation-area-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.manipulation-area-track {
+  position: relative;
+  height: 18px;
+  margin: 2px 0;
+  background: transparent;
+  touch-action: none;
+}
+
+.manipulation-area-track::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: #484f58;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.manipulation-area-range {
+  display: none;
+}
+
+.manipulation-area-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  z-index: 1;
+}
+
+.manipulation-area-thumb:active {
+  cursor: grabbing;
+}
+
+.manipulation-area-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manipulation-area-thumb:disabled {
+  cursor: not-allowed;
+  background: #484f58;
+}
+
+.manipulation-area-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.wallet-control-field--manipulation.is-disabled .manipulation-detector-settings .wallet-control-label,
+.wallet-control-field--manipulation.is-disabled .manipulation-area-labels {
+  color: #484f58;
+}
+
+.wallet-control-field--manipulation.is-disabled .manipulation-area-track::before {
+  background: #30363d;
 }
 
 #price-chart {

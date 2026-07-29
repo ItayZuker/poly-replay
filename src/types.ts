@@ -380,6 +380,14 @@ export interface TradingConfig {
   /** Manual buy size (share count or USDC, depending on manualOrderUnit). */
   manualShares: number;
   manualOrderUnit: "shares" | "usdc";
+  /** Client-side manipulation detector (visual flag only; no orders). */
+  manipulationDetector: boolean;
+  /** Seconds the adverse UP/DOWN vs gap condition must hold. */
+  manipulationSensitivitySec: number;
+  /** Start of detection area as fraction of the market window [0, 1]. */
+  manipulationAreaStart: number;
+  /** End of detection area as fraction of the market window [0, 1]. */
+  manipulationAreaEnd: number;
 }
 
 export interface LiveSidePosition {
