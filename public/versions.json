@@ -1,6 +1,11 @@
 {
-  "current": "1.16.0",
+  "current": "1.17.0",
   "releases": [
+    {
+      "version": "1.17.0",
+      "releasedAt": "2026-07-29T10:46:39.311Z",
+      "notes": "Prediction Min Quote (¢) under Max Quote on Market and Replay (default 70; cheapening Buy must be in [Min, Max] when Duration starts). Replay Prediction switcher muted while a Run is active. Docs updated."
+    },
     {
       "version": "1.16.0",
       "releasedAt": "2026-07-29T10:25:11.054Z",
