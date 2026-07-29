@@ -130,10 +130,11 @@ export async function fetchGammaWindowResolution(
       ? roundTo4(meta.priceToBeat)
       : undefined;
 
-  // Prefer Chainlink metadata when present; otherwise require ~1/0 token prices.
+  // Prefer settled ~1/0 token prices (payout truth). Fall back to Chainlink
+  // final vs PTB when tokens are not settled yet (mid-book is ignored).
   const outcome =
-    outcomeFromFinalVsPtb(finalPrice, priceToBeat) ??
-    outcomeFromGammaPrices(yesPrice, noPrice);
+    outcomeFromGammaPrices(yesPrice, noPrice) ??
+    outcomeFromFinalVsPtb(finalPrice, priceToBeat);
   if (!outcome) return null;
 
   return { outcome, finalPrice, priceToBeat, yesPrice, noPrice };

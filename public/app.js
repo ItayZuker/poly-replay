@@ -5787,7 +5787,7 @@ function resolveWindowOutcomeFromPrices(closePrice, ptb) {
   return closePrice >= ptb ? "up" : "down";
 }
 
-function recordPredictionScore(side, windowStart, outcome, { showResultUi }) {
+function recordPredictionScore(side, windowStart, outcome, { showResultUi, source } = {}) {
   if (side !== "up" && side !== "down") return false;
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
   if (outcome !== "up" && outcome !== "down") return false;
@@ -5802,7 +5802,9 @@ function recordPredictionScore(side, windowStart, outcome, { showResultUi }) {
   appendLogEntry({
     level: "info",
     source: "client",
-    message: `Prediction ${side.toUpperCase()} → ${outcome.toUpperCase()} (${right ? "right" : "wrong"})`,
+    message: `Prediction ${side.toUpperCase()} → ${outcome.toUpperCase()} (${right ? "right" : "wrong"}${
+      source ? `, ${source}` : ""
+    })`,
   });
 
   if (showResultUi) {
@@ -5830,12 +5832,12 @@ function recordPredictionScore(side, windowStart, outcome, { showResultUi }) {
   return true;
 }
 
-function applyPredictionOutcome(outcome) {
+function applyPredictionOutcome(outcome, source = "gamma") {
   const side = manipDetectorRuntime.predictionSide;
   const windowStart = manipDetectorRuntime.predictionWindowStart;
   if (manipDetectorRuntime.uiPhase !== "pending") return;
   stopPredictionResolveLoop();
-  recordPredictionScore(side, windowStart, outcome, { showResultUi: true });
+  recordPredictionScore(side, windowStart, outcome, { showResultUi: true, source });
 }
 
 function removeBackgroundResolution(windowStart) {
@@ -5879,6 +5881,7 @@ async function pollBackgroundPredictionOutcome(job) {
           removeBackgroundResolution(job.windowStart);
           recordPredictionScore(job.side, job.windowStart, body.outcome, {
             showResultUi: false,
+            source: "gamma",
           });
           return;
         }
@@ -5893,7 +5896,10 @@ async function pollBackgroundPredictionOutcome(job) {
     const fallback = resolveWindowOutcomeFromPrices(job.lastPrice, job.lastPtb);
     if (fallback) {
       removeBackgroundResolution(job.windowStart);
-      recordPredictionScore(job.side, job.windowStart, fallback, { showResultUi: false });
+      recordPredictionScore(job.side, job.windowStart, fallback, {
+        showResultUi: false,
+        source: "fallback-close",
+      });
       return;
     }
   }
@@ -5987,7 +5993,7 @@ async function pollPredictionOfficialOutcome() {
       if (res.ok) {
         const body = await res.json();
         if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
-          applyPredictionOutcome(body.outcome);
+          applyPredictionOutcome(body.outcome, "gamma");
           return;
         }
       }
@@ -6003,7 +6009,7 @@ async function pollPredictionOfficialOutcome() {
       manipDetectorRuntime.lastPtb,
     );
     if (fallback) {
-      applyPredictionOutcome(fallback);
+      applyPredictionOutcome(fallback, "fallback-close");
       return;
     }
   }
@@ -6244,13 +6250,15 @@ function tickManipulationDetector(state) {
   // Settings sync everywhere; detection/scoring only on the deployed host.
   if (!isPredictionTriggerHost()) return;
 
+  // Capture Chainlink close/PTB only for the Prediction's own window while Active.
+  // Once Pending, freeze those values — never overwrite with the next window's ticks
+  // (that used to make the 45s fallback score the wrong market).
   if (
+    manipDetectorRuntime.uiPhase === "active" &&
+    manipDetectorRuntime.predictionWindowStart != null &&
+    state.windowStart === manipDetectorRuntime.predictionWindowStart &&
     Number.isFinite(state.assetPrice) &&
-    Number.isFinite(state.prevCloseAsset) &&
-    (
-      state.windowStart === manipDetectorRuntime.windowStart ||
-      state.windowStart === manipDetectorRuntime.predictionWindowStart
-    )
+    Number.isFinite(state.prevCloseAsset)
   ) {
     manipDetectorRuntime.lastPrice = state.assetPrice;
     manipDetectorRuntime.lastPtb = state.prevCloseAsset;
@@ -6270,14 +6278,6 @@ function tickManipulationDetector(state) {
     }
     manipDetectorRuntime.windowStart = state.windowStart ?? null;
     manipDetectorRuntime.samples = [];
-    if (
-      manipDetectorRuntime.uiPhase !== "pending" &&
-      Number.isFinite(state.assetPrice) &&
-      Number.isFinite(state.prevCloseAsset)
-    ) {
-      manipDetectorRuntime.lastPrice = state.assetPrice;
-      manipDetectorRuntime.lastPtb = state.prevCloseAsset;
-    }
     clearManipulationFlash();
   }
 
