@@ -1,6 +1,11 @@
 {
-  "current": "1.13.0",
+  "current": "1.14.0",
   "releases": [
+    {
+      "version": "1.14.0",
+      "releasedAt": "2026-07-29T07:29:16.491Z",
+      "notes": "Trade Prediction: Detecting status, UP/DOWN scoring with Right/Wrong stats, green/red graph border until window end; Manual Override FAK/FOK; fix premature Wrong scores from mid-book Gamma prices. Docs updated."
+    },
     {
       "version": "1.13.0",
       "releasedAt": "2026-07-29T06:09:20.368Z",
