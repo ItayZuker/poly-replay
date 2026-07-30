@@ -7712,6 +7712,36 @@ body.is-column-resizing * {
   box-shadow: none;
 }
 
+/* Stack multiple fill locks: newest … oldest, then live (flex, not single absolute slot). */
+.schedule-play-quote-row .quote-values {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  width: auto;
+  min-width: 3.25rem;
+}
+
+.schedule-play-quote-row .quote-values.quote-has-locked {
+  width: auto;
+}
+
+.schedule-play-quote-row .quote-live,
+.schedule-play-quote-row .quote-locked {
+  position: static;
+  top: auto;
+  right: auto;
+  transform: none;
+  width: 3.25rem;
+  flex-shrink: 0;
+}
+
+.schedule-play-quote-row .quote-locked {
+  padding-right: 0.35rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+}
+
 .schedule-play-modal.is-hits-view .schedule-play-metrics {
   display: none;
 }

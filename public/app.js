@@ -1887,10 +1887,39 @@ function predictionActionBoxMatchesSide(box, side) {
   return box.classList.contains(side === "up" ? "quote-box-up" : "quote-box-down");
 }
 
+function quoteActionLabel(side, leg) {
+  return `${String(leg || "?").toUpperCase()} ${String(side || "?").toUpperCase()}`;
+}
+
+function quoteBuyBlockedReason(trading) {
+  if (!trading) return "unknown";
+  if (trading.quotesEnabled === false) return "Allow trade off (or executor disabled)";
+  if (trading.positions?.up || trading.positions?.down) return "already holding a position";
+  return "not allowed";
+}
+
 async function clickQuoteBox(side, leg) {
-  if (quoteOrderInFlight) return;
+  const label = quoteActionLabel(side, leg);
+  if (quoteOrderInFlight) {
+    appendLogEntry({
+      level: "warn",
+      source: "trading",
+      message: `${label} click ignored — order already in progress`,
+    });
+    return;
+  }
   const trading = tradingState(windowState);
-  if (trading && !canQuoteAction(trading, side, leg)) return;
+  if (trading && !canQuoteAction(trading, side, leg)) {
+    appendLogEntry({
+      level: "warn",
+      source: "trading",
+      message:
+        leg === "buy"
+          ? `${label} click ignored — ${quoteBuyBlockedReason(trading)}`
+          : `${label} click ignored — no position to sell`,
+    });
+    return;
+  }
 
   quoteOrderInFlight = true;
   const boxId = QUOTE_BOXES.find((b) => b.side === side && b.leg === leg)?.boxId;
@@ -1903,16 +1932,27 @@ async function clickQuoteBox(side, leg) {
     predictionActionBoxMatchesSide(predBox, side);
   if (predPending) predBox.classList.add("quote-box-pending");
 
+  appendLogEntry({
+    level: "info",
+    source: "trading",
+    message: `${label} submitting…`,
+  });
+
   try {
     const { ok, status, body } = await postTradingOrder(side, leg);
     if (!ok) {
       appendLogEntry({
         level: "error",
         source: "trading",
-        message: body.error || `Order failed (${status})`,
+        message: body.error || `${label} failed (${status})`,
       });
       return;
     }
+    appendLogEntry({
+      level: "info",
+      source: "trading",
+      message: `${label} placed`,
+    });
     const winRes = await fetch(`/api/window?series=${encodeURIComponent(selectedSeries)}`);
     if (winRes.ok) updateWindowUI(await winRes.json());
     void loadWalletAccount();
@@ -1920,7 +1960,7 @@ async function clickQuoteBox(side, leg) {
     appendLogEntry({
       level: "error",
       source: "trading",
-      message: `Order error: ${err.message || err}`,
+      message: `${label} error: ${err.message || err}`,
     });
   } finally {
     quoteOrderInFlight = false;

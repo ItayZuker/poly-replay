@@ -458,14 +458,23 @@
     return Number.isFinite(p) ? p : null;
   }
 
-  function quoteLocksAtPlayhead(win) {
-    const locks = {};
+  /** Fill prices at/before playhead per box, oldest → newest. */
+  function quoteLockListsAtPlayhead(win) {
+    const locks = { upBuy: [], upSell: [], downBuy: [], downSell: [] };
     const markers = Array.isArray(win?.markers) ? win.markers : [];
-    for (const m of markers) {
-      if (!m || (m.type !== "buy" && m.type !== "sell")) continue;
-      if (!(m.side === "up" || m.side === "down")) continue;
-      if (!Number.isFinite(m.t) || m.t > playheadSec) continue;
-      if (!Number.isFinite(m.price)) continue;
+    const hits = markers
+      .filter(
+        (m) =>
+          m &&
+          (m.type === "buy" || m.type === "sell") &&
+          (m.side === "up" || m.side === "down") &&
+          Number.isFinite(m.t) &&
+          m.t <= playheadSec &&
+          Number.isFinite(m.price),
+      )
+      .slice()
+      .sort((a, b) => a.t - b.t);
+    for (const m of hits) {
       const lockKey =
         m.side === "up"
           ? m.type === "buy"
@@ -474,10 +483,34 @@
           : m.type === "buy"
             ? "downBuy"
             : "downSell";
-      // First hit at/before playhead latches (same idea as live quote locks).
-      if (locks[lockKey] == null) locks[lockKey] = m.price;
+      locks[lockKey].push(m.price);
     }
     return locks;
+  }
+
+  /** Newest locked ¢ on the left, older to its right, live quote last. */
+  function setPlayLockedPrices(values, lockedAnchor, pricesOldestFirst) {
+    for (const el of [...values.querySelectorAll(".quote-locked")]) {
+      if (el !== lockedAnchor) el.remove();
+    }
+    if (!pricesOldestFirst.length) {
+      lockedAnchor.hidden = true;
+      lockedAnchor.textContent = "";
+      values.classList.remove("quote-has-locked");
+      return;
+    }
+    values.classList.add("quote-has-locked");
+    const newestFirst = pricesOldestFirst.slice().reverse();
+    lockedAnchor.hidden = false;
+    lockedAnchor.textContent = fmtPlayQuote(newestFirst[0]);
+    let prev = lockedAnchor;
+    for (let i = 1; i < newestFirst.length; i += 1) {
+      const span = document.createElement("span");
+      span.className = "quote-locked";
+      span.textContent = fmtPlayQuote(newestFirst[i]);
+      prev.after(span);
+      prev = span;
+    }
   }
 
   function bookQuoteAtPlayhead(samples) {
@@ -498,11 +531,11 @@
       const live = $(cfg.liveId);
       const values = locked?.parentElement;
       if (live) live.textContent = "—";
-      if (locked) {
+      if (values && locked) setPlayLockedPrices(values, locked, []);
+      else if (locked) {
         locked.hidden = true;
         locked.textContent = "";
       }
-      values?.classList.remove("quote-has-locked");
       box?.classList.remove(
         "quote-triggered-up",
         "quote-triggered-down",
@@ -519,7 +552,7 @@
     }
     const samples = bookQuoteCache.get(win.windowStart) || [];
     const liveSample = bookQuoteAtPlayhead(samples);
-    const locks = quoteLocksAtPlayhead(win);
+    const locks = quoteLockListsAtPlayhead(win);
     for (const cfg of PLAY_QUOTE_BOXES) {
       const box = $(cfg.boxId);
       const locked = $(cfg.lockedId);
@@ -528,19 +561,16 @@
       if (!box || !locked || !live || !values) continue;
 
       live.textContent = fmtPlayQuote(liveSample?.[cfg.liveKey]);
+      // Keep live last after dynamic locked spans.
+      if (live.parentElement === values) values.appendChild(live);
 
-      const lockedPrice = locks[cfg.lockKey];
-      if (lockedPrice != null && Number.isFinite(lockedPrice)) {
-        locked.hidden = false;
-        locked.textContent = fmtPlayQuote(lockedPrice);
-        values.classList.add("quote-has-locked");
+      const prices = locks[cfg.lockKey] || [];
+      setPlayLockedPrices(values, locked, prices);
+      if (prices.length > 0) {
         box.classList.add(cfg.tone === "up" ? "quote-triggered-up" : "quote-triggered-down");
         box.classList.add("quote-box-latched");
         box.classList.remove("quote-box-pressing");
       } else {
-        locked.hidden = true;
-        locked.textContent = "";
-        values.classList.remove("quote-has-locked");
         box.classList.remove("quote-triggered-up", "quote-triggered-down", "quote-box-latched");
       }
     }
@@ -790,6 +820,57 @@
     return `${d.windowIndex}:${d.type}:${d.elapsed}:${d.y}`;
   }
 
+  function markerTradeSource(m) {
+    if (m?.source === "prediction" || m?.source === "phase") return m.source;
+    return String(m?.windowKey || "").startsWith("pred:") ? "prediction" : "phase";
+  }
+
+  /**
+   * Pair buy→sell within the same window/source/side (chronological).
+   * Sets `pairDotId` on both ends when a sell matches an open buy.
+   */
+  function assignBuySellPairIds(dots, idFn) {
+    const groups = new Map();
+    for (const d of dots) {
+      if (!d || (d.type !== "buy" && d.type !== "sell")) continue;
+      if (!(d.side === "up" || d.side === "down")) continue;
+      const key = `${d.windowIndex ?? d.windowStart ?? ""}:${markerTradeSource(d)}:${d.side}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(d);
+    }
+    for (const list of groups.values()) {
+      list.sort((a, b) => {
+        const ta = Number.isFinite(a.elapsed) ? a.elapsed : a.t;
+        const tb = Number.isFinite(b.elapsed) ? b.elapsed : b.t;
+        return (ta ?? 0) - (tb ?? 0) || (a.type === "buy" ? -1 : 1);
+      });
+      let openBuy = null;
+      for (const d of list) {
+        d.pairDotId = null;
+        if (d.type === "buy") {
+          openBuy = d;
+          continue;
+        }
+        if (d.type === "sell" && openBuy) {
+          const buyId = idFn(openBuy);
+          const sellId = idFn(d);
+          openBuy.pairDotId = sellId;
+          d.pairDotId = buyId;
+          openBuy = null;
+        }
+      }
+    }
+  }
+
+  function mapHoverHighlightIds(dots, idFn) {
+    const ids = new Set();
+    if (hoveredMapDotId == null) return ids;
+    ids.add(hoveredMapDotId);
+    const hovered = dots.find((d) => idFn(d) === hoveredMapDotId);
+    if (hovered?.pairDotId) ids.add(hovered.pairDotId);
+    return ids;
+  }
+
   function activeHitsHighlightBuckets() {
     const set = new Set(hitsHighlightPinned);
     if (hitsHighlightHover) set.add(hitsHighlightHover);
@@ -910,6 +991,8 @@
           y: m.y,
           type: m.type,
           side: m.side,
+          source: markerTradeSource(m),
+          windowKey: m.windowKey,
           windowIndex: i,
           windowStart: win.windowStart,
           shares: m.shares,
@@ -922,9 +1005,11 @@
           plLabel: win.plLabel,
           pnl: win.pnl,
           bucket: tradeBucketForMarker(win, m),
+          pairDotId: null,
         });
       }
     }
+    assignBuySellPairIds(dots, hitDotId);
     return { dots, maxDuration, markerCount };
   }
 
@@ -1068,6 +1153,7 @@
 
     const nextTargets = [];
     const highlightBuckets = activeHitsHighlightBuckets();
+    const mapHoverIds = mapHoverHighlightIds(dots, hitDotId);
     // All windows overlaid — same opacity so hits align by time & price.
     for (const d of dots) {
       const x = xAt(d.elapsed);
@@ -1075,7 +1161,7 @@
       const color = sideColor(d.side);
       const id = hitDotId(d);
       const fromStats = highlightBuckets.has(d.bucket);
-      const fromMapHover = hoveredMapDotId != null && id === hoveredMapDotId;
+      const fromMapHover = mapHoverIds.has(id);
 
       if (fromStats || fromMapHover) {
         ctx.beginPath();
@@ -1468,6 +1554,7 @@
     updateTimeUi(win);
 
     const nextTargets = [];
+    const playDots = [];
     if (layout?.xAt && layout?.yAt) {
       for (const m of markers) {
         if (m?.t == null || !Number.isFinite(m.t)) continue;
@@ -1475,22 +1562,33 @@
         let y = layout.padding.top + layout.plotH / 2;
         if (m.y != null && Number.isFinite(m.y)) y = layout.yAt(m.y);
         const id = `play:${m.t}:${m.type}:${m.side}:${m.y ?? ""}`;
-        nextTargets.push({
+        const dot = {
           id,
           x,
           y,
+          t: m.t,
+          type: m.type,
+          side: m.side,
+          source: markerTradeSource(m),
+          windowKey: m.windowKey,
+          windowStart: win.windowStart,
           bucket: tradeBucketForMarker(win, m),
           html: renderHitsMapTooltipHtml(m),
-        });
+          pairDotId: null,
+        };
+        playDots.push(dot);
+        nextTargets.push(dot);
       }
+      assignBuySellPairIds(playDots, (d) => d.id);
     }
     hoverTargets = nextTargets;
 
     if (hoveredMapDotId != null && layout) {
-      const ht = nextTargets.find((t) => t.id === hoveredMapDotId);
-      if (ht) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
+      const mapHoverIds = mapHoverHighlightIds(playDots, (d) => d.id);
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        for (const ht of nextTargets) {
+          if (!mapHoverIds.has(ht.id)) continue;
           ctx.beginPath();
           ctx.arc(ht.x, ht.y, 10, 0, Math.PI * 2);
           ctx.strokeStyle = bucketColor(ht.bucket);
