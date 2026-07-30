@@ -1,6 +1,11 @@
 {
-  "current": "1.24.0",
+  "current": "1.25.0",
   "releases": [
+    {
+      "version": "1.25.0",
+      "releasedAt": "2026-07-30T13:54:14.393Z",
+      "notes": "Prediction position cards show Buy and Target prices; Prediction Off collapses Trade/settings (info icon still opens the note). Docs updated."
+    },
     {
       "version": "1.24.0",
       "releasedAt": "2026-07-30T13:05:06.693Z",
