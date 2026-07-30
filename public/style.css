@@ -1439,6 +1439,7 @@ body {
   opacity: 1;
   pointer-events: auto;
   min-height: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
@@ -1448,7 +1449,13 @@ body {
   gap: 6px;
   width: 100%;
   min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   box-sizing: border-box;
+}
+
+.schedule-replay-controls > .schedule-replay-latency {
+  flex-shrink: 0;
 }
 
 .schedule-replay-latency {
@@ -1557,6 +1564,7 @@ body {
   box-sizing: border-box;
   transition: gap 0.22s ease;
   min-height: 0;
+  overflow: hidden;
   /* Prefer showing all Prediction fields; scroll settings if the panel is constrained. */
   flex: 1 1 auto;
 }
@@ -1589,19 +1597,26 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
+  /* Bleed bottom edge to match the full-width line under Fill Success. */
+  width: calc(100% + 16px);
+  margin-left: -8px;
+  margin-right: -8px;
+  padding: 0 8px 8px;
+  flex: 1 1 auto;
   max-height: min(52vh, 560px);
   opacity: 1;
   overflow-x: hidden;
   overflow-y: auto;
   min-height: 0;
+  border-bottom: 1px solid var(--border);
   box-sizing: border-box;
   scrollbar-width: thin;
   scrollbar-color: #484f58 transparent;
   transition:
     max-height 0.22s ease,
     opacity 0.18s ease,
-    margin 0.22s ease;
+    margin 0.22s ease,
+    border-color 0.18s ease;
 }
 
 /* Keep each setting row full height so gaps stay even (scroll the list instead). */
@@ -1620,6 +1635,8 @@ body {
   max-height: 0;
   opacity: 0;
   margin: 0;
+  padding: 0;
+  border-bottom: none;
   overflow: hidden;
   pointer-events: none;
 }
@@ -1698,6 +1715,7 @@ body {
   justify-content: center;
   gap: 8px;
   width: 100%;
+  flex-shrink: 0;
   min-height: 36px;
   padding: 0 12px;
   border: 1px solid var(--accent);
@@ -5641,7 +5659,8 @@ body.is-row-resizing .panel-header-drag-handle {
 .log-output::-webkit-scrollbar,
 .positions-body::-webkit-scrollbar,
 .schedule-week-scroll::-webkit-scrollbar,
-.schedule-setups-list::-webkit-scrollbar {
+.schedule-setups-list::-webkit-scrollbar,
+.schedule-replay-prediction-settings::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
@@ -5649,14 +5668,16 @@ body.is-row-resizing .panel-header-drag-handle {
 .log-output::-webkit-scrollbar-track,
 .positions-body::-webkit-scrollbar-track,
 .schedule-week-scroll::-webkit-scrollbar-track,
-.schedule-setups-list::-webkit-scrollbar-track {
+.schedule-setups-list::-webkit-scrollbar-track,
+.schedule-replay-prediction-settings::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .log-output::-webkit-scrollbar-thumb,
 .positions-body::-webkit-scrollbar-thumb,
 .schedule-week-scroll::-webkit-scrollbar-thumb,
-.schedule-setups-list::-webkit-scrollbar-thumb {
+.schedule-setups-list::-webkit-scrollbar-thumb,
+.schedule-replay-prediction-settings::-webkit-scrollbar-thumb {
   background: #484f58;
   border-radius: 4px;
   border: 2px solid transparent;
@@ -5666,7 +5687,8 @@ body.is-row-resizing .panel-header-drag-handle {
 .log-output::-webkit-scrollbar-thumb:hover,
 .positions-body::-webkit-scrollbar-thumb:hover,
 .schedule-week-scroll::-webkit-scrollbar-thumb:hover,
-.schedule-setups-list::-webkit-scrollbar-thumb:hover {
+.schedule-setups-list::-webkit-scrollbar-thumb:hover,
+.schedule-replay-prediction-settings::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -5675,7 +5697,8 @@ body.is-row-resizing .panel-header-drag-handle {
 .log-output::-webkit-scrollbar-corner,
 .positions-body::-webkit-scrollbar-corner,
 .schedule-week-scroll::-webkit-scrollbar-corner,
-.schedule-setups-list::-webkit-scrollbar-corner {
+.schedule-setups-list::-webkit-scrollbar-corner,
+.schedule-replay-prediction-settings::-webkit-scrollbar-corner {
   background: transparent;
 }
 
