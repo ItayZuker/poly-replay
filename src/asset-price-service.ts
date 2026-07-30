@@ -298,8 +298,56 @@ export async function getPolymarketWindowAssetPricesForPair(
 }
 
 /**
+ * One-shot: completed crypto-price open/close only (same feed the Polymarket site uses).
+ * Returns null while incomplete — never invents an outcome from a partial close.
+ */
+export async function fetchPolymarketCompletedSettlement(
+  asset: string,
+  timeframe: string,
+  window: MarketWindowPriceContext,
+  signal?: AbortSignal,
+): Promise<WindowSettlementPrices | null> {
+  const data = await fetchPolymarketCryptoPriceResponse(
+    asset,
+    timeframe,
+    window.eventStartTimeIso,
+    window.eventEndTimeIso,
+    signal,
+  );
+  const openPrice = parsePrice(data.openPrice);
+  const closePrice = parsePrice(data.closePrice);
+  if (openPrice == null || closePrice == null || !isCryptoPriceComplete(data)) {
+    return null;
+  }
+  const outcome = outcomeFromOpenClose(openPrice, closePrice);
+  if (!outcome) return null;
+
+  const cacheKey = priceCacheKey(asset, timeframe, window.eventStartTimeIso);
+  windowRestCache.set(cacheKey, {
+    openPrice,
+    closePrice,
+    incomplete: false,
+    fetchedAtMs: Date.now(),
+  });
+
+  return {
+    openPrice,
+    closePrice,
+    outcome,
+    incomplete: false,
+    assetPrice: closePrice,
+    prevCloseAsset: openPrice,
+    assetGap: closePrice - openPrice,
+    assetPriceSource: "polymarket-rest",
+    priceToBeatSource: "polymarket-openPrice",
+  };
+}
+
+/**
  * Wait for Polymarket's official crypto-price open/close for a finished window.
  * Does not use live Chainlink RTDS — avoids stale feed overriding settlement.
+ * Prefer {@link fetchPolymarketCompletedSettlement} for official Up/Down scoring
+ * (this waiter may return incomplete:true after maxWaitMs).
  */
 export async function getPolymarketWindowSettlement(
   asset: string,

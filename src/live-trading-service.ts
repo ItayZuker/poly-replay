@@ -37,7 +37,7 @@ import {
   type PolymarketPosition,
   type PolymarketTrade,
 } from "./polymarket-portfolio.js";
-import { fetchGammaWindowResolution } from "./gamma-window-resolution.js";
+import { fetchOfficialWindowResolution } from "./official-window-resolution.js";
 import {
   DEFAULT_CRYPTO_TAKER_FEE_PARAMS,
   estimateTakerFeeUsd,
@@ -1905,14 +1905,14 @@ export class LiveTradingService {
     return simulatorService.getPhaseSetup();
   }
 
-  /** Official market UP/DOWN for a card (Gamma by slug), when resolved. */
+  /** Official market UP/DOWN for a card (crypto-price completed, else Gamma). */
   private async fetchOfficialMarketOutcome(
     card: TradingPositionCard,
   ): Promise<"up" | "down" | null> {
     const slug = typeof card.slug === "string" ? card.slug.trim() : "";
     if (!slug) return null;
     try {
-      const resolution = await fetchGammaWindowResolution(slug);
+      const resolution = await fetchOfficialWindowResolution(slug);
       if (resolution?.outcome === "up" || resolution?.outcome === "down") {
         return resolution.outcome;
       }
@@ -1923,7 +1923,8 @@ export class LiveTradingService {
   }
 
   /**
-   * Finalize held settlement only after Gamma marks the market explicitly resolved.
+   * Finalize held settlement only after official Up/Down is known
+   * (completed crypto-price, else explicit Gamma).
    * Portfolio token marks / realized PnL may fill dollars, never Market or Win/Loss alone.
    */
   private applyHeldSettlementToCard(
@@ -1938,7 +1939,7 @@ export class LiveTradingService {
       opts.officialOutcome === "up" || opts.officialOutcome === "down"
         ? opts.officialOutcome
         : null;
-    // Correctness over speed — stay Pending until explicit Gamma resolution.
+    // Stay Pending until crypto-price completes or Gamma explicitly resolves.
     if (!official) return false;
 
     const won = card.side === official;
@@ -2057,7 +2058,7 @@ export class LiveTradingService {
   }
 
   /**
-   * Settle a held card from Gamma + known fill — same clock as Prediction.
+   * Settle a held card from official outcome + known fill — same clock as Prediction.
    * Portfolio marks may refine P/L later; they do not gate Win/Loss.
    */
   private async trySettleHeldCardFromGamma(card: TradingPositionCard): Promise<boolean> {
@@ -2078,7 +2079,7 @@ export class LiveTradingService {
     return this.applyHeldSettlementToCard(card, { officialOutcome });
   }
 
-  /** Held settlement: Gamma first (with Prediction), then portfolio for fill/P/L refinement. */
+  /** Held settlement: official outcome first (with Prediction), then portfolio for fill/P/L. */
   private async trySettleHeldCardFromPolymarket(card: TradingPositionCard): Promise<boolean> {
     // Same resolution clock as Prediction — do not wait on portfolio APIs.
     if (await this.trySettleHeldCardFromGamma(card)) return true;
@@ -2118,13 +2119,13 @@ export class LiveTradingService {
 
     let settledCount = 0;
     for (const card of openCards) {
-      // Same clock as Prediction: settle as soon as Gamma has the official outcome.
+      // Same clock as Prediction: settle as soon as official outcome is known.
       if (await this.trySettleHeldCardFromGamma(card)) {
         settledCount += 1;
         continue;
       }
 
-      // Fill incomplete or Gamma not ready yet — try portfolio, then keep polling.
+      // Fill incomplete or outcome not ready yet — try portfolio, then keep polling.
       const closed = await pollUntil(
         async () => {
           const rows = await fetchClosedPositions(this.userId, {

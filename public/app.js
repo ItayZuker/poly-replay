@@ -6182,7 +6182,7 @@ function recordPredictionScore(side, windowStart, outcome, { showResultUi, sourc
   return true;
 }
 
-function applyPredictionOutcome(outcome, source = "gamma") {
+function applyPredictionOutcome(outcome, source = "crypto-price") {
   const side = manipDetectorRuntime.predictionSide;
   const windowStart = manipDetectorRuntime.predictionWindowStart;
   if (manipDetectorRuntime.uiPhase !== "pending") return;
@@ -6231,13 +6231,13 @@ async function pollBackgroundPredictionOutcome(job) {
           removeBackgroundResolution(job.windowStart);
           recordPredictionScore(job.side, job.windowStart, body.outcome, {
             showResultUi: false,
-            source: "gamma",
+            source: body.source === "crypto-price" ? "crypto-price" : "gamma",
           });
           return;
         }
       }
     } catch {
-      // keep polling until Gamma explicitly resolves
+      // keep polling until crypto-price completes or Gamma resolves
     }
   }
 
@@ -6330,12 +6330,15 @@ async function pollPredictionOfficialOutcome() {
       if (res.ok) {
         const body = await res.json();
         if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
-          applyPredictionOutcome(body.outcome, "gamma");
+          applyPredictionOutcome(
+            body.outcome,
+            body.source === "crypto-price" ? "crypto-price" : "gamma",
+          );
           return;
         }
       }
     } catch {
-      // keep polling until Gamma explicitly resolves
+      // keep polling until crypto-price completes or Gamma resolves
     }
   }
 

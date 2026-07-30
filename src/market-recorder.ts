@@ -1,7 +1,7 @@
 import { clobMarketFeed, hasSocketBook } from "./clob-market-feed.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
 import { getPolymarketWindowAssetPricesForPair } from "./asset-price-service.js";
-import { waitForGammaWindowResolution } from "./gamma-window-resolution.js";
+import { waitForOfficialWindowResolution } from "./official-window-resolution.js";
 import {
   fetchCurrentUpDownMarket,
   fetchCurrentUpDownMarketWithRetry,
@@ -573,7 +573,7 @@ export class MarketRecorder {
       const pair = await fetchMarketPairFromSlug(this.activeWindow.slug);
       const yesInfo = clobMarketFeed.getCachedMarketInfo(pair.yesTokenId);
       const noInfo = clobMarketFeed.getCachedMarketInfo(pair.noTokenId);
-      const gamma = await waitForGammaWindowResolution(this.activeWindow.slug, {
+      const official = await waitForOfficialWindowResolution(this.activeWindow.slug, {
         maxWaitMs: 120_000,
         intervalMs: 1000,
       });
@@ -581,19 +581,19 @@ export class MarketRecorder {
       if (yesInfo) this.activeWindow.yesPrice = pickDisplayPrice(yesInfo).price;
       if (noInfo) this.activeWindow.noPrice = pickDisplayPrice(noInfo).price;
 
-      if (gamma) {
-        this.applyAssetPrices(gamma.finalPrice, gamma.priceToBeat);
-        this.activeWindow.windowOutcome = gamma.outcome;
+      if (official) {
+        this.applyAssetPrices(official.finalPrice, official.priceToBeat);
+        this.activeWindow.windowOutcome = official.outcome;
         return;
       }
 
-      // Correctness over speed: record Chainlink close/PTB when available, but do not
-      // invent windowOutcome from price — leave unset for later Gamma backfill.
+      // Record Chainlink/REST close/PTB when available, but do not invent windowOutcome
+      // from incomplete prices — leave unset for later official backfill.
       const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
       this.applyAssetPrices(prices.assetPrice, prices.prevCloseAsset);
       logService.warn(
         "recorder",
-        `Gamma explicit resolution unavailable for ${this.activeWindow.slug}; windowOutcome left unset`,
+        `Official resolution unavailable for ${this.activeWindow.slug}; windowOutcome left unset`,
       );
     } catch {
       // best effort

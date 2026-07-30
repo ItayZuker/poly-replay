@@ -1038,7 +1038,7 @@ app.get("/api/window", async (req, res) => {
   }
 });
 
-/** Explicit Gamma resolution for a finished market window (by slug). Pending until resolved. */
+/** Official window outcome: completed crypto-price first, else explicit Gamma. */
 app.get("/api/window-resolution", async (req, res) => {
   try {
     const slug = String(req.query.slug || "").trim();
@@ -1046,13 +1046,17 @@ app.get("/api/window-resolution", async (req, res) => {
       res.status(400).json({ error: "slug required" });
       return;
     }
-    const { fetchGammaWindowResolution } = await import("./gamma-window-resolution.js");
-    const resolution = await fetchGammaWindowResolution(slug);
+    const { fetchOfficialWindowResolution } = await import("./official-window-resolution.js");
+    const resolution = await fetchOfficialWindowResolution(slug);
     if (!resolution?.outcome) {
       res.json({ resolved: false });
       return;
     }
-    res.json({ resolved: true, outcome: resolution.outcome });
+    res.json({
+      resolved: true,
+      outcome: resolution.outcome,
+      source: resolution.source,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: message });

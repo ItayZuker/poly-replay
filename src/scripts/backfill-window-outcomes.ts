@@ -1,6 +1,6 @@
 /**
  * Backfill windowOutcome (+ settlement prices when available) on windows/ JSON
- * from Polymarket Gamma event resolution by slug.
+ * from official resolution (completed crypto-price, else explicit Gamma) by slug.
  *
  * Usage:
  *   npm run backfill:outcomes
@@ -14,7 +14,7 @@ import {
   saveRecordedWindow,
 } from "../db/recorded-window-repository.js";
 import { initStorage } from "../db/data-dir.js";
-import { fetchGammaWindowResolution } from "../gamma-window-resolution.js";
+import { fetchOfficialWindowResolution } from "../official-window-resolution.js";
 import { buildUpDownSlug, parseMarketSeries } from "../market-pair.js";
 import { roundTo4 } from "../tick-compact.js";
 import type { MarketDocument } from "../types.js";
@@ -43,7 +43,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
       buildUpDownSlug(asset, timeframe, window.windowStart);
 
     try {
-      const resolution = await fetchGammaWindowResolution(slug);
+      const resolution = await fetchOfficialWindowResolution(slug);
       if (!resolution) {
         unresolved += 1;
         console.warn(`[backfill] ${label}: unresolved (${slug})`);
@@ -51,7 +51,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         continue;
       }
 
-      const { outcome, finalPrice, priceToBeat } = resolution;
+      const { outcome, finalPrice, priceToBeat, source } = resolution;
       const nextAsset = finalPrice ?? window.assetPrice;
       const nextPtb = priceToBeat ?? window.prevCloseAsset;
       const nextGap =
@@ -104,7 +104,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
           (finalPrice != null && priceToBeat != null
             ? ` (ptb=${priceToBeat} close=${finalPrice})`
             : "") +
-          ` ${slug}`,
+          ` [${source}] ${slug}`,
       );
     } catch (err) {
       failed += 1;
