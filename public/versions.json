@@ -1,6 +1,11 @@
 {
-  "current": "1.20.0",
+  "current": "1.20.1",
   "releases": [
+    {
+      "version": "1.20.1",
+      "releasedAt": "2026-07-30T07:48:31.521Z",
+      "notes": "After a Right Prediction, the detector can re-trigger in the same window while Trigger Area remains open (live and Replay). Docs updated."
+    },
     {
       "version": "1.20.0",
       "releasedAt": "2026-07-30T07:30:12.098Z",
