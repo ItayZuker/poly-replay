@@ -182,6 +182,13 @@ function sideBuy(side: WindowOutcome, upBuy: number, downBuy: number): number {
   return side === "up" ? upBuy : downBuy;
 }
 
+export interface WindowPredictionEvaluation {
+  hit: WindowPredictionHit;
+  score: "right" | "wrong";
+  /** Tick time (ms) when Profit prediction was met; null when Wrong. */
+  resolvedAtMs: number | null;
+}
+
 /**
  * Walk recorded ticks and return the first Prediction hit for the window, or null.
  * Mirrors the live Market Prediction detector rules.
@@ -192,11 +199,30 @@ export function evaluateWindowPrediction(
   windowEnd: number,
   configInput?: Partial<PredictionDetectorConfig> | null,
 ): WindowPredictionHit | null {
+  const all = evaluateWindowPredictions(ticks, windowStart, windowEnd, configInput);
+  return all[0]?.hit ?? null;
+}
+
+/**
+ * Walk recorded ticks and return every Prediction trigger in the window.
+ * After a Right, detection can fire again while still inside Trigger Area
+ * (same as live). An open trigger at window end scores Wrong.
+ */
+export function evaluateWindowPredictions(
+  ticks: PredictionTickSample[],
+  windowStart: number,
+  windowEnd: number,
+  configInput?: Partial<PredictionDetectorConfig> | null,
+): WindowPredictionEvaluation[] {
   const config = normalizePredictionDetectorConfig(configInput);
   const samples: Array<{ tMs: number; gap: number; upBuy: number; downBuy: number }> = [];
+  const out: WindowPredictionEvaluation[] = [];
+  let active: WindowPredictionHit | null = null;
+  const endMs = windowEnd * 1000;
+  const riseP = config.riseCents / 100;
 
   for (const tick of ticks) {
-    if (!(tick.tMs < windowEnd * 1000)) break;
+    if (!(tick.tMs < endMs)) break;
 
     const gap = gapFromTick(tick);
     const upBuy = Number(tick.yesAsk);
@@ -211,12 +237,22 @@ export function evaluateWindowPrediction(
       continue;
     }
 
-    if (!isInArea(tick.tMs, windowStart, windowEnd, config.areaStart, config.areaEnd)) {
+    const nowMs = tick.tMs;
+
+    if (active) {
+      if (sideBuy(active.side, upBuy, downBuy) >= active.triggerSideBuy + riseP - 1e-12) {
+        out.push({ hit: active, score: "right", resolvedAtMs: nowMs });
+        active = null;
+        samples.length = 0;
+      }
+      continue;
+    }
+
+    if (!isInArea(nowMs, windowStart, windowEnd, config.areaStart, config.areaEnd)) {
       samples.length = 0;
       continue;
     }
 
-    const nowMs = tick.tMs;
     samples.push({ tMs: nowMs, gap, upBuy, downBuy });
     const cutoff = nowMs - (config.sensitivitySec + 2) * 1000;
     while (samples.length > 0 && samples[0].tMs < cutoff) {
@@ -249,11 +285,12 @@ export function evaluateWindowPrediction(
           config.minQuoteCents,
         )
       ) {
-        return {
+        active = {
           side: "down",
           triggeredAtMs: nowMs,
           triggerSideBuy: downBuy,
         };
+        samples.length = 0;
       }
     } else if (baseline.gap < 0) {
       if (
@@ -269,16 +306,21 @@ export function evaluateWindowPrediction(
           config.minQuoteCents,
         )
       ) {
-        return {
+        active = {
           side: "up",
           triggeredAtMs: nowMs,
           triggerSideBuy: upBuy,
         };
+        samples.length = 0;
       }
     }
   }
 
-  return null;
+  if (active) {
+    out.push({ hit: active, score: "wrong", resolvedAtMs: null });
+  }
+
+  return out;
 }
 
 /**
@@ -291,9 +333,11 @@ export function scorePrediction(
   windowEndSec: number,
   riseCents: number,
 ): "right" | "wrong" | null {
-  if (!hit || (hit.side !== "up" && hit.side !== "down")) return null;
-  if (!Number.isFinite(hit.triggeredAtMs) || !Number.isFinite(hit.triggerSideBuy)) return null;
+  if (!hit) return null;
   const riseP = normalizePredictionRiseCents(riseCents) / 100;
+  // Reuse multi-hit walker for a single known trigger by scoring only that hit window span.
+  if (!Number.isFinite(hit.triggeredAtMs) || !Number.isFinite(hit.triggerSideBuy)) return null;
+  if (hit.side !== "up" && hit.side !== "down") return null;
   const target = hit.triggerSideBuy + riseP;
   const endMs = windowEndSec * 1000;
 

@@ -3128,8 +3128,9 @@ function predictionPositionCardsStorageKey(series = selectedSeries) {
   );
 }
 
-function predictionCardId(series, windowStart) {
-  return `prediction:${series || "btc-5m"}:${windowStart}`;
+function predictionCardId(series, windowStart, triggerId = null) {
+  const key = triggerId || windowStart;
+  return `prediction:${series || "btc-5m"}:${key}`;
 }
 
 function persistPredictionPositionCards() {
@@ -3197,13 +3198,13 @@ function upsertPredictionPositionCard(card, { refresh = true } = {}) {
 }
 
 function ensurePredictionPositionCard(
-  { side, windowStart, windowEnd, slug, buyAt },
+  { side, windowStart, windowEnd, slug, buyAt, triggerId },
   { refresh = true } = {},
 ) {
   if (side !== "up" && side !== "down") return null;
   if (windowStart == null || !Number.isFinite(windowStart)) return null;
   const series = selectedSeries || "btc-5m";
-  const id = predictionCardId(series, windowStart);
+  const id = predictionCardId(series, windowStart, triggerId);
   const existing = predictionPositionCards.find((c) => c.id === id);
   if (existing && (existing.status === "right" || existing.status === "wrong")) {
     return existing;
@@ -3214,6 +3215,7 @@ function ensurePredictionPositionCard(
       windowKey: `${series}:${windowStart}`,
       series,
       side,
+      triggerId: triggerId || existing?.triggerId || null,
       buyAt:
         buyAt != null && Number.isFinite(buyAt)
           ? buyAt
@@ -3233,14 +3235,23 @@ function ensurePredictionPositionCard(
   return predictionPositionCards.find((c) => c.id === id) || null;
 }
 
-function settlePredictionPositionCard(side, windowStart, right) {
+function settlePredictionPositionCard(side, windowStart, right, triggerId = null) {
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
   if (typeof right !== "boolean") return false;
   const series = selectedSeries || "btc-5m";
-  const id = predictionCardId(series, windowStart);
+  const id = predictionCardId(series, windowStart, triggerId);
   let card = predictionPositionCards.find((c) => c.id === id);
+  if (!card && triggerId) {
+    // Prefer the open card for this window when trigger id is missing on older cards.
+    card = predictionPositionCards.find(
+      (c) =>
+        c.windowKey === `${series}:${windowStart}` &&
+        c.status === "open" &&
+        (c.side === side || side == null),
+    );
+  }
   if (!card) {
-    ensurePredictionPositionCard({ side, windowStart }, { refresh: false });
+    ensurePredictionPositionCard({ side, windowStart, triggerId }, { refresh: false });
     card = predictionPositionCards.find((c) => c.id === id);
   }
   if (!card) return false;
@@ -3269,6 +3280,7 @@ function syncPredictionCardsFromRuntime() {
         windowStart,
         windowEnd: manipDetectorRuntime.predictionWindowEnd,
         slug: manipDetectorRuntime.predictionSlug,
+        triggerId: manipDetectorRuntime.predictionTriggerId,
       },
       { refresh: false },
     );
@@ -3281,6 +3293,7 @@ function syncPredictionCardsFromRuntime() {
         side: job.side,
         windowStart: job.windowStart,
         slug: job.slug,
+        triggerId: job.triggerId,
       },
       { refresh: false },
     );
@@ -5684,12 +5697,16 @@ const manipDetectorRuntime = {
   predictionSlug: null,
   /** Predicted-side Buy (0–1) at trigger. */
   predictionTriggerBuy: null,
+  /** Unique id for the active trigger (allows re-trigger after Right). */
+  predictionTriggerId: null,
   /** Profit prediction (¢) required after trigger for Right. */
   predictionRiseCents: 5,
   /** @type {"none"|"active"|"pending"|"right"|"wrong"} */
   uiPhase: "none",
-  /** @type {number[]} */
+  /** @type {number[]} windows locked after Wrong (end of window). */
   scoredWindowStarts: [],
+  /** @type {string[]} scored trigger ids (prevents double-count). */
+  scoredTriggerIds: [],
   lastPrice: null,
   lastPtb: null,
   resolveTimer: null,
@@ -5704,6 +5721,7 @@ const manipDetectorRuntime = {
    *   windowEnd: number|null,
    *   triggerSideBuy: number|null,
    *   riseCents: number,
+   *   triggerId: string|null,
    *   slug: string|null,
    *   lastPrice: number|null,
    *   lastPtb: number|null,
@@ -5719,6 +5737,7 @@ const manipDetectorRuntime = {
 
 const PREDICTION_RESULT_SHOW_MS = 5000;
 const PREDICTION_SCORED_WINDOW_MAX = 50;
+const PREDICTION_SCORED_TRIGGER_MAX = 100;
 
 function predictionRuntimeStorageKey(series = selectedSeries) {
   return userScopedStorageKey(`${PREDICTION_RUNTIME_STORAGE_KEY}:${series || "btc-5m"}`);
@@ -5742,6 +5761,36 @@ function markPredictionWindowScored(windowStart) {
       manipDetectorRuntime.scoredWindowStarts.length - PREDICTION_SCORED_WINDOW_MAX,
     );
   }
+}
+
+function isPredictionTriggerScored(triggerId) {
+  return (
+    typeof triggerId === "string" &&
+    triggerId.length > 0 &&
+    manipDetectorRuntime.scoredTriggerIds.includes(triggerId)
+  );
+}
+
+function markPredictionTriggerScored(triggerId) {
+  if (typeof triggerId !== "string" || !triggerId) return;
+  if (isPredictionTriggerScored(triggerId)) return;
+  manipDetectorRuntime.scoredTriggerIds.push(triggerId);
+  if (manipDetectorRuntime.scoredTriggerIds.length > PREDICTION_SCORED_TRIGGER_MAX) {
+    manipDetectorRuntime.scoredTriggerIds.splice(
+      0,
+      manipDetectorRuntime.scoredTriggerIds.length - PREDICTION_SCORED_TRIGGER_MAX,
+    );
+  }
+}
+
+function normalizeScoredTriggerIds(value) {
+  const list = Array.isArray(value) ? value : [];
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== "string" || !item || out.includes(item)) continue;
+    out.push(item);
+  }
+  return out.slice(-PREDICTION_SCORED_TRIGGER_MAX);
 }
 
 function normalizeScoredWindowStarts(value) {
@@ -5775,6 +5824,7 @@ function serializeBackgroundResolutions() {
     windowEnd: Number.isFinite(job.windowEnd) ? job.windowEnd : null,
     triggerSideBuy: Number.isFinite(job.triggerSideBuy) ? job.triggerSideBuy : null,
     riseCents: normalizePredictionRiseCents(job.riseCents),
+    triggerId: typeof job.triggerId === "string" ? job.triggerId : null,
     slug: job.slug,
     lastPrice: Number.isFinite(job.lastPrice) ? job.lastPrice : null,
     lastPtb: Number.isFinite(job.lastPtb) ? job.lastPtb : null,
@@ -5789,6 +5839,7 @@ function persistPredictionRuntime() {
     const side = manipDetectorRuntime.predictionSide;
     const phase = manipDetectorRuntime.uiPhase;
     const scored = manipDetectorRuntime.scoredWindowStarts;
+    const scoredTriggers = manipDetectorRuntime.scoredTriggerIds;
     const background = serializeBackgroundResolutions();
     const active =
       (side === "up" || side === "down") &&
@@ -5796,7 +5847,12 @@ function persistPredictionRuntime() {
       manipDetectorRuntime.predictionWindowStart != null &&
       Number.isFinite(manipDetectorRuntime.predictionWindowStart);
 
-    if (!active && background.length === 0 && scored.length === 0) {
+    if (
+      !active &&
+      background.length === 0 &&
+      scored.length === 0 &&
+      scoredTriggers.length === 0
+    ) {
       localStorage.removeItem(key);
       return;
     }
@@ -5811,11 +5867,13 @@ function persistPredictionRuntime() {
         predictionTriggerBuy: active && Number.isFinite(manipDetectorRuntime.predictionTriggerBuy)
           ? manipDetectorRuntime.predictionTriggerBuy
           : null,
+        predictionTriggerId: active ? manipDetectorRuntime.predictionTriggerId : null,
         predictionRiseCents: active
           ? normalizePredictionRiseCents(manipDetectorRuntime.predictionRiseCents)
           : null,
         uiPhase: active ? phase : "none",
         scoredWindowStarts: scored,
+        scoredTriggerIds: scoredTriggers,
         // legacy single field for older clients
         scoredWindowStart: scored.length > 0 ? scored[scored.length - 1] : null,
         backgroundResolutions: background,
@@ -5882,12 +5940,18 @@ function restoreBackgroundResolutions(rawList) {
       continue;
     }
     const windowEnd = Number.isFinite(item.windowEnd) ? item.windowEnd : null;
+    const triggerId =
+      typeof item.triggerId === "string" && item.triggerId
+        ? item.triggerId
+        : `${windowStart}:bg:${item.resolveStartedAt || 0}`;
+    if (isPredictionTriggerScored(triggerId)) continue;
     const job = {
       side,
       windowStart,
       windowEnd,
       triggerSideBuy: Number.isFinite(item.triggerSideBuy) ? item.triggerSideBuy : null,
       riseCents: normalizePredictionRiseCents(item.riseCents),
+      triggerId,
       slug:
         typeof item.slug === "string" && item.slug.trim() ? item.slug.trim() : null,
       lastPrice: Number.isFinite(item.lastPrice) ? item.lastPrice : null,
@@ -5903,6 +5967,7 @@ function restoreBackgroundResolutions(rawList) {
       recordPredictionScore(side, windowStart, false, {
         showResultUi: false,
         source: "window-end",
+        triggerId,
       });
       continue;
     }
@@ -5926,6 +5991,7 @@ function restorePredictionRuntime() {
     manipDetectorRuntime.scoredWindowStarts = normalizeScoredWindowStarts(
       parsed.scoredWindowStarts ?? parsed.scoredWindowStart,
     );
+    manipDetectorRuntime.scoredTriggerIds = normalizeScoredTriggerIds(parsed.scoredTriggerIds);
     restoreBackgroundResolutions(parsed.backgroundResolutions);
 
     const side =
@@ -5940,6 +6006,12 @@ function restorePredictionRuntime() {
     const windowEnd = Number.isFinite(parsed.predictionWindowEnd)
       ? parsed.predictionWindowEnd
       : null;
+    const triggerId =
+      typeof parsed.predictionTriggerId === "string" && parsed.predictionTriggerId
+        ? parsed.predictionTriggerId
+        : windowStart != null
+          ? `${windowStart}:restored`
+          : null;
 
     if (!side || windowStart == null || phase === "none") {
       syncPredictionStatusUi();
@@ -5948,8 +6020,8 @@ function restorePredictionRuntime() {
       return;
     }
 
-    // Already scored this window — keep the score lock, drop stale UI.
-    if (isPredictionWindowScored(windowStart)) {
+    // Wrong-locked window, or this trigger already scored — drop stale UI.
+    if (isPredictionWindowScored(windowStart) || isPredictionTriggerScored(triggerId)) {
       persistPredictionRuntime();
       syncPredictionStatusUi();
       syncPredictionCardsFromRuntime();
@@ -5966,6 +6038,7 @@ function restorePredictionRuntime() {
     manipDetectorRuntime.predictionTriggerBuy = Number.isFinite(parsed.predictionTriggerBuy)
       ? parsed.predictionTriggerBuy
       : null;
+    manipDetectorRuntime.predictionTriggerId = triggerId;
     manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(
       parsed.predictionRiseCents ?? $("prediction-rise")?.value,
     );
@@ -6302,18 +6375,33 @@ function persistPredictionStats() {
   return manipDetectorRuntime.statsPersistChain;
 }
 
-function recordPredictionScore(side, windowStart, right, { showResultUi, source } = {}) {
+function recordPredictionScore(side, windowStart, right, { showResultUi, source, triggerId } = {}) {
   if (side !== "up" && side !== "down") return false;
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
   if (typeof right !== "boolean") return false;
   if (isPredictionWindowScored(windowStart)) return false;
 
-  markPredictionWindowScored(windowStart);
+  const resolvedTriggerId =
+    (typeof triggerId === "string" && triggerId) ||
+    manipDetectorRuntime.predictionTriggerId ||
+    `${windowStart}:${right ? "right" : "wrong"}:${Date.now()}`;
+  if (isPredictionTriggerScored(resolvedTriggerId)) return false;
+
+  markPredictionTriggerScored(resolvedTriggerId);
+  // Wrong locks the window (typically window end). Right does not — re-trigger allowed.
+  if (!right) markPredictionWindowScored(windowStart);
+  else {
+    // Let detection arm again while Trigger Area remains open (fresh Duration samples).
+    manipDetectorRuntime.cooldownUntilMs = 0;
+    manipDetectorRuntime.samples = [];
+    clearManipulationFlash();
+  }
+
   if (right) manipDetectorRuntime.rightCount += 1;
   else manipDetectorRuntime.wrongCount += 1;
   syncPredictionStatsUi();
   void persistPredictionStats();
-  settlePredictionPositionCard(side, windowStart, right);
+  settlePredictionPositionCard(side, windowStart, right, resolvedTriggerId);
   appendLogEntry({
     level: "info",
     source: "client",
@@ -6326,6 +6414,7 @@ function recordPredictionScore(side, windowStart, right, { showResultUi, source 
     stopPredictionResolveLoop();
     stopPredictionResultClearTimer();
     clearManipulationFlash();
+    manipDetectorRuntime.cooldownUntilMs = 0;
     manipDetectorRuntime.uiPhase = right ? "right" : "wrong";
     syncPredictionStatusUi();
     manipDetectorRuntime.resultClearTimer = setTimeout(() => {
@@ -6340,12 +6429,14 @@ function recordPredictionScore(side, windowStart, right, { showResultUi, source 
       manipDetectorRuntime.predictionWindowEnd = null;
       manipDetectorRuntime.predictionSlug = null;
       manipDetectorRuntime.predictionTriggerBuy = null;
+      manipDetectorRuntime.predictionTriggerId = null;
       manipDetectorRuntime.uiPhase = "none";
       syncPredictionStatusUi();
       persistPredictionRuntime();
     }, PREDICTION_RESULT_SHOW_MS);
   } else if (
     manipDetectorRuntime.predictionWindowStart === windowStart &&
+    manipDetectorRuntime.predictionTriggerId === resolvedTriggerId &&
     (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending")
   ) {
     manipDetectorRuntime.predictionSide = null;
@@ -6353,8 +6444,10 @@ function recordPredictionScore(side, windowStart, right, { showResultUi, source 
     manipDetectorRuntime.predictionWindowEnd = null;
     manipDetectorRuntime.predictionSlug = null;
     manipDetectorRuntime.predictionTriggerBuy = null;
+    manipDetectorRuntime.predictionTriggerId = null;
     manipDetectorRuntime.uiPhase = "none";
     clearManipulationFlash();
+    manipDetectorRuntime.cooldownUntilMs = 0;
     syncPredictionStatusUi();
   }
 
@@ -6370,7 +6463,11 @@ function finalizePredictionAtWindowEnd({ showResultUi = true, source = "window-e
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
   if (isPredictionWindowScored(windowStart)) return false;
   stopPredictionResolveLoop();
-  return recordPredictionScore(side, windowStart, false, { showResultUi, source });
+  return recordPredictionScore(side, windowStart, false, {
+    showResultUi,
+    source,
+    triggerId: manipDetectorRuntime.predictionTriggerId,
+  });
 }
 
 function removeBackgroundResolution(windowStart) {
@@ -6392,6 +6489,7 @@ function enqueueBackgroundResolution({
   windowEnd,
   triggerSideBuy,
   riseCents,
+  triggerId,
   slug,
   lastPrice,
   lastPtb,
@@ -6400,7 +6498,15 @@ function enqueueBackgroundResolution({
   if (side !== "up" && side !== "down") return false;
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
   if (isPredictionWindowScored(windowStart)) return false;
-  if (manipDetectorRuntime.backgroundResolutions.some((j) => j.windowStart === windowStart)) {
+  const resolvedTriggerId =
+    (typeof triggerId === "string" && triggerId) ||
+    `${windowStart}:bg:${Date.now()}`;
+  if (isPredictionTriggerScored(resolvedTriggerId)) return false;
+  if (
+    manipDetectorRuntime.backgroundResolutions.some(
+      (j) => j.triggerId === resolvedTriggerId || j.windowStart === windowStart,
+    )
+  ) {
     return false;
   }
   const nowMs = Date.now();
@@ -6409,6 +6515,7 @@ function enqueueBackgroundResolution({
     recordPredictionScore(side, windowStart, false, {
       showResultUi: false,
       source: "window-end",
+      triggerId: resolvedTriggerId,
     });
     return true;
   }
@@ -6418,6 +6525,7 @@ function enqueueBackgroundResolution({
     windowEnd: endSec,
     triggerSideBuy: Number.isFinite(triggerSideBuy) ? triggerSideBuy : null,
     riseCents: normalizePredictionRiseCents(riseCents),
+    triggerId: resolvedTriggerId,
     slug: typeof slug === "string" && slug.trim() ? slug.trim() : null,
     lastPrice: Number.isFinite(lastPrice) ? lastPrice : null,
     lastPtb: Number.isFinite(lastPtb) ? lastPtb : null,
@@ -6451,6 +6559,7 @@ function parkForegroundPredictionToBackground() {
     windowEnd: manipDetectorRuntime.predictionWindowEnd,
     triggerSideBuy: manipDetectorRuntime.predictionTriggerBuy,
     riseCents: manipDetectorRuntime.predictionRiseCents,
+    triggerId: manipDetectorRuntime.predictionTriggerId,
     slug: manipDetectorRuntime.predictionSlug,
     lastPrice: manipDetectorRuntime.lastPrice,
     lastPtb: manipDetectorRuntime.lastPtb,
@@ -6462,6 +6571,7 @@ function parkForegroundPredictionToBackground() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.uiPhase = "none";
   manipDetectorRuntime.resolveStartedAt = 0;
   return true;
@@ -6475,6 +6585,7 @@ function clearForegroundPredictionUi() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.uiPhase = "none";
 }
 
@@ -6500,7 +6611,11 @@ function watchPredictionRiseOnQuotes(upBuy, downBuy, state) {
       manipDetectorRuntime.predictionSide,
       manipDetectorRuntime.predictionWindowStart,
       true,
-      { showResultUi: true, source: "rise" },
+      {
+        showResultUi: true,
+        source: "rise",
+        triggerId: manipDetectorRuntime.predictionTriggerId,
+      },
     );
   }
 
@@ -6516,6 +6631,7 @@ function watchPredictionRiseOnQuotes(upBuy, downBuy, state) {
       recordPredictionScore(job.side, job.windowStart, false, {
         showResultUi: false,
         source: "window-end",
+        triggerId: job.triggerId,
       });
       continue;
     }
@@ -6527,6 +6643,7 @@ function watchPredictionRiseOnQuotes(upBuy, downBuy, state) {
       recordPredictionScore(job.side, job.windowStart, true, {
         showResultUi: false,
         source: "rise",
+        triggerId: job.triggerId,
       });
     }
   }
@@ -6546,6 +6663,7 @@ function clearPredictionForNewWindow() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.uiPhase = "none";
   syncPredictionStatusUi();
   persistPredictionRuntime();
@@ -6553,6 +6671,7 @@ function clearPredictionForNewWindow() {
 
 function predictionHoldsWindow(windowStart) {
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  // Wrong at window end locks the window. Right does not — re-trigger is allowed.
   if (isPredictionWindowScored(windowStart)) return true;
   if (
     manipDetectorRuntime.predictionWindowStart === windowStart &&
@@ -6583,6 +6702,7 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
     return false;
   }
 
+  const triggerId = `${windowStart}:${Date.now()}`;
   manipDetectorRuntime.predictionSide = side;
   manipDetectorRuntime.predictionWindowStart = windowStart;
   manipDetectorRuntime.predictionWindowEnd =
@@ -6590,6 +6710,7 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
   manipDetectorRuntime.predictionSlug =
     typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
   manipDetectorRuntime.predictionTriggerBuy = triggerSideBuy;
+  manipDetectorRuntime.predictionTriggerId = triggerId;
   manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(riseCents);
   manipDetectorRuntime.uiPhase = "active";
   syncPredictionStatusUi();
@@ -6600,6 +6721,7 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
     windowEnd: manipDetectorRuntime.predictionWindowEnd,
     slug: manipDetectorRuntime.predictionSlug,
     buyAt: Date.now() / 1000,
+    triggerId,
   });
   return true;
 }
@@ -6716,8 +6838,10 @@ function resetManipulationDetector() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.uiPhase = "none";
   manipDetectorRuntime.scoredWindowStarts = [];
+  manipDetectorRuntime.scoredTriggerIds = [];
   manipDetectorRuntime.lastPrice = null;
   manipDetectorRuntime.lastPtb = null;
   clearManipulationFlash();

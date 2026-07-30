@@ -19,9 +19,8 @@ import { discardBadRecording } from "./bad-recording-cleanup.js";
 import { logService } from "./log-service.js";
 import { isFlatPriceFromTicks, isFlatPriceWindow } from "./window-dynamics.js";
 import {
-  evaluateWindowPrediction,
+  evaluateWindowPredictions,
   normalizePredictionDetectorConfig,
-  scorePrediction,
   type PredictionDetectorConfig,
 } from "./prediction-detector.js";
 import type {
@@ -285,6 +284,8 @@ export interface RecordedWindowSimulation {
   hadTicks: boolean;
   predictionSide?: WindowOutcome | null;
   predictionScore?: "right" | "wrong" | null;
+  /** All scored predictions in the window (supports re-trigger after Right). */
+  predictionScores?: Array<"right" | "wrong">;
   predictionTriggeredAtMs?: number | null;
   /** Duration (sec) used when the Prediction fired (for Open Replay band). */
   predictionSensitivitySec?: number | null;
@@ -312,6 +313,7 @@ export async function simulateRecordedWindow(
         hadTicks: true,
         predictionSide: null,
         predictionScore: null,
+        predictionScores: [],
         predictionTriggeredAtMs: null,
         predictionSensitivitySec: null,
       };
@@ -321,23 +323,20 @@ export async function simulateRecordedWindow(
       ticksForPred = await listReplayTicks(market, window.windowStart, 50_000);
       tickCache?.set(window.windowStart, ticksForPred);
     }
-    const predictionHit = evaluateWindowPrediction(
+    const predictionEvals = evaluateWindowPredictions(
       ticksForPred,
       window.windowStart,
       window.windowEnd,
       predictionConfig,
     );
+    const predictionHit = predictionEvals[0]?.hit ?? null;
     const predictionSide = predictionHit?.side ?? null;
     const predictionTriggeredAtMs = predictionHit?.triggeredAtMs ?? null;
     const predictionSensitivitySec = predictionHit
       ? predictionConfig.sensitivitySec
       : null;
-    const predictionScore = scorePrediction(
-      predictionHit,
-      ticksForPred,
-      window.windowEnd,
-      predictionConfig.riseCents,
-    );
+    const predictionScores = predictionEvals.map((e) => e.score);
+    const predictionScore = predictionScores[predictionScores.length - 1] ?? null;
     return {
       result: cached.result,
       markers: cached.markers.map((m) => ({ ...m })),
@@ -347,6 +346,7 @@ export async function simulateRecordedWindow(
       hadTicks: true,
       predictionSide,
       predictionScore,
+      predictionScores,
       predictionTriggeredAtMs,
       predictionSensitivitySec,
     };
@@ -370,6 +370,7 @@ export async function simulateRecordedWindow(
       hadTicks: false,
       predictionSide: null,
       predictionScore: null,
+      predictionScores: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
     };
@@ -387,27 +388,23 @@ export async function simulateRecordedWindow(
       hadTicks: false,
       predictionSide: null,
       predictionScore: null,
+      predictionScores: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
     };
   }
 
-  const predictionHit = predictionConfig
-    ? evaluateWindowPrediction(ticks, windowStart, windowEnd, predictionConfig)
-    : null;
+  const predictionEvals = predictionConfig
+    ? evaluateWindowPredictions(ticks, windowStart, windowEnd, predictionConfig)
+    : [];
+  const predictionHit = predictionEvals[0]?.hit ?? null;
   const predictionSide = predictionHit?.side ?? null;
   const predictionTriggeredAtMs = predictionHit?.triggeredAtMs ?? null;
   const predictionSensitivitySec = predictionHit
     ? predictionConfig!.sensitivitySec
     : null;
-  const predictionScore = predictionHit
-    ? scorePrediction(
-        predictionHit,
-        ticks,
-        windowEnd,
-        predictionConfig!.riseCents,
-      )
-    : null;
+  const predictionScores = predictionEvals.map((e) => e.score);
+  const predictionScore = predictionScores[predictionScores.length - 1] ?? null;
 
   // Mute per-fill/GTD spam — otherwise Replay floods SSE/console and freezes the UI.
   return logService.runWithMutedSources(["sim"], () => {
@@ -468,6 +465,7 @@ export async function simulateRecordedWindow(
       hadTicks: true,
       predictionSide,
       predictionScore,
+      predictionScores,
       predictionTriggeredAtMs,
       predictionSensitivitySec,
     };
@@ -860,6 +858,7 @@ export async function backtestSchedulePlacements(
             hadTicks: false,
             predictionSide: null,
             predictionScore: null,
+            predictionScores: [],
             predictionTriggeredAtMs: null,
             predictionSensitivitySec: null,
           } satisfies RecordedWindowSimulation;
@@ -873,7 +872,13 @@ export async function backtestSchedulePlacements(
     const withTicks = finished.filter((sim) => sim.hadTicks);
     // Include null results so “ran, no buy” windows count toward gray.
     const results = withTicks.map((sim) => sim.result);
-    const predictionScores = withTicks.map((sim) => sim.predictionScore ?? null);
+    const predictionScores = withTicks.flatMap((sim) =>
+      Array.isArray(sim.predictionScores) && sim.predictionScores.length > 0
+        ? sim.predictionScores
+        : sim.predictionScore
+          ? [sim.predictionScore]
+          : [],
+    );
 
     // Window metadata without tick files must not look like “ran, no trades”.
     if (withTicks.length === 0) {
@@ -957,7 +962,7 @@ export interface PlacementPlayWindowItem {
   markers: SimMarker[];
   /** Replay Prediction side when the detector fired in this window. */
   predictionSide?: WindowOutcome | null;
-  /** Right/wrong vs stored window outcome (null if no prediction or no outcome). */
+  /** Last Prediction score in the window (null if none). Earlier Rights may re-trigger. */
   predictionScore?: "right" | "wrong" | null;
   /** Tick time (ms) when Prediction first triggered. */
   predictionTriggeredAtMs?: number | null;
