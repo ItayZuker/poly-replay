@@ -91,6 +91,11 @@ function normalizeManualOrderType(raw: unknown): "FAK" | "FOK" {
   return raw === "FAK" ? "FAK" : "FOK";
 }
 
+function normalizePredictionSellOrderType(raw: unknown): "FAK" | "FOK" | "GTD" {
+  if (raw === "FAK" || raw === "FOK" || raw === "GTD") return raw;
+  return "FOK";
+}
+
 function defaultTrading(): TradingConfig {
   return {
     autoTrade: false,
@@ -234,7 +239,7 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     predictionTrade: Boolean(raw.predictionTrade),
     predictionShares,
     predictionBuyOrderType: normalizeManualOrderType(raw.predictionBuyOrderType),
-    predictionSellOrderType: normalizeManualOrderType(raw.predictionSellOrderType),
+    predictionSellOrderType: normalizePredictionSellOrderType(raw.predictionSellOrderType),
     manipulationSensitivitySec,
     ...quotes,
     predictionShiftCents,

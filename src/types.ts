@@ -397,8 +397,11 @@ export interface TradingConfig {
   predictionShares: number;
   /** Order type for Prediction Trade buys. */
   predictionBuyOrderType: "FAK" | "FOK";
-  /** Order type for Prediction Trade sells. */
-  predictionSellOrderType: "FAK" | "FOK";
+  /**
+   * Order type for Prediction Trade sells.
+   * GTD: rest limit at buy + Profit prediction as soon as the Buy fills.
+   */
+  predictionSellOrderType: "FAK" | "FOK" | "GTD";
   /** Seconds the adverse UP/DOWN vs gap condition must hold. */
   manipulationSensitivitySec: number;
   /**

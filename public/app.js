@@ -5593,6 +5593,15 @@ function normalizeManualOrderType(value) {
   return value === "FAK" ? "FAK" : "FOK";
 }
 
+function normalizePredictionSellOrderType(value) {
+  if (value === "FAK" || value === "FOK" || value === "GTD") return value;
+  return "FOK";
+}
+
+function isPredictionSellGtd() {
+  return normalizePredictionSellOrderType($("prediction-sell-order-type")?.value) === "GTD";
+}
+
 function normalizeManipulationSensitivity(value) {
   const n = Number(value);
   return Math.max(1, Math.min(120, Math.round(Number.isFinite(n) ? n : 5)));
@@ -5714,7 +5723,7 @@ function readLocalTradingConfig() {
         Boolean(parsed.manipulationDetector),
       predictionShares: normalizePredictionShares(parsed.predictionShares),
       predictionBuyOrderType: normalizeManualOrderType(parsed.predictionBuyOrderType),
-      predictionSellOrderType: normalizeManualOrderType(parsed.predictionSellOrderType),
+      predictionSellOrderType: normalizePredictionSellOrderType(parsed.predictionSellOrderType),
       manipulationSensitivitySec: normalizeManipulationSensitivity(parsed.manipulationSensitivitySec),
       ...(() => {
         const quotes = normalizePredictionQuoteBand(
@@ -5763,7 +5772,7 @@ function writeLocalTradingConfig(config) {
           Boolean(config.manipulationDetector),
         predictionShares: normalizePredictionShares(config.predictionShares),
         predictionBuyOrderType: normalizeManualOrderType(config.predictionBuyOrderType),
-        predictionSellOrderType: normalizeManualOrderType(config.predictionSellOrderType),
+        predictionSellOrderType: normalizePredictionSellOrderType(config.predictionSellOrderType),
         manipulationSensitivitySec: normalizeManipulationSensitivity(config.manipulationSensitivitySec),
         predictionMaxQuoteCents: quotes.maxQuoteCents,
         predictionMinQuoteCents: quotes.minQuoteCents,
@@ -5864,7 +5873,7 @@ function buildTradingConfigPatch(overrides = {}) {
     predictionTrade,
     predictionShares: normalizePredictionShares(predictionSharesInput?.value),
     predictionBuyOrderType: normalizeManualOrderType(predictionBuyTypeSelect?.value),
-    predictionSellOrderType: normalizeManualOrderType(predictionSellTypeSelect?.value),
+    predictionSellOrderType: normalizePredictionSellOrderType(predictionSellTypeSelect?.value),
     manipulationSensitivitySec: normalizeManipulationSensitivity(sensInput?.value),
     predictionMaxQuoteCents: quotes.maxQuoteCents,
     predictionMinQuoteCents: quotes.minQuoteCents,
@@ -6878,7 +6887,7 @@ function watchPredictionRiseOnQuotes(upBid, downBid, state) {
       downBid,
     );
     const rightSide = manipDetectorRuntime.predictionSide;
-    if (manipDetectorRuntime.predictionTraded) {
+    if (manipDetectorRuntime.predictionTraded && !isPredictionSellGtd()) {
       void placePredictionTradeOrder(rightSide, "sell");
     }
     recordPredictionScore(rightSide, manipDetectorRuntime.predictionWindowStart, true, {
@@ -6909,7 +6918,7 @@ function watchPredictionRiseOnQuotes(upBid, downBid, state) {
       sellMeetsPredictionRise(job.side, upBid, downBid, job.triggerSideBuy, job.riseCents)
     ) {
       removeBackgroundResolution(job.windowStart);
-      if (job.traded) {
+      if (job.traded && !isPredictionSellGtd()) {
         void placePredictionTradeOrder(job.side, "sell");
       }
       recordPredictionScore(job.side, job.windowStart, true, {
@@ -7450,7 +7459,9 @@ function applyTradingConfigToUi(config) {
     predictionBuyTypeSelect.value = normalizeManualOrderType(config.predictionBuyOrderType);
   }
   if (predictionSellTypeSelect) {
-    predictionSellTypeSelect.value = normalizeManualOrderType(config.predictionSellOrderType);
+    predictionSellTypeSelect.value = normalizePredictionSellOrderType(
+      config.predictionSellOrderType,
+    );
   }
   const quotes = normalizePredictionQuoteBand(
     config.predictionMinQuoteCents,
@@ -7659,7 +7670,9 @@ function bindTradeToggles() {
 
   predictionSellTypeSelect?.addEventListener("change", async () => {
     if (predictionSellTypeSelect.disabled) return;
-    predictionSellTypeSelect.value = normalizeManualOrderType(predictionSellTypeSelect.value);
+    predictionSellTypeSelect.value = normalizePredictionSellOrderType(
+      predictionSellTypeSelect.value,
+    );
     await persistManipulationConfigPatch();
   });
 
