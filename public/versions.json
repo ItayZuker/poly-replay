@@ -1,6 +1,11 @@
 {
-  "current": "1.21.0",
+  "current": "1.22.0",
   "releases": [
+    {
+      "version": "1.22.0",
+      "releasedAt": "2026-07-30T11:37:42.894Z",
+      "notes": "Prediction vs phase Auto Trade open race on Live and Replay (first buy holds until sell). Open Replay shows one check/cross per prediction. Docs updated."
+    },
     {
       "version": "1.21.0",
       "releasedAt": "2026-07-30T09:08:43.477Z",
