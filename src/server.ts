@@ -848,7 +848,15 @@ app.post("/api/trading/order", async (req, res) => {
       res.status(400).json({ error: result.error ?? "Order failed" });
       return;
     }
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      ...(result.fillShares != null && Number.isFinite(result.fillShares)
+        ? { fillShares: result.fillShares }
+        : {}),
+      ...(result.fillPrice != null && Number.isFinite(result.fillPrice)
+        ? { fillPrice: result.fillPrice }
+        : {}),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.startsWith("Market unavailable:") || message.startsWith("Unknown series:")) {

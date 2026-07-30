@@ -3074,6 +3074,12 @@ function fmtPriceCents(price) {
   return Number.isInteger(cents) ? `${cents}¢` : `${cents.toFixed(1)}¢`;
 }
 
+/** Profit-prediction sell target: trigger Buy + Profit prediction (¢). */
+function predictionTargetPrice(triggerBuy, riseCents) {
+  if (triggerBuy == null || !Number.isFinite(Number(triggerBuy))) return null;
+  return Number(triggerBuy) + normalizePredictionRiseCents(riseCents) / 100;
+}
+
 function fmtTradeLeg(side, shares, price) {
   if (!side || shares == null || price == null) return "—";
   const label = side === "up" ? "UP" : "DOWN";
@@ -3134,7 +3140,7 @@ function renderPositionCard(card) {
     ? `${timeLabel} <span class="position-card-buy-time">${buyTime}</span>`
     : timeLabel;
   // Buy fill is known at trigger time — show it immediately, even while the
-  // card is still open / waiting for confirmation. Prediction cards have no fill.
+  // card is still open / waiting for confirmation.
   const hasBuyFill =
     !isPrediction &&
     card.shares != null && Number.isFinite(Number(card.shares)) &&
@@ -3142,15 +3148,36 @@ function renderPositionCard(card) {
   const buyValue = hasBuyFill ? `${card.shares} @ ${fmtPriceCents(card.buyPrice)}` : "";
   let detailHtml = `<div class="position-card-row"><span>${buyLabel}</span><strong>${buyValue}</strong></div>`;
 
-  if (!isPrediction) {
-    if (status === "sold") {
-      detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${valuesPending ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
-    } else {
-      const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
-      const outcomeClass = outcome === "up" ? "is-up" : outcome === "down" ? "is-down" : "";
-      detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${valuesPending ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
-    }
+  if (isPrediction) {
+    const predBuyPrice =
+      card.buyPrice != null && Number.isFinite(Number(card.buyPrice))
+        ? Number(card.buyPrice)
+        : card.triggerBuy != null && Number.isFinite(Number(card.triggerBuy))
+          ? Number(card.triggerBuy)
+          : null;
+    const predBuyShares =
+      card.shares != null && Number.isFinite(Number(card.shares)) ? Number(card.shares) : null;
+    const predBuyValue =
+      predBuyPrice != null
+        ? predBuyShares != null
+          ? `${predBuyShares} @ ${fmtPriceCents(predBuyPrice)}`
+          : fmtPriceCents(predBuyPrice)
+        : "—";
+    const targetPrice =
+      card.targetPrice != null && Number.isFinite(Number(card.targetPrice))
+        ? Number(card.targetPrice)
+        : predictionTargetPrice(card.triggerBuy, card.riseCents);
+    detailHtml += `<div class="position-card-row"><span>Buy</span><strong>${predBuyValue}</strong></div>`;
+    detailHtml += `<div class="position-card-row"><span>Target</span><strong>${fmtPriceCents(targetPrice)}</strong></div>`;
+  } else if (status === "sold") {
+    detailHtml += `<div class="position-card-row"><span>Sell</span><strong>${valuesPending ? "" : `${card.shares} @ ${fmtPriceCents(card.sellPrice)}`}</strong></div>`;
+  } else {
+    const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
+    const outcomeClass = outcome === "up" ? "is-up" : outcome === "down" ? "is-down" : "";
+    detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${valuesPending ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
+  }
 
+  if (!isPrediction) {
     if (valuesPending) {
       detailHtml += `<div class="position-card-row"><span>P/L</span><strong class="position-card-pl"></strong></div>`;
     } else {
@@ -3287,7 +3314,19 @@ function upsertPredictionPositionCard(card, { refresh = true } = {}) {
 }
 
 function ensurePredictionPositionCard(
-  { side, windowStart, windowEnd, slug, buyAt, triggerId, sim },
+  {
+    side,
+    windowStart,
+    windowEnd,
+    slug,
+    buyAt,
+    triggerId,
+    sim,
+    triggerBuy,
+    riseCents,
+    buyPrice,
+    shares,
+  },
   { refresh = true } = {},
 ) {
   if (side !== "up" && side !== "down") return null;
@@ -3304,6 +3343,28 @@ function ensurePredictionPositionCard(
       : existing && typeof existing.sim === "boolean"
         ? Boolean(existing.sim)
         : !isPredictionTradeArmed();
+  const nextTriggerBuy =
+    triggerBuy != null && Number.isFinite(Number(triggerBuy))
+      ? Number(triggerBuy)
+      : existing?.triggerBuy != null && Number.isFinite(Number(existing.triggerBuy))
+        ? Number(existing.triggerBuy)
+        : null;
+  const nextRiseCents = normalizePredictionRiseCents(
+    riseCents ?? existing?.riseCents ?? manipDetectorRuntime?.predictionRiseCents,
+  );
+  const nextTarget = predictionTargetPrice(nextTriggerBuy, nextRiseCents);
+  const nextBuyPrice =
+    buyPrice != null && Number.isFinite(Number(buyPrice))
+      ? Number(buyPrice)
+      : existing?.buyPrice != null && Number.isFinite(Number(existing.buyPrice))
+        ? Number(existing.buyPrice)
+        : null;
+  const nextShares =
+    shares != null && Number.isFinite(Number(shares))
+      ? Number(shares)
+      : existing?.shares != null && Number.isFinite(Number(existing.shares))
+        ? Number(existing.shares)
+        : null;
   upsertPredictionPositionCard(
     {
       id,
@@ -3325,6 +3386,11 @@ function ensurePredictionPositionCard(
         windowEnd != null && Number.isFinite(windowEnd)
           ? windowEnd
           : existing?.windowEnd ?? null,
+      triggerBuy: nextTriggerBuy,
+      riseCents: nextRiseCents,
+      targetPrice: nextTarget,
+      buyPrice: nextBuyPrice,
+      shares: nextShares,
     },
     { refresh },
   );
@@ -3377,6 +3443,8 @@ function syncPredictionCardsFromRuntime() {
         windowEnd: manipDetectorRuntime.predictionWindowEnd,
         slug: manipDetectorRuntime.predictionSlug,
         triggerId: manipDetectorRuntime.predictionTriggerId,
+        triggerBuy: manipDetectorRuntime.predictionTriggerBuy,
+        riseCents: manipDetectorRuntime.predictionRiseCents,
       },
       { refresh: false },
     );
@@ -3390,6 +3458,9 @@ function syncPredictionCardsFromRuntime() {
         windowStart: job.windowStart,
         slug: job.slug,
         triggerId: job.triggerId,
+        triggerBuy: job.triggerSideBuy,
+        riseCents: job.riseCents,
+        ...(typeof job.traded === "boolean" ? { sim: !job.traded } : {}),
       },
       { refresh: false },
     );
@@ -6928,18 +6999,32 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
     buyAt: Date.now() / 1000,
     triggerId,
     sim: !isPredictionTradeArmed(),
+    triggerBuy: triggerSideBuy,
+    riseCents: manipDetectorRuntime.predictionRiseCents,
   });
   if (isPredictionTradeArmed()) {
     void placePredictionTradeOrder(side, "buy").then((result) => {
       const ok = Boolean(result?.ok);
       manipDetectorRuntime.predictionTraded = ok;
+      const id = predictionCardId(selectedSeries || "btc-5m", windowStart, triggerId);
+      const card = predictionPositionCards.find((c) => c.id === id);
       if (!ok) {
         // Keep scoring/UI; no real Prediction position — phase may still race.
-        const id = predictionCardId(selectedSeries || "btc-5m", windowStart, triggerId);
-        const card = predictionPositionCards.find((c) => c.id === id);
         if (card && card.status === "open") {
           upsertPredictionPositionCard({ ...card, sim: true }, { refresh: true });
         }
+      } else if (card && card.status === "open") {
+        const fillPrice = Number(result?.body?.fillPrice);
+        const fillShares = Number(result?.body?.fillShares);
+        upsertPredictionPositionCard(
+          {
+            ...card,
+            sim: false,
+            buyPrice: Number.isFinite(fillPrice) ? fillPrice : card.buyPrice ?? card.triggerBuy,
+            shares: Number.isFinite(fillShares) ? fillShares : card.shares,
+          },
+          { refresh: true },
+        );
       }
       persistPredictionRuntime();
       syncPredictionStatusUi();
@@ -7015,6 +7100,8 @@ function syncManipulationAreaUi() {
 function syncManipulationSettingsEnabled(enabled) {
   const card = $("manipulation-detector-card");
   const label = $("manipulation-detector-label");
+  const settings = $("manipulation-detector-settings");
+  const tradeField = $("prediction-trade-field");
   const maxQuoteInput = $("prediction-max-quote");
   const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
@@ -7028,6 +7115,8 @@ function syncManipulationSettingsEnabled(enabled) {
   const on = Boolean(enabled);
   if (card) card.classList.toggle("is-disabled", !on);
   if (label) label.textContent = on ? "Prediction · On" : "Prediction · Off";
+  if (settings) settings.setAttribute("aria-hidden", on ? "false" : "true");
+  if (tradeField) tradeField.setAttribute("aria-hidden", on ? "false" : "true");
   if (maxQuoteInput) maxQuoteInput.disabled = !on;
   if (minQuoteInput) minQuoteInput.disabled = !on;
   if (shiftInput) shiftInput.disabled = !on;

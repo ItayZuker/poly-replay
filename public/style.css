@@ -6005,6 +6005,13 @@ body.is-column-resizing * {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 2000px;
+  opacity: 1;
+  overflow: hidden;
+  transition:
+    max-height 0.22s ease,
+    opacity 0.18s ease,
+    margin 0.22s ease;
 }
 
 .manipulation-detector-settings > .manipulation-detector-row {
@@ -6016,6 +6023,34 @@ body.is-column-resizing * {
   padding: 0 0 2px;
   border: none;
   background: transparent;
+  max-height: 80px;
+  opacity: 1;
+  overflow: hidden;
+  transition:
+    max-height 0.22s ease,
+    opacity 0.18s ease,
+    margin 0.22s ease,
+    padding 0.22s ease;
+}
+
+/* Off: hide Trade + settings; head (ⓘ + switcher) and info panel stay.
+   Drop column gap so collapsed siblings don't leave empty space under the switcher. */
+.wallet-control-field--manipulation.is-disabled {
+  gap: 0;
+}
+
+.wallet-control-field--manipulation.is-disabled:has(.prediction-info-panel.is-open) {
+  gap: 10px;
+}
+
+.wallet-control-field--manipulation.is-disabled .prediction-trade-toggle,
+.wallet-control-field--manipulation.is-disabled .manipulation-detector-settings {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  pointer-events: none;
 }
 
 .prediction-trade-toggle .wallet-control-label {
