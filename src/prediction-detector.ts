@@ -353,24 +353,33 @@ export function evaluateWindowPredictions(
 
 /**
  * Score a prediction by whether the predicted-side Sell (Bid) reached
- * trigger Buy + Profit prediction (¢) anytime after trigger and before window
+ * buyBasis + Profit prediction (¢) anytime after `fromMs` and before window
  * end. Window outcome is ignored.
+ *
+ * `buyBasis` defaults to the trigger Ask (sim / no fill). Pass the actual
+ * buy fill when scoring a Prediction Trade.
  */
 export function scorePrediction(
   hit: WindowPredictionHit | null | undefined,
   ticks: PredictionTickSample[],
   windowEndSec: number,
   riseCents: number,
+  buyBasis?: number | null,
+  fromMs?: number | null,
 ): "right" | "wrong" | null {
   if (!hit) return null;
   const riseP = normalizePredictionRiseCents(riseCents) / 100;
   if (!Number.isFinite(hit.triggeredAtMs) || !Number.isFinite(hit.triggerSideBuy)) return null;
   if (hit.side !== "up" && hit.side !== "down") return null;
-  const target = hit.triggerSideBuy + riseP;
+  const basis =
+    buyBasis != null && Number.isFinite(buyBasis) ? Number(buyBasis) : hit.triggerSideBuy;
+  const target = basis + riseP;
   const endMs = windowEndSec * 1000;
+  const startMs =
+    fromMs != null && Number.isFinite(fromMs) ? Math.max(hit.triggeredAtMs, Number(fromMs)) : hit.triggeredAtMs;
 
   for (const tick of ticks) {
-    if (tick.tMs < hit.triggeredAtMs) continue;
+    if (tick.tMs < startMs) continue;
     if (!(tick.tMs < endMs)) break;
     const upBid = Number(tick.yesBid);
     const downBid = Number(tick.noBid);

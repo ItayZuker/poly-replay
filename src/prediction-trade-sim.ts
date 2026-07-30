@@ -1,6 +1,9 @@
 import { takeLevels, walkAsks, walkAsksAvailable, walkBids } from "./book-depth.js";
 import type { WindowPredictionEvaluation } from "./prediction-detector.js";
-import type { PredictionDetectorConfig } from "./prediction-detector.js";
+import {
+  normalizePredictionRiseCents,
+  type PredictionDetectorConfig,
+} from "./prediction-detector.js";
 import type { ReplayTickDocument, SimLastWindow, SimMarker, WindowOutcome } from "./types.js";
 
 export type PredictionOrderType = "FAK" | "FOK";
@@ -55,6 +58,10 @@ function bidsForSide(tick: ReplayTickDocument, side: WindowOutcome) {
   return [];
 }
 
+function sideSell(side: WindowOutcome, upBid: number, downBid: number): number {
+  return side === "up" ? upBid : downBid;
+}
+
 /** FAK-style taker sell: fill up to maxShares from available bids; partial OK. */
 function walkBidsAvailable(
   bids: Array<{ price: number; size: number }>,
@@ -105,6 +112,9 @@ type OpenPredPosition = {
   side: WindowOutcome;
   shares: number;
   positionCost: number;
+  buyPrice: number;
+  /** First tick ms where Bid >= buyPrice + Profit (after buy). */
+  riseReadyAtMs: number | null;
 };
 
 /**
@@ -112,6 +122,7 @@ type OpenPredPosition = {
  * - If phase has an open position, Prediction cannot buy.
  * - While Prediction holds, caller must pause phase buys (`isHolding()`).
  * - After Prediction sells (or settles), both may race again.
+ * - Sell / Right when Bid reaches **fill price** + Profit prediction (¢).
  */
 export class PredictionTradeRaceSession {
   private readonly evals: WindowPredictionEvaluation[];
@@ -123,6 +134,7 @@ export class PredictionTradeRaceSession {
   private readonly latency: number;
   private readonly fillSuccessPct: number;
   private readonly windowOutcome: WindowOutcome | null | undefined;
+  private readonly riseCents: number;
 
   private evalIdx = 0;
   private open: OpenPredPosition | null = null;
@@ -153,6 +165,7 @@ export class PredictionTradeRaceSession {
     this.latency = Math.max(0, Number(input.latencyMs) || 0);
     this.fillSuccessPct = input.fillSuccessPct;
     this.windowOutcome = input.windowOutcome;
+    this.riseCents = normalizePredictionRiseCents(input.config.riseCents);
   }
 
   isHolding(): boolean {
@@ -186,9 +199,18 @@ export class PredictionTradeRaceSession {
 
   private trySell(tick: ReplayTickDocument): void {
     if (!this.open) return;
-    const { evaluation, side, shares, positionCost } = this.open;
-    if (evaluation.score !== "right" || evaluation.resolvedAtMs == null) return;
-    const sellAt = evaluation.resolvedAtMs + this.latency;
+    const { side, shares, positionCost, buyPrice } = this.open;
+    const upBid = Number(tick.yesBid);
+    const downBid = Number(tick.noBid);
+    if (!Number.isFinite(upBid) || !Number.isFinite(downBid)) return;
+
+    const target = buyPrice + this.riseCents / 100;
+    if (this.open.riseReadyAtMs == null) {
+      if (sideSell(side, upBid, downBid) < target - 1e-12) return;
+      this.open.riseReadyAtMs = tick.tMs;
+    }
+
+    const sellAt = this.open.riseReadyAtMs + this.latency;
     if (tick.tMs < sellAt) return;
     if (!(tick.tMs < this.endMs)) return;
     if (!acceptFillSuccess(this.fillSuccessPct)) {
@@ -270,7 +292,11 @@ export class PredictionTradeRaceSession {
         side: hit.side,
         shares: buyFill.shares,
         positionCost,
+        buyPrice: buyFill.avgPrice,
+        riseReadyAtMs: null,
       };
+      // Same tick may already meet fill+Profit (thin books / latency).
+      this.trySell(tick);
       return;
     }
   }

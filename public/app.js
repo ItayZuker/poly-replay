@@ -3074,10 +3074,13 @@ function fmtPriceCents(price) {
   return Number.isInteger(cents) ? `${cents}¢` : `${cents.toFixed(1)}¢`;
 }
 
-/** Profit-prediction sell target: trigger Buy + Profit prediction (¢). */
-function predictionTargetPrice(triggerBuy, riseCents) {
-  if (triggerBuy == null || !Number.isFinite(Number(triggerBuy))) return null;
-  return Number(triggerBuy) + normalizePredictionRiseCents(riseCents) / 100;
+/**
+ * Profit-prediction sell target: buy basis + Profit prediction (¢).
+ * Basis is the actual fill when Prediction Trade bought; otherwise the trigger Ask (sim / Trade Off).
+ */
+function predictionTargetPrice(basisBuy, riseCents) {
+  if (basisBuy == null || !Number.isFinite(Number(basisBuy))) return null;
+  return Number(basisBuy) + normalizePredictionRiseCents(riseCents) / 100;
 }
 
 function fmtTradeLeg(side, shares, price) {
@@ -3166,7 +3169,12 @@ function renderPositionCard(card) {
     const targetPrice =
       card.targetPrice != null && Number.isFinite(Number(card.targetPrice))
         ? Number(card.targetPrice)
-        : predictionTargetPrice(card.triggerBuy, card.riseCents);
+        : predictionTargetPrice(
+            card.buyPrice != null && Number.isFinite(Number(card.buyPrice))
+              ? Number(card.buyPrice)
+              : card.triggerBuy,
+            card.riseCents,
+          );
     detailHtml += `<div class="position-card-row"><span>Buy</span><strong>${predBuyValue}</strong></div>`;
     detailHtml += `<div class="position-card-row"><span>Target</span><strong>${fmtPriceCents(targetPrice)}</strong></div>`;
   } else if (status === "sold") {
@@ -3352,13 +3360,13 @@ function ensurePredictionPositionCard(
   const nextRiseCents = normalizePredictionRiseCents(
     riseCents ?? existing?.riseCents ?? manipDetectorRuntime?.predictionRiseCents,
   );
-  const nextTarget = predictionTargetPrice(nextTriggerBuy, nextRiseCents);
   const nextBuyPrice =
     buyPrice != null && Number.isFinite(Number(buyPrice))
       ? Number(buyPrice)
       : existing?.buyPrice != null && Number.isFinite(Number(existing.buyPrice))
         ? Number(existing.buyPrice)
         : null;
+  const nextTarget = predictionTargetPrice(nextBuyPrice ?? nextTriggerBuy, nextRiseCents);
   const nextShares =
     shares != null && Number.isFinite(Number(shares))
       ? Number(shares)
@@ -3452,6 +3460,7 @@ function syncPredictionCardsFromRuntime() {
   for (const job of manipDetectorRuntime.backgroundResolutions) {
     if (!job || (job.side !== "up" && job.side !== "down")) continue;
     if (job.windowStart == null || !Number.isFinite(job.windowStart)) continue;
+    const basis = Number.isFinite(job.profitBasis) ? job.profitBasis : job.triggerSideBuy;
     ensurePredictionPositionCard(
       {
         side: job.side,
@@ -3460,6 +3469,7 @@ function syncPredictionCardsFromRuntime() {
         triggerId: job.triggerId,
         triggerBuy: job.triggerSideBuy,
         riseCents: job.riseCents,
+        ...(job.traded && Number.isFinite(basis) ? { buyPrice: basis } : {}),
         ...(typeof job.traded === "boolean" ? { sim: !job.traded } : {}),
       },
       { refresh: false },
@@ -5638,14 +5648,26 @@ function predictedSideSell(side, upBid, downBid) {
   return side === "up" ? upBid : downBid;
 }
 
-/** Right when predicted-side Sell (Bid) reaches locked Buy + Profit prediction. */
-function sellMeetsPredictionRise(side, upBid, downBid, triggerBuy, riseCents) {
+/**
+ * Right when predicted-side Sell (Bid) reaches buy basis + Profit prediction.
+ * `basisBuy` is the fill price after a real Prediction buy, else the trigger Ask.
+ */
+function sellMeetsPredictionRise(side, upBid, downBid, basisBuy, riseCents) {
   if (side !== "up" && side !== "down") return false;
-  if (!Number.isFinite(triggerBuy) || !Number.isFinite(upBid) || !Number.isFinite(downBid)) {
+  if (!Number.isFinite(basisBuy) || !Number.isFinite(upBid) || !Number.isFinite(downBid)) {
     return false;
   }
-  const target = triggerBuy + normalizePredictionRiseCents(riseCents) / 100;
+  const target = basisBuy + normalizePredictionRiseCents(riseCents) / 100;
   return predictedSideSell(side, upBid, downBid) >= target - 1e-12;
+}
+
+function predictionProfitBasisPrice() {
+  if (Number.isFinite(manipDetectorRuntime.predictionProfitBasis)) {
+    return manipDetectorRuntime.predictionProfitBasis;
+  }
+  return Number.isFinite(manipDetectorRuntime.predictionTriggerBuy)
+    ? manipDetectorRuntime.predictionTriggerBuy
+    : null;
 }
 
 /** Cheapening Buy within [Min, Max] Quote at Duration start, and drops by ≥ Shift over Duration. */
@@ -5918,15 +5940,22 @@ const manipDetectorRuntime = {
   predictionWindowStart: null,
   predictionWindowEnd: null,
   predictionSlug: null,
-  /** Predicted-side Buy (0–1) at trigger (simulated fill lock). */
+  /** Predicted-side Buy (0–1) at trigger (quote lock). */
   predictionTriggerBuy: null,
+  /**
+   * Buy price used for Profit / Right (0–1): fill after a real Prediction buy,
+   * else trigger Ask (Trade Off / buy failed / sim).
+   */
+  predictionProfitBasis: null,
+  /** True while a Prediction Trade buy order is in flight (pause Right until fill or fail). */
+  predictionBuyPending: false,
   /** Sell (Bid) lock when Profit prediction hits (latched Sell look). */
   predictionSellLock: null,
-  /** True when this foreground trigger placed (or attempted) a real Prediction Trade buy. */
+  /** True when this foreground trigger placed a real Prediction Trade buy. */
   predictionTraded: false,
   /** Unique id for the active trigger (allows re-trigger after Right). */
   predictionTriggerId: null,
-  /** Profit prediction (¢) required after trigger for Right. */
+  /** Profit prediction (¢) required above buy basis for Right. */
   predictionRiseCents: 5,
   /** @type {"none"|"active"|"pending"|"right"|"wrong"} */
   uiPhase: "none",
@@ -5941,14 +5970,17 @@ const manipDetectorRuntime = {
   resultClearTimer: null,
   /**
    * Active predictions parked when a newer one takes the UI.
-   * Scored by predicted-side Sell reaching Buy+Profit (or Wrong at window end).
+   * Scored by predicted-side Sell reaching buy-basis+Profit (or Wrong at window end).
    * @type {Array<{
    *   side: "up"|"down",
    *   windowStart: number,
    *   windowEnd: number|null,
    *   triggerSideBuy: number|null,
+   *   profitBasis: number|null,
    *   riseCents: number,
    *   triggerId: string|null,
+   *   traded: boolean,
+   *   buyPending: boolean,
    *   slug: string|null,
    *   lastPrice: number|null,
    *   lastPtb: number|null,
@@ -6050,9 +6082,15 @@ function serializeBackgroundResolutions() {
     windowStart: job.windowStart,
     windowEnd: Number.isFinite(job.windowEnd) ? job.windowEnd : null,
     triggerSideBuy: Number.isFinite(job.triggerSideBuy) ? job.triggerSideBuy : null,
+    profitBasis: Number.isFinite(job.profitBasis)
+      ? job.profitBasis
+      : Number.isFinite(job.triggerSideBuy)
+        ? job.triggerSideBuy
+        : null,
     riseCents: normalizePredictionRiseCents(job.riseCents),
     triggerId: typeof job.triggerId === "string" ? job.triggerId : null,
     traded: Boolean(job.traded),
+    buyPending: Boolean(job.buyPending),
     slug: job.slug,
     lastPrice: Number.isFinite(job.lastPrice) ? job.lastPrice : null,
     lastPtb: Number.isFinite(job.lastPtb) ? job.lastPtb : null,
@@ -6095,6 +6133,12 @@ function persistPredictionRuntime() {
         predictionTriggerBuy: active && Number.isFinite(manipDetectorRuntime.predictionTriggerBuy)
           ? manipDetectorRuntime.predictionTriggerBuy
           : null,
+        predictionProfitBasis:
+          active && Number.isFinite(manipDetectorRuntime.predictionProfitBasis)
+            ? manipDetectorRuntime.predictionProfitBasis
+            : null,
+        predictionBuyPending: active ? Boolean(manipDetectorRuntime.predictionBuyPending) : false,
+        predictionTraded: active ? Boolean(manipDetectorRuntime.predictionTraded) : false,
         predictionTriggerId: active ? manipDetectorRuntime.predictionTriggerId : null,
         predictionRiseCents: active
           ? normalizePredictionRiseCents(manipDetectorRuntime.predictionRiseCents)
@@ -6173,14 +6217,20 @@ function restoreBackgroundResolutions(rawList) {
         ? item.triggerId
         : `${windowStart}:bg:${item.resolveStartedAt || 0}`;
     if (isPredictionTriggerScored(triggerId)) continue;
+    const triggerSideBuy = Number.isFinite(item.triggerSideBuy) ? item.triggerSideBuy : null;
+    const profitBasis = Number.isFinite(item.profitBasis)
+      ? item.profitBasis
+      : triggerSideBuy;
     const job = {
       side,
       windowStart,
       windowEnd,
-      triggerSideBuy: Number.isFinite(item.triggerSideBuy) ? item.triggerSideBuy : null,
+      triggerSideBuy,
+      profitBasis,
       riseCents: normalizePredictionRiseCents(item.riseCents),
       triggerId,
       traded: Boolean(item.traded),
+      buyPending: Boolean(item.buyPending),
       slug:
         typeof item.slug === "string" && item.slug.trim() ? item.slug.trim() : null,
       lastPrice: Number.isFinite(item.lastPrice) ? item.lastPrice : null,
@@ -6267,6 +6317,11 @@ function restorePredictionRuntime() {
     manipDetectorRuntime.predictionTriggerBuy = Number.isFinite(parsed.predictionTriggerBuy)
       ? parsed.predictionTriggerBuy
       : null;
+    manipDetectorRuntime.predictionProfitBasis = Number.isFinite(parsed.predictionProfitBasis)
+      ? parsed.predictionProfitBasis
+      : manipDetectorRuntime.predictionTriggerBuy;
+    manipDetectorRuntime.predictionBuyPending = Boolean(parsed.predictionBuyPending);
+    manipDetectorRuntime.predictionTraded = Boolean(parsed.predictionTraded);
     manipDetectorRuntime.predictionTriggerId = triggerId;
     manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(
       parsed.predictionRiseCents ?? $("prediction-rise")?.value,
@@ -6692,6 +6747,8 @@ function recordPredictionScore(side, windowStart, right, { showResultUi, source,
       manipDetectorRuntime.predictionWindowEnd = null;
       manipDetectorRuntime.predictionSlug = null;
       manipDetectorRuntime.predictionTriggerBuy = null;
+      manipDetectorRuntime.predictionProfitBasis = null;
+      manipDetectorRuntime.predictionBuyPending = false;
       manipDetectorRuntime.predictionSellLock = null;
       manipDetectorRuntime.predictionTriggerId = null;
       manipDetectorRuntime.predictionTraded = false;
@@ -6709,6 +6766,8 @@ function recordPredictionScore(side, windowStart, right, { showResultUi, source,
     manipDetectorRuntime.predictionWindowEnd = null;
     manipDetectorRuntime.predictionSlug = null;
     manipDetectorRuntime.predictionTriggerBuy = null;
+    manipDetectorRuntime.predictionProfitBasis = null;
+    manipDetectorRuntime.predictionBuyPending = false;
     manipDetectorRuntime.predictionSellLock = null;
     manipDetectorRuntime.predictionTriggerId = null;
     manipDetectorRuntime.predictionTraded = false;
@@ -6755,9 +6814,11 @@ function enqueueBackgroundResolution({
   windowStart,
   windowEnd,
   triggerSideBuy,
+  profitBasis,
   riseCents,
   triggerId,
   traded,
+  buyPending,
   slug,
   lastPrice,
   lastPtb,
@@ -6787,14 +6848,17 @@ function enqueueBackgroundResolution({
     });
     return true;
   }
+  const triggerBuy = Number.isFinite(triggerSideBuy) ? triggerSideBuy : null;
   const job = {
     side,
     windowStart,
     windowEnd: endSec,
-    triggerSideBuy: Number.isFinite(triggerSideBuy) ? triggerSideBuy : null,
+    triggerSideBuy: triggerBuy,
+    profitBasis: Number.isFinite(profitBasis) ? profitBasis : triggerBuy,
     riseCents: normalizePredictionRiseCents(riseCents),
     triggerId: resolvedTriggerId,
     traded: Boolean(traded),
+    buyPending: Boolean(buyPending),
     slug: typeof slug === "string" && slug.trim() ? slug.trim() : null,
     lastPrice: Number.isFinite(lastPrice) ? lastPrice : null,
     lastPtb: Number.isFinite(lastPtb) ? lastPtb : null,
@@ -6827,9 +6891,11 @@ function parkForegroundPredictionToBackground() {
     windowStart,
     windowEnd: manipDetectorRuntime.predictionWindowEnd,
     triggerSideBuy: manipDetectorRuntime.predictionTriggerBuy,
+    profitBasis: predictionProfitBasisPrice(),
     riseCents: manipDetectorRuntime.predictionRiseCents,
     triggerId: manipDetectorRuntime.predictionTriggerId,
     traded: manipDetectorRuntime.predictionTraded,
+    buyPending: manipDetectorRuntime.predictionBuyPending,
     slug: manipDetectorRuntime.predictionSlug,
     lastPrice: manipDetectorRuntime.lastPrice,
     lastPtb: manipDetectorRuntime.lastPtb,
@@ -6841,6 +6907,8 @@ function parkForegroundPredictionToBackground() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionProfitBasis = null;
+  manipDetectorRuntime.predictionBuyPending = false;
   manipDetectorRuntime.predictionSellLock = null;
   manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.predictionTraded = false;
@@ -6857,6 +6925,8 @@ function clearForegroundPredictionUi() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionProfitBasis = null;
+  manipDetectorRuntime.predictionBuyPending = false;
   manipDetectorRuntime.predictionSellLock = null;
   manipDetectorRuntime.predictionTraded = false;
   manipDetectorRuntime.predictionTriggerId = null;
@@ -6872,12 +6942,13 @@ function watchPredictionRiseOnQuotes(upBid, downBid, state) {
     (manipDetectorRuntime.predictionSide === "up" ||
       manipDetectorRuntime.predictionSide === "down") &&
     manipDetectorRuntime.predictionWindowStart != null &&
+    !manipDetectorRuntime.predictionBuyPending &&
     !isPredictionWindowScored(manipDetectorRuntime.predictionWindowStart) &&
     sellMeetsPredictionRise(
       manipDetectorRuntime.predictionSide,
       upBid,
       downBid,
-      manipDetectorRuntime.predictionTriggerBuy,
+      predictionProfitBasisPrice(),
       manipDetectorRuntime.predictionRiseCents,
     )
   ) {
@@ -6913,9 +6984,11 @@ function watchPredictionRiseOnQuotes(upBid, downBid, state) {
       });
       continue;
     }
+    const jobBasis = Number.isFinite(job.profitBasis) ? job.profitBasis : job.triggerSideBuy;
     if (
       state?.windowStart === job.windowStart &&
-      sellMeetsPredictionRise(job.side, upBid, downBid, job.triggerSideBuy, job.riseCents)
+      !job.buyPending &&
+      sellMeetsPredictionRise(job.side, upBid, downBid, jobBasis, job.riseCents)
     ) {
       removeBackgroundResolution(job.windowStart);
       if (job.traded && !isPredictionSellGtd()) {
@@ -6944,6 +7017,8 @@ function clearPredictionForNewWindow() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionProfitBasis = null;
+  manipDetectorRuntime.predictionBuyPending = false;
   manipDetectorRuntime.predictionSellLock = null;
   manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.uiPhase = "none";
@@ -6992,6 +7067,8 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
   manipDetectorRuntime.predictionSlug =
     typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
   manipDetectorRuntime.predictionTriggerBuy = triggerSideBuy;
+  manipDetectorRuntime.predictionProfitBasis = triggerSideBuy;
+  manipDetectorRuntime.predictionBuyPending = false;
   manipDetectorRuntime.predictionSellLock = null;
   manipDetectorRuntime.predictionTriggerId = triggerId;
   manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(riseCents);
@@ -7012,25 +7089,52 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
     riseCents: manipDetectorRuntime.predictionRiseCents,
   });
   if (isPredictionTradeArmed()) {
+    manipDetectorRuntime.predictionBuyPending = true;
+    persistPredictionRuntime();
     void placePredictionTradeOrder(side, "buy").then((result) => {
       const ok = Boolean(result?.ok);
-      manipDetectorRuntime.predictionTraded = ok;
+      const fillPrice = Number(result?.body?.fillPrice);
+      const fillShares = Number(result?.body?.fillShares);
+      const basis =
+        ok && Number.isFinite(fillPrice) ? fillPrice : triggerSideBuy;
+
+      if (manipDetectorRuntime.predictionTriggerId === triggerId) {
+        manipDetectorRuntime.predictionBuyPending = false;
+        manipDetectorRuntime.predictionTraded = ok;
+        manipDetectorRuntime.predictionProfitBasis = basis;
+      } else {
+        const job = manipDetectorRuntime.backgroundResolutions.find(
+          (j) => j.triggerId === triggerId,
+        );
+        if (job) {
+          job.buyPending = false;
+          job.traded = ok;
+          job.profitBasis = basis;
+        }
+      }
+
       const id = predictionCardId(selectedSeries || "btc-5m", windowStart, triggerId);
       const card = predictionPositionCards.find((c) => c.id === id);
       if (!ok) {
-        // Keep scoring/UI; no real Prediction position — phase may still race.
+        // Keep scoring/UI on trigger Ask; no real Prediction position — phase may still race.
         if (card && card.status === "open") {
-          upsertPredictionPositionCard({ ...card, sim: true }, { refresh: true });
+          upsertPredictionPositionCard(
+            {
+              ...card,
+              sim: true,
+              targetPrice: predictionTargetPrice(triggerSideBuy, card.riseCents),
+            },
+            { refresh: true },
+          );
         }
       } else if (card && card.status === "open") {
-        const fillPrice = Number(result?.body?.fillPrice);
-        const fillShares = Number(result?.body?.fillShares);
         upsertPredictionPositionCard(
           {
             ...card,
             sim: false,
             buyPrice: Number.isFinite(fillPrice) ? fillPrice : card.buyPrice ?? card.triggerBuy,
             shares: Number.isFinite(fillShares) ? fillShares : card.shares,
+            targetPrice: predictionTargetPrice(basis, card.riseCents),
           },
           { refresh: true },
         );
@@ -7165,6 +7269,8 @@ function resetManipulationDetector() {
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
   manipDetectorRuntime.predictionTriggerBuy = null;
+  manipDetectorRuntime.predictionProfitBasis = null;
+  manipDetectorRuntime.predictionBuyPending = false;
   manipDetectorRuntime.predictionSellLock = null;
   manipDetectorRuntime.predictionTriggerId = null;
   manipDetectorRuntime.predictionTraded = false;
