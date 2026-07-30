@@ -101,6 +101,10 @@ function defaultTrading(): TradingConfig {
     manualBuyOrderType: "FOK",
     manualSellOrderType: "FOK",
     manipulationDetector: false,
+    predictionTrade: false,
+    predictionShares: 10,
+    predictionBuyOrderType: "FOK",
+    predictionSellOrderType: "FOK",
     manipulationSensitivitySec: 5,
     predictionMaxQuoteCents: 90,
     predictionMinQuoteCents: 70,
@@ -213,6 +217,11 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
   );
+  const predSharesRaw = Number(raw.predictionShares);
+  const predictionShares = Math.max(
+    1,
+    Math.min(100000, Math.floor(Number.isFinite(predSharesRaw) ? predSharesRaw : 10) || 10),
+  );
   const next: TradingConfig = {
     autoTrade: Boolean(raw.autoTrade),
     useSchedule: Boolean(raw.useSchedule),
@@ -222,6 +231,10 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     manualBuyOrderType: normalizeManualOrderType(raw.manualBuyOrderType),
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
+    predictionTrade: Boolean(raw.predictionTrade),
+    predictionShares,
+    predictionBuyOrderType: normalizeManualOrderType(raw.predictionBuyOrderType),
+    predictionSellOrderType: normalizeManualOrderType(raw.predictionSellOrderType),
     manipulationSensitivitySec,
     ...quotes,
     predictionShiftCents,
@@ -232,6 +245,10 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
   };
   if (!next.autoTrade) {
     next.useSchedule = false;
+  }
+  // Trade requires both Allow trade and Prediction.
+  if (!next.startTrading || !next.manipulationDetector) {
+    next.predictionTrade = false;
   }
   return next;
 }

@@ -639,6 +639,10 @@ function defaultTradingConfig(): TradingConfig {
     manualBuyOrderType: "FOK",
     manualSellOrderType: "FOK",
     manipulationDetector: false,
+    predictionTrade: false,
+    predictionShares: 10,
+    predictionBuyOrderType: "FOK",
+    predictionSellOrderType: "FOK",
     manipulationSensitivitySec: 5,
     predictionMaxQuoteCents: 90,
     predictionMinQuoteCents: 70,
@@ -753,6 +757,11 @@ function normalizeTradingConfig(
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
   );
+  const predSharesRaw = Number(raw.predictionShares);
+  const predictionShares = Math.max(
+    1,
+    Math.min(100000, Math.floor(Number.isFinite(predSharesRaw) ? predSharesRaw : 10) || 10),
+  );
   const next: TradingConfig = {
     autoTrade: Boolean(raw.autoTrade),
     useSchedule: Boolean(raw.useSchedule),
@@ -762,6 +771,10 @@ function normalizeTradingConfig(
     manualBuyOrderType: normalizeManualOrderType(raw.manualBuyOrderType),
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
+    predictionTrade: Boolean(raw.predictionTrade),
+    predictionShares,
+    predictionBuyOrderType: normalizeManualOrderType(raw.predictionBuyOrderType),
+    predictionSellOrderType: normalizeManualOrderType(raw.predictionSellOrderType),
     manipulationSensitivitySec,
     ...quotes,
     predictionShiftCents,
@@ -772,6 +785,9 @@ function normalizeTradingConfig(
   };
   if (!next.autoTrade) {
     next.useSchedule = false;
+  }
+  if (!next.startTrading || !next.manipulationDetector) {
+    next.predictionTrade = false;
   }
   return next;
 }
@@ -812,6 +828,11 @@ export class LiveTradingService {
   private manualBuyPending = false;
   /** Successful manual BUY suppresses all phase buys until this window rolls. */
   private manualBuyOverrideWindowKey: string | null = null;
+  /**
+   * While a Prediction Trade position is open, suppress phase Auto Trade for
+   * this window (buys and sells). Cleared on Prediction sell or window roll.
+   */
+  private predictionTradeHoldWindowKey: string | null = null;
   /**
    * Ambiguous / unverified buy response — block further buys for this window
    * until we adopt an on-chain position or the window rolls.
@@ -1480,6 +1501,22 @@ export class LiveTradingService {
     if (patch.manipulationDetector != null) {
       this.config.manipulationDetector = Boolean(patch.manipulationDetector);
     }
+    if (patch.predictionTrade != null) {
+      this.config.predictionTrade = Boolean(patch.predictionTrade);
+    }
+    if (patch.predictionShares != null) {
+      const shares = Number(patch.predictionShares);
+      this.config.predictionShares = Math.max(
+        1,
+        Math.min(100000, Math.floor(Number.isFinite(shares) ? shares : 10) || 10),
+      );
+    }
+    if (patch.predictionBuyOrderType === "FAK" || patch.predictionBuyOrderType === "FOK") {
+      this.config.predictionBuyOrderType = patch.predictionBuyOrderType;
+    }
+    if (patch.predictionSellOrderType === "FAK" || patch.predictionSellOrderType === "FOK") {
+      this.config.predictionSellOrderType = patch.predictionSellOrderType;
+    }
     if (patch.manipulationSensitivitySec != null) {
       const sens = Number(patch.manipulationSensitivitySec);
       this.config.manipulationSensitivitySec = Math.max(
@@ -1531,6 +1568,9 @@ export class LiveTradingService {
     }
     if (!this.config.autoTrade) {
       this.config.useSchedule = false;
+    }
+    if (!this.config.startTrading || !this.config.manipulationDetector) {
+      this.config.predictionTrade = false;
     }
     this.persistConfig();
     const isLive =
@@ -2228,6 +2268,7 @@ export class LiveTradingService {
     this.mirroredMarkerCount = 0;
     this.manualBuyPending = false;
     this.manualBuyOverrideWindowKey = null;
+    this.predictionTradeHoldWindowKey = null;
     this.buyBlockedWindowKey = null;
     this.pendingBuyConfirm = null;
     this.pendingBuyConfirmBackoffMs = 0;
@@ -2300,6 +2341,7 @@ export class LiveTradingService {
     }
     if (this.manualBuyPending) return true;
     if (this.manualBuyOverrideWindowKey === key) return true;
+    if (this.predictionTradeHoldWindowKey === key) return true;
     if (this.buyBlockedWindowKey === key) return true;
     if (this.pendingBuyConfirm) return true;
     // Prior-phase GTD cancels continue in the background; do not block the next
@@ -2676,6 +2718,20 @@ export class LiveTradingService {
     if (!autoSetup) {
       // Still commit the prior window's demo result when leaving a schedule slot.
       if (!this.isLiveArmed()) this.autoEngine.rollWindowIfNeeded(state);
+      return;
+    }
+
+    // Prediction Trade open position: pause phase Auto Trade until sold / window roll.
+    if (this.predictionTradeHoldWindowKey === sessionKey(state)) {
+      if (this.restingBuys.size > 0) {
+        await this.cancelAllRestingBuys("prediction trade hold");
+      }
+      if (this.restingSell) {
+        await this.cancelRestingSell("prediction trade hold", state);
+      }
+      if (!this.isLiveArmed()) {
+        this.autoEngine.setExternalBuyPaused(true);
+      }
       return;
     }
 
@@ -3905,13 +3961,43 @@ export class LiveTradingService {
     state: LiveWindowState,
     side: "up" | "down",
     leg: "buy" | "sell",
+    options?: { source?: "manual" | "prediction" },
   ): Promise<{ ok: boolean; error?: string; fillShares?: number; fillPrice?: number }> {
     this.ensureWindow(state);
     if (!this.canExecuteOrders()) {
       return { ok: false, error: "Allow trade to place orders" };
     }
+    const fromPrediction = options?.source === "prediction";
+    if (fromPrediction) {
+      if (
+        !this.config.predictionTrade ||
+        !this.config.manipulationDetector ||
+        !this.config.startTrading
+      ) {
+        return { ok: false, error: "Prediction Trade is off" };
+      }
+    }
     if (leg === "buy") {
-      if (this.isBuyBlocked(state)) {
+      const key = sessionKey(state);
+      if (fromPrediction) {
+        // May buy after a prior manual override; still respect pending/unresolved buys.
+        if (
+          this.manualBuyPending ||
+          this.pendingBuyConfirm ||
+          this.buyBlockedWindowKey === key ||
+          this.positions.up ||
+          this.positions.down
+        ) {
+          return {
+            ok: false,
+            error: this.pendingBuyConfirm
+              ? "Buy pending confirmation"
+              : this.positions.up || this.positions.down
+                ? "Already holding position"
+                : "Buy blocked until window rolls (prior order unresolved)",
+          };
+        }
+      } else if (this.isBuyBlocked(state)) {
         return {
           ok: false,
           error: this.pendingBuyConfirm
@@ -3926,23 +4012,32 @@ export class LiveTradingService {
     const size =
       leg === "sell" && this.positions[side]
         ? this.positions[side]!.shares
-        : this.config.autoTrade
-          ? (this.getPhaseBuyShares(state) ?? this.config.manualShares)
-          : this.config.manualShares;
+        : fromPrediction
+          ? this.config.predictionShares
+          : this.config.autoTrade
+            ? (this.getPhaseBuyShares(state) ?? this.config.manualShares)
+            : this.config.manualShares;
     const sizeUnit =
-      leg === "sell" || this.config.autoTrade ? "shares" : this.config.manualOrderUnit;
+      fromPrediction || leg === "sell" || this.config.autoTrade
+        ? "shares"
+        : this.config.manualOrderUnit;
     if (leg === "buy") {
       this.manualBuyPending = true;
       this.liveFakWatch = null;
       if (!this.isLiveArmed()) this.autoEngine.setExternalBuyPaused(true);
-      await this.cancelAllRestingBuys("manual buy");
+      await this.cancelAllRestingBuys(fromPrediction ? "prediction buy" : "manual buy");
     } else {
-      await this.cancelRestingSell("manual sell", state);
+      await this.cancelRestingSell(fromPrediction ? "prediction sell" : "manual sell", state);
     }
 
     try {
-      const orderType =
-        leg === "buy" ? this.config.manualBuyOrderType : this.config.manualSellOrderType;
+      const orderType = fromPrediction
+        ? leg === "buy"
+          ? this.config.predictionBuyOrderType
+          : this.config.predictionSellOrderType
+        : leg === "buy"
+          ? this.config.manualBuyOrderType
+          : this.config.manualSellOrderType;
       const result = await this.executeOrder(
         state,
         side,
@@ -3970,11 +4065,21 @@ export class LiveTradingService {
                 nowSec,
               );
             }
-            this.autoEngine.suppressBuysForWindow();
+            if (!fromPrediction) this.autoEngine.suppressBuysForWindow();
           }
-          this.manualBuyOverrideWindowKey = sessionKey(state);
-        } else if (!this.isLiveArmed()) {
-          this.autoEngine.clearExternalPosition(side);
+          if (fromPrediction) {
+            this.predictionTradeHoldWindowKey = sessionKey(state);
+          } else {
+            this.manualBuyOverrideWindowKey = sessionKey(state);
+          }
+        } else {
+          if (fromPrediction) {
+            this.predictionTradeHoldWindowKey = null;
+            if (!this.isLiveArmed()) this.autoEngine.setExternalBuyPaused(false);
+          }
+          if (!this.isLiveArmed()) {
+            this.autoEngine.clearExternalPosition(side);
+          }
         }
         return result;
       }
@@ -3988,7 +4093,8 @@ export class LiveTradingService {
         this.manualBuyPending = false;
         if (
           !this.isLiveArmed() &&
-          this.manualBuyOverrideWindowKey !== sessionKey(state)
+          this.manualBuyOverrideWindowKey !== sessionKey(state) &&
+          this.predictionTradeHoldWindowKey !== sessionKey(state)
         ) {
           this.autoEngine.setExternalBuyPaused(false);
         }

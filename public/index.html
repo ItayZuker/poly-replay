@@ -503,6 +503,17 @@
                       <span class="switch-slider"></span>
                     </label>
                   </div>
+                  <label
+                    class="wallet-control-field wallet-control-field--toggle prediction-trade-toggle"
+                    for="prediction-trade"
+                    id="prediction-trade-field"
+                  >
+                    <span class="wallet-control-label" id="prediction-trade-label">Trade · Off</span>
+                    <span class="switch">
+                      <input type="checkbox" id="prediction-trade" disabled />
+                      <span class="switch-slider"></span>
+                    </span>
+                  </label>
                   <div
                     id="prediction-info-panel"
                     class="prediction-info-panel"
@@ -520,12 +531,57 @@
                         Shift (¢).
                       </p>
                       <p>
-                        After trigger, Right means the predicted side’s Buy rose by at least
-                        Profit prediction (¢) sometime before the window ends (not that the side wins the window).
+                        After trigger, Buy locks at the trigger price. With Trade On (and Allow trade On),
+                        that places a real Buy; with Trade Off it is simulated. Right means the predicted
+                        side’s Sell reaches that Buy plus Profit prediction (¢) sometime before the window
+                        ends (not that the side wins the window).
                       </p>
                     </div>
                   </div>
                   <div id="manipulation-detector-settings" class="manipulation-detector-settings">
+                    <div class="manipulation-detector-row manipulation-detector-row--order-types">
+                      <span class="wallet-control-label">Order type</span>
+                      <div class="manual-order-type-controls">
+                        <label class="manual-order-type-field" for="prediction-buy-order-type">
+                          <span class="manual-order-type-caption">Buy</span>
+                          <select
+                            id="prediction-buy-order-type"
+                            class="wallet-order-unit"
+                            aria-label="Prediction Trade buy order type"
+                          >
+                            <option value="FOK" selected>FOK</option>
+                            <option value="FAK">FAK</option>
+                          </select>
+                        </label>
+                        <label class="manual-order-type-field" for="prediction-sell-order-type">
+                          <span class="manual-order-type-caption">Sell</span>
+                          <select
+                            id="prediction-sell-order-type"
+                            class="wallet-order-unit"
+                            aria-label="Prediction Trade sell order type"
+                          >
+                            <option value="FOK" selected>FOK</option>
+                            <option value="FAK">FAK</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                    <div class="manipulation-detector-row">
+                      <label class="wallet-control-label" for="prediction-shares">Shares</label>
+                      <div class="schedule-replay-latency-field">
+                        <input
+                          type="number"
+                          id="prediction-shares"
+                          class="schedule-replay-latency-input"
+                          min="1"
+                          max="100000"
+                          step="1"
+                          value="10"
+                          inputmode="numeric"
+                          aria-label="Prediction Trade share count"
+                        />
+                      </div>
+                    </div>
                     <div class="manipulation-detector-row">
                       <label class="wallet-control-label" for="prediction-max-quote">Max Quote (¢)</label>
                       <div class="schedule-replay-latency-field">
@@ -602,7 +658,7 @@
                           step="1"
                           value="5"
                           inputmode="numeric"
-                          aria-label="Profit prediction in cents: minimum rise of the predicted-side Buy after trigger before window end"
+                          aria-label="Profit prediction in cents: Sell must reach trigger Buy plus this many cents before window end"
                         />
                       </div>
                     </div>
@@ -664,6 +720,12 @@
                           <div class="quote-values">
                             <span id="prediction-sell-locked" class="quote-locked" hidden></span>
                             <span id="prediction-sell-live" class="quote-live">—</span>
+                            <span
+                              id="prediction-sell-result-icon"
+                              class="prediction-status-icon prediction-sell-result-icon"
+                              hidden
+                              aria-hidden="true"
+                            ></span>
                           </div>
                         </div>
                       </div>
@@ -1227,6 +1289,56 @@
                     </label>
                   </div>
                   <div id="schedule-replay-prediction-settings" class="schedule-replay-prediction-settings">
+                  <div class="schedule-replay-latency schedule-replay-prediction-order-types">
+                    <span class="schedule-replay-latency-label">Order type</span>
+                    <div class="manual-order-type-controls">
+                      <label class="manual-order-type-field" for="replay-prediction-buy-order-type">
+                        <span class="manual-order-type-caption">Buy</span>
+                        <select
+                          id="replay-prediction-buy-order-type"
+                          class="wallet-order-unit"
+                          aria-label="Replay Prediction buy order type"
+                          tabindex="-1"
+                          title="Replay Prediction Trade buy order type (FAK or FOK)."
+                        >
+                          <option value="FOK" selected>FOK</option>
+                          <option value="FAK">FAK</option>
+                        </select>
+                      </label>
+                      <label class="manual-order-type-field" for="replay-prediction-sell-order-type">
+                        <span class="manual-order-type-caption">Sell</span>
+                        <select
+                          id="replay-prediction-sell-order-type"
+                          class="wallet-order-unit"
+                          aria-label="Replay Prediction sell order type"
+                          tabindex="-1"
+                          title="Replay Prediction Trade sell order type (FAK or FOK)."
+                        >
+                          <option value="FOK" selected>FOK</option>
+                          <option value="FAK">FAK</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="schedule-replay-latency">
+                    <label class="schedule-replay-latency-label" for="replay-prediction-shares"
+                      >Shares</label
+                    >
+                    <div class="schedule-replay-latency-field">
+                      <input
+                        id="replay-prediction-shares"
+                        class="schedule-replay-latency-input"
+                        type="number"
+                        min="1"
+                        max="100000"
+                        step="1"
+                        value="10"
+                        inputmode="numeric"
+                        tabindex="-1"
+                        title="Replay Prediction Trade share count for buys."
+                      />
+                    </div>
+                  </div>
                   <div class="schedule-replay-latency">
                     <label class="schedule-replay-latency-label" for="replay-prediction-max-quote"
                       >Max Quote (¢)</label
@@ -1318,7 +1430,7 @@
                         value="5"
                         inputmode="numeric"
                         tabindex="-1"
-                        title="Replay Prediction: predicted-side Buy must rise by at least this many ¢ (Profit prediction) after trigger before window end."
+                        title="Replay Prediction: predicted-side Sell must reach trigger Buy + this many ¢ (Profit prediction) before window end."
                       />
                     </div>
                   </div>

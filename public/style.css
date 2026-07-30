@@ -1384,7 +1384,7 @@ body {
 .schedule-setups-list {
   --setup-list-gap: 6px;
   flex: 1;
-  min-height: 0;
+  min-height: 200px;
   overflow-y: auto;
   padding: 8px;
   display: flex;
@@ -1408,6 +1408,11 @@ body {
 
 .app-page-schedule.is-replay-workspace .schedule-workspace-footer {
   gap: 8px;
+  /* Leave room for the setups list (min 200px); Prediction settings scroll inside. */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: calc(100% - var(--schedule-toolbar-height) - 52px - 200px);
+  overflow: hidden;
 }
 
 .app-page-schedule.is-heatmap-view .schedule-workspace-footer {
@@ -1429,9 +1434,12 @@ body {
 }
 
 .app-page-schedule.is-replay-workspace .schedule-replay-panel {
-  max-height: 480px;
+  /* Tall enough for Run + Latency/Fill + Prediction On (with Order type / Shares). */
+  max-height: min(72vh, 900px);
   opacity: 1;
   pointer-events: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .schedule-replay-controls {
@@ -1439,6 +1447,7 @@ body {
   flex-direction: column;
   gap: 6px;
   width: 100%;
+  min-height: 0;
   box-sizing: border-box;
 }
 
@@ -1451,6 +1460,18 @@ body {
   min-height: 32px;
   padding: 0 2px;
   box-sizing: border-box;
+}
+
+.schedule-replay-prediction-order-types {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  /* Don't shrink below Buy/Sell when they wrap — preserves gap to Shares. */
+  flex-shrink: 0;
+  min-height: min-content;
+}
+
+.schedule-replay-prediction-order-types .manual-order-type-controls .wallet-order-unit {
+  min-width: 3.4rem;
 }
 
 .schedule-replay-latency-label {
@@ -1535,10 +1556,14 @@ body {
   border-top: 1px solid var(--border);
   box-sizing: border-box;
   transition: gap 0.22s ease;
+  min-height: 0;
+  /* Prefer showing all Prediction fields; scroll settings if the panel is constrained. */
+  flex: 1 1 auto;
 }
 
 .schedule-replay-prediction.is-disabled {
   gap: 0;
+  flex: 0 0 auto;
 }
 
 .schedule-replay-prediction-head {
@@ -1565,14 +1590,24 @@ body {
   flex-direction: column;
   gap: 6px;
   width: 100%;
-  max-height: 280px;
+  max-height: min(52vh, 560px);
   opacity: 1;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 0;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #484f58 transparent;
   transition:
     max-height 0.22s ease,
     opacity 0.18s ease,
     margin 0.22s ease;
+}
+
+/* Keep each setting row full height so gaps stay even (scroll the list instead). */
+.schedule-replay-prediction-settings > .schedule-replay-latency,
+.schedule-replay-prediction-settings > .schedule-replay-prediction-area {
+  flex-shrink: 0;
 }
 
 /* Indent setting labels under the Prediction switcher (not Trigger Area). */
@@ -1585,6 +1620,7 @@ body {
   max-height: 0;
   opacity: 0;
   margin: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -5173,7 +5209,7 @@ body.is-row-resizing .panel-header-drag-handle {
   row-gap: 6px;
 }
 
-.wallet-control-field--manual .manual-order-type-controls {
+.manual-order-type-controls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -5196,7 +5232,8 @@ body.is-row-resizing .panel-header-drag-handle {
   font-size: 11px;
 }
 
-.wallet-control-field--manual .wallet-order-unit {
+.wallet-control-field--manual .wallet-order-unit,
+.manipulation-detector-row .manual-order-type-controls .wallet-order-unit {
   min-width: 3.4rem;
 }
 
@@ -5947,12 +5984,49 @@ body.is-column-resizing * {
   gap: 10px;
 }
 
+.manipulation-detector-settings > .manipulation-detector-row {
+  flex-shrink: 0;
+}
+
+.prediction-trade-toggle {
+  margin: 0;
+  padding: 0 0 2px;
+  border: none;
+  background: transparent;
+}
+
+.prediction-trade-toggle .wallet-control-label {
+  padding-left: 12px;
+}
+
 .manipulation-detector-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+}
+
+.manipulation-detector-row--order-types {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  /* Don't shrink below Buy/Sell when they wrap — preserves gap to Shares. */
+  flex-shrink: 0;
+  min-height: min-content;
+}
+
+.position-card-status-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.position-card-sim-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-transform: none;
 }
 
 /* Indent setting labels under the Prediction switcher (not Trigger Area). */
@@ -6180,6 +6254,14 @@ body.is-column-resizing * {
 }
 
 .prediction-status-box.is-wrong .prediction-status-icon {
+  color: var(--down);
+}
+
+.prediction-sell-result-icon.is-right {
+  color: var(--up);
+}
+
+.prediction-sell-result-icon.is-wrong {
   color: var(--down);
 }
 

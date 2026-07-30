@@ -3,7 +3,7 @@ import type { SchedulePlacementListItem } from "./db/schedule-placement-reposito
 import type { PlacementBacktestStats } from "./schedule-backtest-service.js";
 
 /** Bump when simulator/backtest rules change. */
-export const SCHEDULE_BACKTEST_CACHE_VERSION = "13";
+export const SCHEDULE_BACKTEST_CACHE_VERSION = "15";
 
 export function rollingCutoffDayUtc(now = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -26,6 +26,9 @@ export function buildPlacementCacheKey(input: {
     riseCents: number;
     areaStart: number;
     areaEnd: number;
+    shares?: number;
+    buyOrderType?: string;
+    sellOrderType?: string;
   } | null;
 }): string {
   const {
@@ -48,6 +51,9 @@ export function buildPlacementCacheKey(input: {
         prediction.riseCents,
         prediction.areaStart,
         prediction.areaEnd,
+        prediction.shares ?? 10,
+        prediction.buyOrderType ?? "FOK",
+        prediction.sellOrderType ?? "FOK",
       ].join(",")
     : "nopred";
   return [

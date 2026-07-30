@@ -23,6 +23,10 @@ import {
   normalizePredictionDetectorConfig,
   type PredictionDetectorConfig,
 } from "./prediction-detector.js";
+import {
+  mergePredictionTradeResult,
+  simulatePredictionTrades,
+} from "./prediction-trade-sim.js";
 import type {
   ChainlinkTickDocument,
   LiveWindowState,
@@ -337,9 +341,25 @@ export async function simulateRecordedWindow(
       : null;
     const predictionScores = predictionEvals.map((e) => e.score);
     const predictionScore = predictionScores[predictionScores.length - 1] ?? null;
+    const trade = simulatePredictionTrades({
+      ticks: ticksForPred,
+      evals: predictionEvals,
+      config: predictionConfig,
+      windowStart: window.windowStart,
+      windowEnd: window.windowEnd,
+      latencyMs: setup.latencyMs,
+      fillSuccessPct: setup.fillSuccessPct ?? 100,
+      windowOutcome: window.windowOutcome ?? null,
+    });
+    const result = mergePredictionTradeResult(
+      cached.result,
+      trade,
+      window.windowStart,
+      window.windowEnd,
+    );
     return {
-      result: cached.result,
-      markers: cached.markers.map((m) => ({ ...m })),
+      result,
+      markers: [...cached.markers.map((m) => ({ ...m })), ...trade.markers],
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
       // Cached entries were only stored after a tickful sim.
@@ -457,9 +477,24 @@ export async function simulateRecordedWindow(
       });
     }
 
+    const trade =
+      predictionConfig && predictionEvals.length > 0
+        ? simulatePredictionTrades({
+            ticks,
+            evals: predictionEvals,
+            config: predictionConfig,
+            windowStart,
+            windowEnd,
+            latencyMs: setup.latencyMs,
+            fillSuccessPct: setup.fillSuccessPct ?? 100,
+            windowOutcome: window.windowOutcome ?? null,
+          })
+        : { pl: 0, markers: [] as SimMarker[], traded: false };
+    const mergedResult = mergePredictionTradeResult(result, trade, windowStart, windowEnd);
+
     return {
-      result,
-      markers,
+      result: mergedResult,
+      markers: [...markers, ...trade.markers],
       windowStart,
       windowEnd,
       hadTicks: true,

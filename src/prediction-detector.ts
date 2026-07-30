@@ -16,14 +16,20 @@ export interface PredictionDetectorConfig {
   /** Minimum drop (¢) of that cheapening Buy over Duration. */
   shiftCents: number;
   /**
-   * Profit prediction (¢): after trigger, predicted-side Buy must rise by at
-   * least this many ¢ sometime before window end for the prediction to score right.
+   * Profit prediction (¢): after trigger, predicted-side Sell (Bid) must reach
+   * trigger Buy + this many ¢ sometime before window end for Right.
    */
   riseCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */
   areaStart: number;
   /** End of detection area as fraction of the market window [0, 1]. */
   areaEnd: number;
+  /** Share count for Replay Prediction Trade buys. */
+  shares: number;
+  /** Order type for Prediction Trade buys. */
+  buyOrderType: "FAK" | "FOK";
+  /** Order type for Prediction Trade sells. */
+  sellOrderType: "FAK" | "FOK";
 }
 
 export interface PredictionTickSample {
@@ -98,6 +104,15 @@ export function normalizePredictionArea(
   return { areaStart: start, areaEnd: end };
 }
 
+function normalizePredictionOrderType(raw: unknown, fallback: "FAK" | "FOK" = "FOK"): "FAK" | "FOK" {
+  return raw === "FAK" || raw === "FOK" ? raw : fallback;
+}
+
+function normalizePredictionShares(raw: unknown, fallback = 10): number {
+  const n = Math.floor(Number(raw));
+  return Math.max(1, Math.min(100000, Number.isFinite(n) && n > 0 ? n : fallback));
+}
+
 export function normalizePredictionDetectorConfig(
   raw: Partial<PredictionDetectorConfig> | null | undefined,
 ): PredictionDetectorConfig {
@@ -109,6 +124,9 @@ export function normalizePredictionDetectorConfig(
     shiftCents: normalizePredictionShiftCents(raw?.shiftCents),
     riseCents: normalizePredictionRiseCents(raw?.riseCents),
     ...area,
+    shares: normalizePredictionShares(raw?.shares),
+    buyOrderType: normalizePredictionOrderType(raw?.buyOrderType),
+    sellOrderType: normalizePredictionOrderType(raw?.sellOrderType),
   };
 }
 
@@ -182,6 +200,10 @@ function sideBuy(side: WindowOutcome, upBuy: number, downBuy: number): number {
   return side === "up" ? upBuy : downBuy;
 }
 
+function sideSell(side: WindowOutcome, upBid: number, downBid: number): number {
+  return side === "up" ? upBid : downBid;
+}
+
 export interface WindowPredictionEvaluation {
   hit: WindowPredictionHit;
   score: "right" | "wrong";
@@ -240,7 +262,13 @@ export function evaluateWindowPredictions(
     const nowMs = tick.tMs;
 
     if (active) {
-      if (sideBuy(active.side, upBuy, downBuy) >= active.triggerSideBuy + riseP - 1e-12) {
+      const upBid = Number(tick.yesBid);
+      const downBid = Number(tick.noBid);
+      if (
+        Number.isFinite(upBid) &&
+        Number.isFinite(downBid) &&
+        sideSell(active.side, upBid, downBid) >= active.triggerSideBuy + riseP - 1e-12
+      ) {
         out.push({ hit: active, score: "right", resolvedAtMs: nowMs });
         active = null;
         samples.length = 0;
@@ -324,8 +352,9 @@ export function evaluateWindowPredictions(
 }
 
 /**
- * Score a prediction by whether the predicted-side Buy rose by ≥ Profit
- * prediction (¢) anytime after trigger and before window end. Window outcome is ignored.
+ * Score a prediction by whether the predicted-side Sell (Bid) reached
+ * trigger Buy + Profit prediction (¢) anytime after trigger and before window
+ * end. Window outcome is ignored.
  */
 export function scorePrediction(
   hit: WindowPredictionHit | null | undefined,
@@ -335,7 +364,6 @@ export function scorePrediction(
 ): "right" | "wrong" | null {
   if (!hit) return null;
   const riseP = normalizePredictionRiseCents(riseCents) / 100;
-  // Reuse multi-hit walker for a single known trigger by scoring only that hit window span.
   if (!Number.isFinite(hit.triggeredAtMs) || !Number.isFinite(hit.triggerSideBuy)) return null;
   if (hit.side !== "up" && hit.side !== "down") return null;
   const target = hit.triggerSideBuy + riseP;
@@ -344,10 +372,10 @@ export function scorePrediction(
   for (const tick of ticks) {
     if (tick.tMs < hit.triggeredAtMs) continue;
     if (!(tick.tMs < endMs)) break;
-    const upBuy = Number(tick.yesAsk);
-    const downBuy = Number(tick.noAsk);
-    if (!Number.isFinite(upBuy) || !Number.isFinite(downBuy)) continue;
-    if (sideBuy(hit.side, upBuy, downBuy) >= target - 1e-12) {
+    const upBid = Number(tick.yesBid);
+    const downBid = Number(tick.noBid);
+    if (!Number.isFinite(upBid) || !Number.isFinite(downBid)) continue;
+    if (sideSell(hit.side, upBid, downBid) >= target - 1e-12) {
       return "right";
     }
   }

@@ -541,6 +541,9 @@ async function runScheduleReplaySse(
       riseCents?: number;
       areaStart?: number;
       areaEnd?: number;
+      shares?: number;
+      buyOrderType?: "FAK" | "FOK";
+      sellOrderType?: "FAK" | "FOK";
     } | null;
   },
 ): Promise<void> {
@@ -828,6 +831,7 @@ app.post("/api/trading/order", async (req, res) => {
     }
     const side = req.body?.side;
     const leg = req.body?.leg;
+    const source = req.body?.source === "prediction" ? "prediction" : "manual";
     if (side !== "up" && side !== "down") {
       res.status(400).json({ error: "side must be up or down" });
       return;
@@ -838,7 +842,7 @@ app.post("/api/trading/order", async (req, res) => {
     }
     const state = displayService.getState();
     await assertSeriesAvailable(state.series);
-    const result = await tradingFor(req).manualOrder(state, side, leg);
+    const result = await tradingFor(req).manualOrder(state, side, leg, { source });
     pushWindowStateImmediate();
     if (!result.ok) {
       res.status(400).json({ error: result.error ?? "Order failed" });
@@ -1685,6 +1689,9 @@ async function runPlacementPlay(
       riseCents?: number;
       areaStart?: number;
       areaEnd?: number;
+      shares?: number;
+      buyOrderType?: "FAK" | "FOK";
+      sellOrderType?: "FAK" | "FOK";
     } | null;
   },
 ) {
@@ -1731,6 +1738,9 @@ function parsePlayRequestBody(req: express.Request): {
     riseCents?: number;
     areaStart?: number;
     areaEnd?: number;
+    shares?: number;
+    buyOrderType?: "FAK" | "FOK";
+    sellOrderType?: "FAK" | "FOK";
   } | null;
 } {
   const body = req.body && typeof req.body === "object" ? req.body : {};

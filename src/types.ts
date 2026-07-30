@@ -384,8 +384,19 @@ export interface TradingConfig {
   manualBuyOrderType: "FAK" | "FOK";
   /** Order type for manual quote Sell clicks. */
   manualSellOrderType: "FAK" | "FOK";
-  /** Client-side manipulation detector (visual flag only; no orders). */
+  /** Client-side manipulation detector (visual flag only when predictionTrade is off). */
   manipulationDetector: boolean;
+  /**
+   * When true (and Allow trade + Prediction are on), detector triggers place real
+   * Buy/Sell using predictionShares and prediction Buy/Sell order types.
+   */
+  predictionTrade: boolean;
+  /** Share count for Prediction Trade buys (sells use held shares). */
+  predictionShares: number;
+  /** Order type for Prediction Trade buys. */
+  predictionBuyOrderType: "FAK" | "FOK";
+  /** Order type for Prediction Trade sells. */
+  predictionSellOrderType: "FAK" | "FOK";
   /** Seconds the adverse UP/DOWN vs gap condition must hold. */
   manipulationSensitivitySec: number;
   /**
@@ -401,8 +412,8 @@ export interface TradingConfig {
   /** Minimum drop (¢) of that cheapening Buy over Duration (1–50). */
   predictionShiftCents: number;
   /**
-   * Profit prediction (¢): after trigger, predicted-side Buy must rise by at
-   * least this many ¢ before window end for Right (1–50).
+   * Profit prediction (¢): after trigger, predicted-side Sell must reach
+   * trigger Buy + this many ¢ before window end for Right (1–50).
    */
   predictionRiseCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */

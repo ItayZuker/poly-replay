@@ -16,6 +16,9 @@
     shiftCents: 5,
     riseCents: 5,
     sensitivitySec: 5,
+    shares: 10,
+    buyOrderType: "FOK",
+    sellOrderType: "FOK",
     areaStart: 0,
     areaEnd: 1,
   };
@@ -3593,6 +3596,18 @@
     return toggle ? Boolean(toggle.checked) : DEFAULT_REPLAY_PREDICTION.enabled;
   }
 
+  function normalizeReplayPredictionShares(value) {
+    const n = Math.floor(Number(value));
+    return Math.max(
+      1,
+      Math.min(100000, Number.isFinite(n) && n > 0 ? n : DEFAULT_REPLAY_PREDICTION.shares),
+    );
+  }
+
+  function normalizeReplayPredictionOrderType(value) {
+    return value === "FAK" || value === "FOK" ? value : DEFAULT_REPLAY_PREDICTION.buyOrderType;
+  }
+
   function readReplayPredictionConfig() {
     if (replayRunLockedPrediction) {
       return { ...replayRunLockedPrediction };
@@ -3602,6 +3617,9 @@
     const shiftInput = document.getElementById("replay-prediction-shift");
     const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
+    const sharesInput = document.getElementById("replay-prediction-shares");
+    const buyTypeSelect = document.getElementById("replay-prediction-buy-order-type");
+    const sellTypeSelect = document.getElementById("replay-prediction-sell-order-type");
     const area = normalizeReplayPredictionArea(
       replayPredictionAreaStart,
       replayPredictionAreaEnd,
@@ -3617,6 +3635,9 @@
       shiftCents: normalizeReplayPredictionShift(shiftInput?.value),
       riseCents: normalizeReplayPredictionRise(riseInput?.value),
       sensitivitySec: normalizeReplayPredictionSensitivity(durationInput?.value),
+      shares: normalizeReplayPredictionShares(sharesInput?.value),
+      buyOrderType: normalizeReplayPredictionOrderType(buyTypeSelect?.value),
+      sellOrderType: normalizeReplayPredictionOrderType(sellTypeSelect?.value),
       areaStart: area.areaStart,
       areaEnd: area.areaEnd,
     };
@@ -3632,6 +3653,9 @@
       shiftCents: config.shiftCents,
       riseCents: config.riseCents,
       sensitivitySec: config.sensitivitySec,
+      shares: config.shares,
+      buyOrderType: config.buyOrderType,
+      sellOrderType: config.sellOrderType,
       areaStart: config.areaStart,
       areaEnd: config.areaEnd,
     };
@@ -3649,6 +3673,9 @@
       shiftCents: normalizeReplayPredictionShift(config?.shiftCents),
       riseCents: normalizeReplayPredictionRise(config?.riseCents),
       sensitivitySec: normalizeReplayPredictionSensitivity(config?.sensitivitySec),
+      shares: normalizeReplayPredictionShares(config?.shares),
+      buyOrderType: normalizeReplayPredictionOrderType(config?.buyOrderType),
+      sellOrderType: normalizeReplayPredictionOrderType(config?.sellOrderType),
       ...normalizeReplayPredictionArea(config?.areaStart, config?.areaEnd),
     };
     try {
@@ -3721,6 +3748,9 @@
       shiftCents: normalizeReplayPredictionShift(config?.shiftCents),
       riseCents: normalizeReplayPredictionRise(config?.riseCents),
       sensitivitySec: normalizeReplayPredictionSensitivity(config?.sensitivitySec),
+      shares: normalizeReplayPredictionShares(config?.shares),
+      buyOrderType: normalizeReplayPredictionOrderType(config?.buyOrderType),
+      sellOrderType: normalizeReplayPredictionOrderType(config?.sellOrderType),
       ...normalizeReplayPredictionArea(config?.areaStart, config?.areaEnd),
     };
     const toggle = document.getElementById("replay-prediction-enabled");
@@ -3729,12 +3759,18 @@
     const shiftInput = document.getElementById("replay-prediction-shift");
     const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
+    const sharesInput = document.getElementById("replay-prediction-shares");
+    const buyTypeSelect = document.getElementById("replay-prediction-buy-order-type");
+    const sellTypeSelect = document.getElementById("replay-prediction-sell-order-type");
     if (toggle) toggle.checked = next.enabled;
     if (maxQuoteInput) maxQuoteInput.value = String(next.maxQuoteCents);
     if (minQuoteInput) minQuoteInput.value = String(next.minQuoteCents);
     if (shiftInput) shiftInput.value = String(next.shiftCents);
     if (riseInput) riseInput.value = String(next.riseCents);
     if (durationInput) durationInput.value = String(next.sensitivitySec);
+    if (sharesInput) sharesInput.value = String(next.shares);
+    if (buyTypeSelect) buyTypeSelect.value = next.buyOrderType;
+    if (sellTypeSelect) sellTypeSelect.value = next.sellOrderType;
     replayPredictionAreaStart = next.areaStart;
     replayPredictionAreaEnd = next.areaEnd;
     syncReplayPredictionAreaUi();
@@ -3753,13 +3789,25 @@
     const shiftInput = document.getElementById("replay-prediction-shift");
     const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
+    const sharesInput = document.getElementById("replay-prediction-shares");
+    const buyTypeSelect = document.getElementById("replay-prediction-buy-order-type");
+    const sellTypeSelect = document.getElementById("replay-prediction-sell-order-type");
     const startThumb = document.getElementById("replay-prediction-area-start");
     const endThumb = document.getElementById("replay-prediction-area-end");
     root?.classList.toggle("is-disabled", !enabled);
     if (settings) settings.setAttribute("aria-hidden", enabled ? "false" : "true");
     if (label) label.textContent = enabled ? "Prediction · On" : "Prediction · Off";
     const settingsLocked = !enabled || replayRunning;
-    for (const input of [maxQuoteInput, minQuoteInput, shiftInput, riseInput, durationInput]) {
+    for (const input of [
+      maxQuoteInput,
+      minQuoteInput,
+      shiftInput,
+      riseInput,
+      durationInput,
+      sharesInput,
+      buyTypeSelect,
+      sellTypeSelect,
+    ]) {
       if (!input) continue;
       input.disabled = settingsLocked;
       input.setAttribute("aria-disabled", settingsLocked ? "true" : "false");
@@ -3978,6 +4026,40 @@
         if (replayRunning || durationInput.disabled) applyReplayRunLockedInputs();
       });
     }
+    const sharesInput = document.getElementById("replay-prediction-shares");
+    if (sharesInput && sharesInput.dataset.bound !== "1") {
+      sharesInput.dataset.bound = "1";
+      const commit = () => {
+        if (replayRunning || sharesInput.disabled || !isReplayPredictionEnabled()) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        const next = persistReplayPredictionConfig(readReplayPredictionConfig());
+        sharesInput.value = String(next.shares);
+      };
+      sharesInput.addEventListener("change", commit);
+      sharesInput.addEventListener("blur", commit);
+      sharesInput.addEventListener("input", () => {
+        if (replayRunning || sharesInput.disabled) applyReplayRunLockedInputs();
+      });
+    }
+    const bindOrderType = (select) => {
+      if (!select || select.dataset.bound === "1") return;
+      select.dataset.bound = "1";
+      select.addEventListener("change", () => {
+        if (replayRunning || select.disabled || !isReplayPredictionEnabled()) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        const next = persistReplayPredictionConfig(readReplayPredictionConfig());
+        select.value =
+          select.id === "replay-prediction-sell-order-type"
+            ? next.sellOrderType
+            : next.buyOrderType;
+      });
+    };
+    bindOrderType(document.getElementById("replay-prediction-buy-order-type"));
+    bindOrderType(document.getElementById("replay-prediction-sell-order-type"));
 
     bindReplayPredictionAreaSlider();
     syncReplayPredictionAreaUi();
@@ -4129,7 +4211,11 @@
           maxQuoteCents: predictionSettings.maxQuoteCents,
           minQuoteCents: predictionSettings.minQuoteCents,
           shiftCents: predictionSettings.shiftCents,
+          riseCents: predictionSettings.riseCents,
           sensitivitySec: predictionSettings.sensitivitySec,
+          shares: predictionSettings.shares,
+          buyOrderType: predictionSettings.buyOrderType,
+          sellOrderType: predictionSettings.sellOrderType,
           areaStart: predictionSettings.areaStart,
           areaEnd: predictionSettings.areaEnd,
         }
