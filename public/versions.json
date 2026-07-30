@@ -1,6 +1,11 @@
 {
-  "current": "1.25.0",
+  "current": "1.26.0",
   "releases": [
+    {
+      "version": "1.26.0",
+      "releasedAt": "2026-07-30T14:20:49.784Z",
+      "notes": "Prediction Trade Sell can use GTD: resting limit at buy + Profit prediction as soon as Buy fills. Docs updated."
+    },
     {
       "version": "1.25.0",
       "releasedAt": "2026-07-30T13:54:14.393Z",
