@@ -1,6 +1,11 @@
 {
-  "current": "1.20.1",
+  "current": "1.21.0",
   "releases": [
+    {
+      "version": "1.21.0",
+      "releasedAt": "2026-07-30T09:08:43.477Z",
+      "notes": "Prediction Trade (Market): Trade switch, shares, Buy/Sell order types; real orders when Allow trade is On. Replay Prediction: Order type + Shares with simulated fills. Replay Prediction panel scroll/layout polish. Docs updated."
+    },
     {
       "version": "1.20.1",
       "releasedAt": "2026-07-30T07:48:31.521Z",
