@@ -99,9 +99,11 @@ export class MarketRecorder {
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
   private prefetchedNextWindowStart: number | null = null;
   private nextWindowPrefetchInFlight = false;
-  /** Last time a book or chainlink tick was appended for the active window. */
+  /** Wall-clock time of the last book/chainlink tick appended for the active window. */
   private lastUsefulTickAtMs = 0;
   private windowBeganAtMs = 0;
+  /** True while captureEndPrices/finalizeWindow run — silence is expected (no in-window ticks). */
+  private finalizing = false;
 
   constructor(market: MarketDocument, onStateChange: StateChangeListener | null = null) {
     this.market = market;
@@ -119,9 +121,11 @@ export class MarketRecorder {
   /**
    * True when an active window has gone too long without book/chainlink ticks.
    * Used by RecordingManager for broader feed recovery (beyond Chainlink-only stall).
+   * Not used after windowEnd / while finalizing — in-window ticks stop by design then.
    */
   needsHealthRecovery(nowMs = Date.now()): boolean {
-    if (!this.interval || !this.activeWindow) return false;
+    if (!this.interval || !this.activeWindow || this.finalizing) return false;
+    if (nowMs >= this.activeWindow.windowEnd * 1000) return false;
     if (this.windowBeganAtMs > 0 && nowMs - this.windowBeganAtMs < WINDOW_START_GRACE_MS) {
       return false;
     }
@@ -130,8 +134,9 @@ export class MarketRecorder {
     return nowMs - last >= RECORDING_SILENCE_MS;
   }
 
-  private noteUsefulTick(tMs = Date.now()): void {
-    this.lastUsefulTickAtMs = tMs;
+  /** Health silence uses wall clock receipt time, not oracle/event stamps. */
+  private noteUsefulTick(_eventTMs?: number): void {
+    this.lastUsefulTickAtMs = Date.now();
   }
 
   getActiveWindow(): WindowHitRecord | null {
@@ -218,7 +223,7 @@ export class MarketRecorder {
    * or the health watchdog detects recording silence.
    */
   discardActiveWindow(reason: string): void {
-    if (!this.activeWindow) return;
+    if (!this.activeWindow || this.finalizing) return;
 
     const windowStart = this.activeWindow.windowStart;
     const windowEnd = this.activeWindow.windowEnd;
@@ -276,6 +281,7 @@ export class MarketRecorder {
     this.nextWindowPrefetchInFlight = false;
     this.lastUsefulTickAtMs = 0;
     this.windowBeganAtMs = 0;
+    this.finalizing = false;
   }
 
   private isInWindow(tMs: number): boolean {
@@ -561,6 +567,7 @@ export class MarketRecorder {
   private async captureEndPrices(): Promise<void> {
     if (!this.activeWindow?.slug) return;
 
+    this.finalizing = true;
     try {
       const { asset, timeframe } = parseMarketSeries(this.market._id);
       const pair = await fetchMarketPairFromSlug(this.activeWindow.slug);
@@ -651,6 +658,7 @@ export class MarketRecorder {
       return;
     }
 
+    this.finalizing = true;
     finalizeWindowDynamics(this.activeWindow);
 
     let record: WindowHitRecord = {
@@ -760,6 +768,7 @@ export class MarketRecorder {
     } catch (err) {
       logService.error("recorder", `Failed to finalize window (${this.market._id}): ${String(err)}`);
     } finally {
+      this.finalizing = false;
       this.resetActiveWindow();
     }
   }
