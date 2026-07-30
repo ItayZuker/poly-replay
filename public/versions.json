@@ -1,6 +1,11 @@
 {
-  "current": "1.22.0",
+  "current": "1.23.0",
   "releases": [
+    {
+      "version": "1.23.0",
+      "releasedAt": "2026-07-30T12:29:01.498Z",
+      "notes": "Replay: per-trade green/red/blue dots (phase + Prediction) in card stats and Open Replay; Right/Wrong from Prediction trade settlement; multi Prediction Duration bands. Docs updated."
+    },
     {
       "version": "1.22.0",
       "releasedAt": "2026-07-30T11:37:42.894Z",
