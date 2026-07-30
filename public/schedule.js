@@ -738,7 +738,7 @@
   }
 
   function statsCacheVersion() {
-    return isReplayWorkspace() ? "replay-2" : "live-1";
+    return isReplayWorkspace() ? "replay-3" : "live-1";
   }
 
   function simLatencyMs() {

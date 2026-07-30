@@ -328,6 +328,8 @@ export interface SimMarker {
   triggerCents?: number;
   /** Phase index at buy fill (sell profit source). */
   phaseIndex?: number;
+  /** Who placed the fill — used for Replay per-trade dots. */
+  source?: "phase" | "prediction";
   cost?: number;
   fees?: number;
   proceeds?: number;

@@ -2826,19 +2826,25 @@ function drawPriceChart(state, options = {}) {
     ctx.stroke();
   }
 
-  // Open Replay: full-height band for Prediction Duration ending at the trigger.
-  const predBand = options.predictionBand;
-  if (
-    predBand &&
-    Number.isFinite(predBand.startSec) &&
-    Number.isFinite(predBand.endSec) &&
-    predBand.endSec > predBand.startSec &&
-    layout.windowStart != null &&
-    layout.windowEnd != null
-  ) {
-    const bandStart = Math.max(layout.windowStart, Number(predBand.startSec));
-    const bandEnd = Math.min(layout.windowEnd, Number(predBand.endSec));
-    if (bandEnd > bandStart) {
+  // Open Replay: full-height Duration band(s) ending at each Prediction trigger.
+  const predBands = Array.isArray(options.predictionBands)
+    ? options.predictionBands
+    : options.predictionBand
+      ? [options.predictionBand]
+      : [];
+  if (layout.windowStart != null && layout.windowEnd != null) {
+    for (const predBand of predBands) {
+      if (
+        !predBand ||
+        !Number.isFinite(predBand.startSec) ||
+        !Number.isFinite(predBand.endSec) ||
+        !(predBand.endSec > predBand.startSec)
+      ) {
+        continue;
+      }
+      const bandStart = Math.max(layout.windowStart, Number(predBand.startSec));
+      const bandEnd = Math.min(layout.windowEnd, Number(predBand.endSec));
+      if (!(bandEnd > bandStart)) continue;
       const x0 = xAt(bandStart);
       const x1 = xAt(bandEnd);
       ctx.fillStyle =

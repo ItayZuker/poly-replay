@@ -7414,6 +7414,16 @@ body.is-column-resizing * {
   transition: none !important;
 }
 
+.schedule-play-dots {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex-shrink: 0;
+  min-width: 8px;
+}
+
 .schedule-play-dot {
   width: 8px;
   height: 8px;

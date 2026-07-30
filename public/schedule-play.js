@@ -136,10 +136,6 @@
   const PHASE_LINE_HIT_PX = 6;
   const PHASE_BAND_COLOR = "rgba(110, 118, 129, 0.08)";
   const PHASE_LINE_COLOR = "#6e7681";
-  const PREDICTION_ICON_CHECK =
-    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
-  const PREDICTION_ICON_CROSS =
-    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 4 12 12M12 4 4 12"/></svg>';
 
   function $(id) {
     return document.getElementById(id);
@@ -728,15 +724,49 @@
     return { ctx, width, height };
   }
 
+  function windowTradeDots(win) {
+    if (Array.isArray(win?.tradeDots) && win.tradeDots.length > 0) {
+      return win.tradeDots
+        .map((d) => (typeof d === "string" ? d : d?.bucket))
+        .filter((b) => b === "green" || b === "red" || b === "blue");
+    }
+    if (win?.bucket === "green" || win?.bucket === "red" || win?.bucket === "blue") {
+      return [win.bucket];
+    }
+    return [];
+  }
+
+  function tradeBucketForMarker(win, marker) {
+    const dots = Array.isArray(win?.tradeDots) ? win.tradeDots : [];
+    for (const d of dots) {
+      if (!d || typeof d === "string") continue;
+      if (marker?.type === "buy" && Number.isFinite(d.buyT) && Math.abs(d.buyT - marker.t) < 1e-6) {
+        return d.bucket;
+      }
+      if (
+        marker?.type === "sell" &&
+        d.sellT != null &&
+        Number.isFinite(d.sellT) &&
+        Math.abs(d.sellT - marker.t) < 1e-6
+      ) {
+        return d.bucket;
+      }
+    }
+    const list = windowTradeDots(win);
+    return list[0] || win?.bucket || "none";
+  }
+
   function cardTotalsFromPayload() {
     let green = 0;
     let red = 0;
     let blue = 0;
     let pnl = 0;
     for (const win of payload?.windows || []) {
-      if (win.bucket === "green") green += 1;
-      else if (win.bucket === "red") red += 1;
-      else if (win.bucket === "blue") blue += 1;
+      for (const bucket of windowTradeDots(win)) {
+        if (bucket === "green") green += 1;
+        else if (bucket === "red") red += 1;
+        else if (bucket === "blue") blue += 1;
+      }
       pnl += win.pnl ?? 0;
     }
     return {
@@ -891,7 +921,7 @@
           total: m.total,
           plLabel: win.plLabel,
           pnl: win.pnl,
-          bucket: win.bucket,
+          bucket: tradeBucketForMarker(win, m),
         });
       }
     }
@@ -1085,46 +1115,85 @@
     syncPlayPredictionBadge(win);
   }
 
-  /**
-   * Full-height Duration band ending at the Prediction trigger.
-   * Appears as soon as the playhead enters the Duration span (not only at the trigger).
-   * Grows with the playhead until the trigger time.
-   */
-  function buildPredictionDurationBand(win, untilSec) {
+  /** All Prediction triggers for a window (multi-retrigger) with legacy single-field fallback. */
+  function predictionTriggersForWindow(win) {
+    if (Array.isArray(win?.predictionTriggers) && win.predictionTriggers.length > 0) {
+      return win.predictionTriggers.filter(
+        (t) =>
+          t &&
+          (t.side === "up" || t.side === "down") &&
+          Number.isFinite(Number(t.triggeredAtMs)),
+      );
+    }
     const side = win?.predictionSide;
     const triggeredAtMs = Number(win?.predictionTriggeredAtMs);
-    if ((side !== "up" && side !== "down") || !Number.isFinite(triggeredAtMs)) return null;
-    const triggerSec = triggeredAtMs / 1000;
-
+    if ((side !== "up" && side !== "down") || !Number.isFinite(triggeredAtMs)) return [];
     let durationSec = Number(win?.predictionSensitivitySec);
     if (!Number.isFinite(durationSec) || durationSec < 1) {
       durationSec = Number(playPredictionSensitivitySec);
     }
     if (!Number.isFinite(durationSec) || durationSec < 1) durationSec = 5;
-
-    const startSec = Math.max(Number(win.windowStart) || 0, triggerSec - durationSec);
-    const fullEndSec = Math.min(Number(win.windowEnd) || triggerSec, triggerSec);
-    if (!(fullEndSec > startSec)) return null;
-    // Reveal once the bar enters the Duration area; clip the right edge to the playhead.
-    if (!(untilSec >= startSec)) return null;
-    const endSec = Math.min(fullEndSec, untilSec);
-    if (!(endSec > startSec)) return null;
-    return { startSec, endSec, side };
+    return [
+      {
+        side,
+        triggeredAtMs,
+        sensitivitySec: durationSec,
+        score: win?.predictionScore === "right" || win?.predictionScore === "wrong"
+          ? win.predictionScore
+          : "wrong",
+      },
+    ];
   }
 
-  /** Show Prediction UP/DOWN once the playhead reaches the detector trigger time. */
+  /**
+   * Full-height Duration bands ending at each Prediction trigger.
+   * Each appears as soon as the playhead enters that Duration span and grows until its trigger.
+   */
+  function buildPredictionDurationBands(win, untilSec) {
+    const triggers = predictionTriggersForWindow(win);
+    if (!triggers.length) return [];
+    const bands = [];
+    for (const trig of triggers) {
+      const side = trig.side;
+      const triggeredAtMs = Number(trig.triggeredAtMs);
+      if ((side !== "up" && side !== "down") || !Number.isFinite(triggeredAtMs)) continue;
+      const triggerSec = triggeredAtMs / 1000;
+
+      let durationSec = Number(trig.sensitivitySec);
+      if (!Number.isFinite(durationSec) || durationSec < 1) {
+        durationSec = Number(win?.predictionSensitivitySec);
+      }
+      if (!Number.isFinite(durationSec) || durationSec < 1) {
+        durationSec = Number(playPredictionSensitivitySec);
+      }
+      if (!Number.isFinite(durationSec) || durationSec < 1) durationSec = 5;
+
+      const startSec = Math.max(Number(win.windowStart) || 0, triggerSec - durationSec);
+      const fullEndSec = Math.min(Number(win.windowEnd) || triggerSec, triggerSec);
+      if (!(fullEndSec > startSec)) continue;
+      if (!(untilSec >= startSec)) continue;
+      const endSec = Math.min(fullEndSec, untilSec);
+      if (!(endSec > startSec)) continue;
+      bands.push({ startSec, endSec, side });
+    }
+    return bands;
+  }
+
+  /** Show Prediction UP/DOWN for the latest trigger the playhead has reached. */
   function syncPlayPredictionBadge(win) {
     const badge = $("schedule-play-prediction");
     const label = $("schedule-play-prediction-label");
     if (!badge || !label) return;
 
-    const side = win?.predictionSide;
-    const rawTriggerMs = win?.predictionTriggeredAtMs;
-    const triggeredAtMs = Number(rawTriggerMs);
-    const hasTriggerTime = rawTriggerMs != null && Number.isFinite(triggeredAtMs);
-    const reachedTrigger = hasTriggerTime ? playheadSec * 1000 >= triggeredAtMs : true;
-    const ready =
-      viewMode === "play" && (side === "up" || side === "down") && reachedTrigger;
+    const triggers = predictionTriggersForWindow(win);
+    const playheadMs = playheadSec * 1000;
+    let side = null;
+    for (const trig of triggers) {
+      const triggeredAtMs = Number(trig.triggeredAtMs);
+      if (!Number.isFinite(triggeredAtMs)) continue;
+      if (playheadMs >= triggeredAtMs) side = trig.side;
+    }
+    const ready = viewMode === "play" && (side === "up" || side === "down");
 
     badge.classList.remove("is-up", "is-down");
     if (!ready) {
@@ -1379,7 +1448,7 @@
     // Only reveal markers that have occurred at the current playhead.
     const markers = (win.markers || []).filter((m) => Number(m.t) <= until);
 
-    const predictionBand = buildPredictionDurationBand(win, until);
+    const predictionBands = buildPredictionDurationBands(win, until);
 
     const layout = window.drawPriceChart(state, {
       canvas,
@@ -1391,7 +1460,9 @@
       // DOM scrubber is the playhead; skip the canvas duplicate.
       showPlayhead: false,
       marketOutcome: resolveMarketOutcome(win),
-      predictionBand,
+      predictionBands,
+      // Legacy single-band key (first band) for older drawPriceChart callers.
+      predictionBand: predictionBands[0] || null,
     });
     playChartLayout = layout;
     updateTimeUi(win);
@@ -1408,7 +1479,7 @@
           id,
           x,
           y,
-          bucket: win.bucket,
+          bucket: tradeBucketForMarker(win, m),
           html: renderHitsMapTooltipHtml(m),
         });
       }
@@ -1892,9 +1963,21 @@
       btn.setAttribute("role", "option");
       btn.setAttribute("aria-selected", index === selectedIndex ? "true" : "false");
 
-      const dot = document.createElement("span");
-      dot.className = `schedule-play-dot is-${win.bucket || "none"}`;
-      dot.setAttribute("aria-hidden", "true");
+      const dotsWrap = document.createElement("span");
+      dotsWrap.className = "schedule-play-dots";
+      dotsWrap.setAttribute("aria-hidden", "true");
+      const tradeBuckets = windowTradeDots(win);
+      if (tradeBuckets.length === 0) {
+        const dot = document.createElement("span");
+        dot.className = "schedule-play-dot is-none";
+        dotsWrap.appendChild(dot);
+      } else {
+        for (const bucket of tradeBuckets) {
+          const dot = document.createElement("span");
+          dot.className = `schedule-play-dot is-${bucket}`;
+          dotsWrap.appendChild(dot);
+        }
+      }
 
       const body = document.createElement("span");
       body.className = "schedule-play-item-body";
@@ -1909,32 +1992,7 @@
       sub.textContent = `${win.plLabel || "—"} · ${formatPnl(win.pnl)}${hitCount ? ` · ${hitCount} hits` : ""}`;
 
       body.append(title, sub);
-      btn.append(dot, body);
-
-      const scores = Array.isArray(win.predictionScores)
-        ? win.predictionScores.filter((s) => s === "right" || s === "wrong")
-        : win.predictionScore === "right" || win.predictionScore === "wrong"
-          ? [win.predictionScore]
-          : [];
-      if (scores.length > 0) {
-        const wrap = document.createElement("span");
-        wrap.className = "schedule-play-prediction-scores";
-        wrap.setAttribute(
-          "aria-label",
-          scores.map((s) => (s === "right" ? "Right" : "Wrong")).join(", "),
-        );
-        for (const score of scores) {
-          const scoreEl = document.createElement("span");
-          scoreEl.className = `schedule-play-prediction-score is-${score}`;
-          scoreEl.setAttribute(
-            "aria-label",
-            score === "right" ? "Prediction right" : "Prediction wrong",
-          );
-          scoreEl.innerHTML = score === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
-          wrap.appendChild(scoreEl);
-        }
-        btn.append(wrap);
-      }
+      btn.append(dotsWrap, body);
 
       btn.addEventListener("click", () => {
         if (viewMode !== "play" || windowsLoading || slotSpinning) return;

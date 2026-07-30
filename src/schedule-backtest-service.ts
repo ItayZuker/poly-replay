@@ -279,6 +279,122 @@ export function classifyWindow(result: SimLastWindow | null): OutcomeBucket {
   return result.positionWon ? "blue" : "red";
 }
 
+export type TradeDotBucket = "green" | "red" | "blue";
+
+/** One settled buy→sell (or held-to-settlement) trade for Replay dots/stats. */
+export interface TradeDot {
+  source: "phase" | "prediction";
+  bucket: TradeDotBucket;
+  /** Prediction trades only — feeds Replay Right/Wrong totals. */
+  predictionScore?: "right" | "wrong";
+  side: "up" | "down";
+  buyT: number;
+  sellT?: number;
+}
+
+function markerTradeSource(m: SimMarker): "phase" | "prediction" {
+  if (m.source === "prediction" || m.source === "phase") return m.source;
+  return String(m.windowKey || "").startsWith("pred:") ? "prediction" : "phase";
+}
+
+function settleUnsoldTrade(
+  buy: SimMarker,
+  source: "phase" | "prediction",
+  windowOutcome: WindowOutcome | null | undefined,
+): TradeDot {
+  const won =
+    windowOutcome === "up" || windowOutcome === "down" ? windowOutcome === buy.side : null;
+  if (source === "prediction") {
+    if (won === true) {
+      return {
+        source,
+        bucket: "blue",
+        predictionScore: "right",
+        side: buy.side,
+        buyT: buy.t,
+      };
+    }
+    return {
+      source,
+      bucket: "red",
+      predictionScore: "wrong",
+      side: buy.side,
+      buyT: buy.t,
+    };
+  }
+  if (won === true) {
+    return { source, bucket: "blue", side: buy.side, buyT: buy.t };
+  }
+  return { source, bucket: "red", side: buy.side, buyT: buy.t };
+}
+
+function pairSourceTrades(
+  markers: SimMarker[],
+  source: "phase" | "prediction",
+  windowOutcome: WindowOutcome | null | undefined,
+): TradeDot[] {
+  const sorted = markers
+    .filter((m) => markerTradeSource(m) === source)
+    .slice()
+    .sort((a, b) => a.t - b.t || (a.type === "buy" ? -1 : 1));
+  const dots: TradeDot[] = [];
+  let openBuy: SimMarker | null = null;
+  for (const m of sorted) {
+    if (m.type === "buy") {
+      if (openBuy) dots.push(settleUnsoldTrade(openBuy, source, windowOutcome));
+      openBuy = m;
+      continue;
+    }
+    if (m.type !== "sell" || !openBuy) continue;
+    if (source === "prediction") {
+      // Profit-target sell → green + Right (market outcome ignored).
+      dots.push({
+        source,
+        bucket: "green",
+        predictionScore: "right",
+        side: openBuy.side,
+        buyT: openBuy.t,
+        sellT: m.t,
+      });
+    } else {
+      const pl = Number.isFinite(m.profit) ? Number(m.profit) : 0;
+      dots.push({
+        source,
+        bucket: pl > 0 ? "green" : "red",
+        side: openBuy.side,
+        buyT: openBuy.t,
+        sellT: m.t,
+      });
+    }
+    openBuy = null;
+  }
+  if (openBuy) dots.push(settleUnsoldTrade(openBuy, source, windowOutcome));
+  return dots;
+}
+
+/** Pair phase + prediction fills into per-trade green/red/blue dots. */
+export function classifyTradesFromMarkers(
+  markers: SimMarker[] | null | undefined,
+  windowOutcome?: WindowOutcome | null,
+): TradeDot[] {
+  const list = markers ?? [];
+  const phase = pairSourceTrades(list, "phase", windowOutcome);
+  const pred = pairSourceTrades(list, "prediction", windowOutcome);
+  return [...phase, ...pred].sort((a, b) => a.buyT - b.buyT);
+}
+
+function primaryBucketFromTradeDots(dots: TradeDot[]): OutcomeBucket {
+  return dots.length === 0 ? "none" : dots[0].bucket;
+}
+
+/** One scored Prediction trigger in a window (Open Replay Duration band + badge). */
+export interface PredictionTriggerPlayItem {
+  side: WindowOutcome;
+  triggeredAtMs: number;
+  sensitivitySec: number;
+  score: "right" | "wrong";
+}
+
 export interface RecordedWindowSimulation {
   result: SimLastWindow | null;
   markers: SimMarker[];
@@ -286,10 +402,14 @@ export interface RecordedWindowSimulation {
   windowEnd: number;
   /** False when window metadata exists but tick files are missing/empty on disk. */
   hadTicks: boolean;
+  /** Official / inferred market outcome for held-position trade dots. */
+  windowOutcome?: WindowOutcome | null;
   predictionSide?: WindowOutcome | null;
   predictionScore?: "right" | "wrong" | null;
   /** All scored predictions in the window (supports re-trigger after Right). */
   predictionScores?: Array<"right" | "wrong">;
+  /** Every trigger in time order (Duration bands + badge for each). */
+  predictionTriggers?: PredictionTriggerPlayItem[];
   predictionTriggeredAtMs?: number | null;
   /** Duration (sec) used when the Prediction fired (for Open Replay band). */
   predictionSensitivitySec?: number | null;
@@ -309,15 +429,23 @@ export async function simulateRecordedWindow(
   // layer unrestricted Prediction fills onto a cached phase result.
   if (simCacheKey && simResultCache!.has(simCacheKey) && !predictionConfig) {
     const cached = simResultCache!.get(simCacheKey)!;
+    const windowOutcome: WindowOutcome | null =
+      window.windowOutcome === "up" || window.windowOutcome === "down"
+        ? window.windowOutcome
+        : cached.result?.outcome === "up" || cached.result?.outcome === "down"
+          ? cached.result.outcome
+          : null;
     return {
       result: cached.result,
       markers: cached.markers.map((m) => ({ ...m })),
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
       hadTicks: true,
+      windowOutcome,
       predictionSide: null,
       predictionScore: null,
       predictionScores: [],
+      predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
     };
@@ -342,6 +470,7 @@ export async function simulateRecordedWindow(
       predictionSide: null,
       predictionScore: null,
       predictionScores: [],
+      predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
     };
@@ -360,6 +489,7 @@ export async function simulateRecordedWindow(
       predictionSide: null,
       predictionScore: null,
       predictionScores: [],
+      predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
     };
@@ -376,6 +506,17 @@ export async function simulateRecordedWindow(
     : null;
   const predictionScores = predictionEvals.map((e) => e.score);
   const predictionScore = predictionScores[predictionScores.length - 1] ?? null;
+  const predictionTriggers: PredictionTriggerPlayItem[] = [];
+  for (const e of predictionEvals) {
+    const hit = e.hit;
+    if (!hit || (hit.side !== "up" && hit.side !== "down")) continue;
+    predictionTriggers.push({
+      side: hit.side,
+      triggeredAtMs: hit.triggeredAtMs,
+      sensitivitySec: predictionConfig!.sensitivitySec,
+      score: e.score,
+    });
+  }
 
   // Mute per-fill/GTD spam — otherwise Replay floods SSE/console and freezes the UI.
   return logService.runWithMutedSources(["sim"], () => {
@@ -454,15 +595,24 @@ export async function simulateRecordedWindow(
 
     const mergedResult = mergePredictionTradeResult(result, trade, windowStart, windowEnd);
 
+    const windowOutcome: WindowOutcome | null =
+      window.windowOutcome === "up" || window.windowOutcome === "down"
+        ? window.windowOutcome
+        : mergedResult?.outcome === "up" || mergedResult?.outcome === "down"
+          ? mergedResult.outcome
+          : null;
+
     return {
       result: mergedResult,
       markers: [...markers, ...trade.markers],
       windowStart,
       windowEnd,
       hadTicks: true,
+      windowOutcome,
       predictionSide,
       predictionScore,
       predictionScores,
+      predictionTriggers,
       predictionTriggeredAtMs,
       predictionSensitivitySec,
     };
@@ -485,8 +635,7 @@ function emptyStats(placementId: string): PlacementBacktestStats {
 
 function aggregateResult(
   placementId: string,
-  results: Array<SimLastWindow | null>,
-  predictionScores: Array<"right" | "wrong" | null | undefined> = [],
+  sims: RecordedWindowSimulation[],
 ): PlacementBacktestStats {
   let green = 0;
   let red = 0;
@@ -496,18 +645,21 @@ function aggregateResult(
   let predictionRight = 0;
   let predictionWrong = 0;
 
-  for (const result of results) {
-    const bucket = classifyWindow(result);
-    if (bucket === "green") green += 1;
-    else if (bucket === "red") red += 1;
-    else if (bucket === "blue") blue += 1;
-    else gray += 1;
-    if (result) pnl += result.pl ?? 0;
-  }
-
-  for (const score of predictionScores) {
-    if (score === "right") predictionRight += 1;
-    else if (score === "wrong") predictionWrong += 1;
+  for (const sim of sims) {
+    const outcome = sim.windowOutcome ?? sim.result?.outcome ?? null;
+    const dots = classifyTradesFromMarkers(sim.markers, outcome);
+    if (dots.length === 0) {
+      gray += 1;
+    } else {
+      for (const d of dots) {
+        if (d.bucket === "green") green += 1;
+        else if (d.bucket === "red") red += 1;
+        else if (d.bucket === "blue") blue += 1;
+        if (d.predictionScore === "right") predictionRight += 1;
+        else if (d.predictionScore === "wrong") predictionWrong += 1;
+      }
+    }
+    if (sim.result) pnl += sim.result.pl ?? 0;
   }
 
   return {
@@ -856,6 +1008,7 @@ export async function backtestSchedulePlacements(
             predictionSide: null,
             predictionScore: null,
             predictionScores: [],
+            predictionTriggers: [],
             predictionTriggeredAtMs: null,
             predictionSensitivitySec: null,
           } satisfies RecordedWindowSimulation;
@@ -867,15 +1020,6 @@ export async function backtestSchedulePlacements(
       (sim): sim is RecordedWindowSimulation => sim != null,
     );
     const withTicks = finished.filter((sim) => sim.hadTicks);
-    // Include null results so “ran, no buy” windows count toward gray.
-    const results = withTicks.map((sim) => sim.result);
-    const predictionScores = withTicks.flatMap((sim) =>
-      Array.isArray(sim.predictionScores) && sim.predictionScores.length > 0
-        ? sim.predictionScores
-        : sim.predictionScore
-          ? [sim.predictionScore]
-          : [],
-    );
 
     // Window metadata without tick files must not look like “ran, no trades”.
     if (withTicks.length === 0) {
@@ -895,7 +1039,7 @@ export async function backtestSchedulePlacements(
       );
       options.onPlacementComplete?.(computed);
     } else {
-      const computed = aggregateResult(plan.placement._id, results, predictionScores);
+      const computed = aggregateResult(plan.placement._id, withTicks);
       statsById.set(plan.placement._id, computed);
       if (allowCached) {
         cacheUpdates.push({
@@ -952,21 +1096,47 @@ export interface PlacementPlayWindowItem {
   finalPrice?: number;
   /** Official Polymarket up/down for this window (Settlement source). */
   windowOutcome?: WindowOutcome;
+  /** Legacy primary bucket (first trade, or none). Prefer tradeDots. */
   bucket: PlayOutcomeBucket;
+  /** Per-trade outcome dots (phase + Prediction); empty → gray in the list. */
+  tradeDots: TradeDot[];
   pnl: number;
   plLabel: string;
   sold: boolean;
   markers: SimMarker[];
   /** Replay Prediction side when the detector fired in this window. */
   predictionSide?: WindowOutcome | null;
-  /** Last Prediction score in the window (null if none). Prefer predictionScores. */
+  /** Last Prediction trade score in the window (null if none). Prefer predictionScores. */
   predictionScore?: "right" | "wrong" | null;
-  /** Every Prediction score in the window (one ✓/✕ each in Open Replay). */
+  /** Prediction trade Right/Wrong scores (from settled Prediction fills). */
   predictionScores?: Array<"right" | "wrong">;
+  /** Every trigger in time order (Duration bands + badge). */
+  predictionTriggers?: PredictionTriggerPlayItem[];
   /** Tick time (ms) when Prediction first triggered. */
   predictionTriggeredAtMs?: number | null;
   /** Duration (sec) used for the trigger (Open Replay highlight band). */
   predictionSensitivitySec?: number | null;
+}
+
+function playTradeFields(
+  markers: SimMarker[],
+  windowOutcome?: WindowOutcome | null,
+): {
+  tradeDots: TradeDot[];
+  bucket: PlayOutcomeBucket;
+  predictionScores: Array<"right" | "wrong">;
+  predictionScore: "right" | "wrong" | null;
+} {
+  const tradeDots = classifyTradesFromMarkers(markers, windowOutcome);
+  const predictionScores = tradeDots
+    .map((d) => d.predictionScore)
+    .filter((s): s is "right" | "wrong" => s === "right" || s === "wrong");
+  return {
+    tradeDots,
+    bucket: primaryBucketFromTradeDots(tradeDots),
+    predictionScores,
+    predictionScore: predictionScores.length ? predictionScores[predictionScores.length - 1] : null,
+  };
 }
 
 export interface PlacementPlayPayload {
@@ -1105,30 +1275,57 @@ async function playWindowsFromSims(
       if (m.y != null && Number.isFinite(m.y)) return m;
       return fallbackY != null && Number.isFinite(fallbackY) ? { ...m, y: fallbackY } : m;
     });
+    const trade = playTradeFields(markers, settlement.windowOutcome);
     windows.push({
       windowStart: sim.windowStart,
       windowEnd: sim.windowEnd,
       prevCloseAsset: settlement.prevCloseAsset,
       finalPrice: settlement.finalPrice,
       windowOutcome: settlement.windowOutcome,
-      bucket: classifyWindow(sim.result),
+      bucket: trade.bucket,
+      tradeDots: trade.tradeDots,
       pnl: sim.result?.pl ?? 0,
       plLabel: sim.result?.plLabel ?? "No trade",
       sold: Boolean(sim.result?.sold),
       markers,
       predictionSide: sim.predictionSide ?? null,
-      predictionScore: sim.predictionScore ?? null,
-      predictionScores:
-        Array.isArray(sim.predictionScores) && sim.predictionScores.length > 0
-          ? [...sim.predictionScores]
-          : sim.predictionScore === "right" || sim.predictionScore === "wrong"
-            ? [sim.predictionScore]
-            : [],
+      predictionScore: trade.predictionScore,
+      predictionScores: trade.predictionScores,
+      predictionTriggers: playTriggersFromSim(sim),
       predictionTriggeredAtMs: sim.predictionTriggeredAtMs ?? null,
       predictionSensitivitySec: sim.predictionSensitivitySec ?? null,
     });
   }
   return windows.sort((a, b) => a.windowStart - b.windowStart);
+}
+
+function playTriggersFromSim(sim: RecordedWindowSimulation): PredictionTriggerPlayItem[] {
+  if (Array.isArray(sim.predictionTriggers) && sim.predictionTriggers.length > 0) {
+    return sim.predictionTriggers.map((t) => ({ ...t }));
+  }
+  // Legacy single-trigger payload.
+  if (
+    (sim.predictionSide === "up" || sim.predictionSide === "down") &&
+    sim.predictionTriggeredAtMs != null &&
+    Number.isFinite(sim.predictionTriggeredAtMs)
+  ) {
+    const score =
+      sim.predictionScore === "right" || sim.predictionScore === "wrong"
+        ? sim.predictionScore
+        : "wrong";
+    return [
+      {
+        side: sim.predictionSide,
+        triggeredAtMs: sim.predictionTriggeredAtMs,
+        sensitivitySec:
+          sim.predictionSensitivitySec != null && Number.isFinite(sim.predictionSensitivitySec)
+            ? sim.predictionSensitivitySec
+            : 5,
+        score,
+      },
+    ];
+  }
+  return [];
 }
 
 export interface BuildPlacementPlayOptions {
@@ -1142,17 +1339,39 @@ export interface BuildPlacementPlayOptions {
   prediction?: Partial<PredictionDetectorConfig> | null;
 }
 
+function ensurePlayTradeDots(windows: PlacementPlayWindowItem[]): PlacementPlayWindowItem[] {
+  return windows.map((w) => {
+    if (Array.isArray(w.tradeDots)) return w;
+    const trade = playTradeFields(w.markers ?? [], w.windowOutcome);
+    return {
+      ...w,
+      tradeDots: trade.tradeDots,
+      bucket: trade.bucket,
+      predictionScore: trade.predictionScore,
+      predictionScores: trade.predictionScores,
+    };
+  });
+}
+
 function stripPredictionFromPlayWindows(
   windows: PlacementPlayWindowItem[],
 ): PlacementPlayWindowItem[] {
-  return windows.map((w) => ({
-    ...w,
-    predictionSide: null,
-    predictionScore: null,
-    predictionScores: [],
-    predictionTriggeredAtMs: null,
-    predictionSensitivitySec: null,
-  }));
+  return windows.map((w) => {
+    const markers = (w.markers ?? []).filter((m) => markerTradeSource(m) !== "prediction");
+    const trade = playTradeFields(markers, w.windowOutcome);
+    return {
+      ...w,
+      markers,
+      tradeDots: trade.tradeDots,
+      bucket: trade.bucket,
+      predictionSide: null,
+      predictionScore: null,
+      predictionScores: [],
+      predictionTriggers: [],
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
+    };
+  });
 }
 
 /** Build window list + sim markers for the schedule Open Replay popup. */
@@ -1184,9 +1403,10 @@ export async function buildPlacementPlayPayload(
         (w) => w.windowOutcome == null || w.finalPrice == null || w.prevCloseAsset == null,
       );
       if (!needsEnrich) {
+        const windows = ensurePlayTradeDots(remembered.windows);
         return predictionOff
-          ? { ...remembered, windows: stripPredictionFromPlayWindows(remembered.windows) }
-          : remembered;
+          ? { ...remembered, windows: stripPredictionFromPlayWindows(windows) }
+          : { ...remembered, windows };
       }
       const enriched = await Promise.all(
         remembered.windows.map(async (w) => {
@@ -1213,10 +1433,11 @@ export async function buildPlacementPlayPayload(
           };
         }),
       );
-      const next = { ...remembered, windows: enriched };
+      const windows = ensurePlayTradeDots(enriched);
+      const next = { ...remembered, windows };
       rememberPlacementPlay(userId, next);
       return predictionOff
-        ? { ...next, windows: stripPredictionFromPlayWindows(next.windows) }
+        ? { ...next, windows: stripPredictionFromPlayWindows(windows) }
         : next;
     }
   }
@@ -1333,25 +1554,23 @@ export async function buildPlacementPlayPayload(
   for (const { window, sim, markers } of sims.filter(({ sim: s }) => s.hadTicks)) {
     const result = sim.result;
     const settlement = await playSettlementFields(market, window, result);
+    const trade = playTradeFields(markers, settlement.windowOutcome);
     windows.push({
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
       prevCloseAsset: settlement.prevCloseAsset,
       finalPrice: settlement.finalPrice,
       windowOutcome: settlement.windowOutcome,
-      bucket: classifyWindow(result),
+      bucket: trade.bucket,
+      tradeDots: trade.tradeDots,
       pnl: result?.pl ?? 0,
       plLabel: result?.plLabel ?? "No trade",
       sold: Boolean(result?.sold),
       markers,
       predictionSide: sim.predictionSide ?? null,
-      predictionScore: sim.predictionScore ?? null,
-      predictionScores:
-        Array.isArray(sim.predictionScores) && sim.predictionScores.length > 0
-          ? [...sim.predictionScores]
-          : sim.predictionScore === "right" || sim.predictionScore === "wrong"
-            ? [sim.predictionScore]
-            : [],
+      predictionScore: trade.predictionScore,
+      predictionScores: trade.predictionScores,
+      predictionTriggers: playTriggersFromSim(sim),
       predictionTriggeredAtMs: sim.predictionTriggeredAtMs ?? null,
       predictionSensitivitySec: sim.predictionSensitivitySec ?? null,
     });
