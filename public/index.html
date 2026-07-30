@@ -519,6 +519,10 @@
                         Min Quote (¢) and Max Quote (¢), and over Duration it must drop by at least
                         Shift (¢).
                       </p>
+                      <p>
+                        After trigger, Right means the predicted side’s Buy rose by at least
+                        Profit prediction (¢) sometime before the window ends (not that the side wins the window).
+                      </p>
                     </div>
                   </div>
                   <div id="manipulation-detector-settings" class="manipulation-detector-settings">
@@ -555,6 +559,22 @@
                       </div>
                     </div>
                     <div class="manipulation-detector-row">
+                      <label class="wallet-control-label" for="manipulation-sensitivity">Duration (Sec)</label>
+                      <div class="schedule-replay-latency-field">
+                        <input
+                          type="number"
+                          id="manipulation-sensitivity"
+                          class="schedule-replay-latency-input"
+                          min="1"
+                          max="120"
+                          step="1"
+                          value="5"
+                          inputmode="numeric"
+                          aria-label="Manipulation duration in seconds"
+                        />
+                      </div>
+                    </div>
+                    <div class="manipulation-detector-row">
                       <label class="wallet-control-label" for="prediction-shift">Shift (¢)</label>
                       <div class="schedule-replay-latency-field">
                         <input
@@ -571,18 +591,18 @@
                       </div>
                     </div>
                     <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="manipulation-sensitivity">Duration (Sec)</label>
+                      <label class="wallet-control-label" for="prediction-rise">Profit prediction (¢)</label>
                       <div class="schedule-replay-latency-field">
                         <input
                           type="number"
-                          id="manipulation-sensitivity"
+                          id="prediction-rise"
                           class="schedule-replay-latency-input"
                           min="1"
-                          max="120"
+                          max="50"
                           step="1"
                           value="5"
                           inputmode="numeric"
-                          aria-label="Manipulation duration in seconds"
+                          aria-label="Profit prediction in cents: minimum rise of the predicted-side Buy after trigger before window end"
                         />
                       </div>
                     </div>
@@ -615,18 +635,38 @@
                         <span class="manipulation-area-thumb-label" id="manipulation-area-end-label">5:00</span>
                       </div>
                     </div>
-                    <div
-                      id="prediction-status-box"
-                      class="prediction-status-box is-none"
-                      aria-live="polite"
-                      aria-label="Prediction status"
-                    >
-                      <span id="prediction-status-label" class="prediction-status-label"
-                        >Waiting<span class="prediction-loading-dots" aria-hidden="true"
-                          ><span>.</span><span>.</span><span>.</span></span
-                        ></span
+                    <div class="prediction-action-row" id="prediction-action-row" aria-label="Prediction actions">
+                      <div
+                        id="prediction-buy-box"
+                        class="quote-box quote-box-disabled"
+                        aria-live="polite"
+                        aria-label="Buy disabled"
+                        aria-disabled="true"
                       >
-                      <span id="prediction-status-icon" class="prediction-status-icon" hidden aria-hidden="true"></span>
+                        <span id="prediction-status-label" class="prediction-status-label" hidden></span>
+                        <span id="prediction-status-icon" class="prediction-status-icon" hidden aria-hidden="true"></span>
+                        <div id="prediction-buy-quote" class="quote-cell">
+                          <div class="quote-label">Buy</div>
+                          <div class="quote-values">
+                            <span id="prediction-buy-locked" class="quote-locked" hidden></span>
+                            <span id="prediction-buy-live" class="quote-live">—</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        id="prediction-sell-box"
+                        class="quote-box quote-box-disabled"
+                        aria-label="Sell disabled"
+                        aria-disabled="true"
+                      >
+                        <div id="prediction-sell-quote" class="quote-cell">
+                          <div class="quote-label">Sell</div>
+                          <div class="quote-values">
+                            <span id="prediction-sell-locked" class="quote-locked" hidden></span>
+                            <span id="prediction-sell-live" class="quote-live">—</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <div class="prediction-stats-row" aria-label="Prediction stats">
                       <button type="button" id="prediction-stats-reset" class="settings-secondary-btn prediction-stats-reset">
@@ -1226,6 +1266,25 @@
                     </div>
                   </div>
                   <div class="schedule-replay-latency">
+                    <label class="schedule-replay-latency-label" for="replay-prediction-duration"
+                      >Duration (Sec)</label
+                    >
+                    <div class="schedule-replay-latency-field">
+                      <input
+                        id="replay-prediction-duration"
+                        class="schedule-replay-latency-input"
+                        type="number"
+                        min="1"
+                        max="120"
+                        step="1"
+                        value="5"
+                        inputmode="numeric"
+                        tabindex="-1"
+                        title="Replay Prediction: seconds the Gap vs Buy condition must hold."
+                      />
+                    </div>
+                  </div>
+                  <div class="schedule-replay-latency">
                     <label class="schedule-replay-latency-label" for="replay-prediction-shift"
                       >Shift (¢)</label
                     >
@@ -1245,21 +1304,21 @@
                     </div>
                   </div>
                   <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-duration"
-                      >Duration (Sec)</label
+                    <label class="schedule-replay-latency-label" for="replay-prediction-rise"
+                      >Profit prediction (¢)</label
                     >
                     <div class="schedule-replay-latency-field">
                       <input
-                        id="replay-prediction-duration"
+                        id="replay-prediction-rise"
                         class="schedule-replay-latency-input"
                         type="number"
                         min="1"
-                        max="120"
+                        max="50"
                         step="1"
                         value="5"
                         inputmode="numeric"
                         tabindex="-1"
-                        title="Replay Prediction: seconds the Gap vs Buy condition must hold."
+                        title="Replay Prediction: predicted-side Buy must rise by at least this many ¢ (Profit prediction) after trigger before window end."
                       />
                     </div>
                   </div>

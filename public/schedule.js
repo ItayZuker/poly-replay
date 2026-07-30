@@ -14,6 +14,7 @@
     maxQuoteCents: 90,
     minQuoteCents: 70,
     shiftCents: 5,
+    riseCents: 5,
     sensitivitySec: 5,
     areaStart: 0,
     areaEnd: 1,
@@ -3459,7 +3460,7 @@
   /** Frozen Latency / Fill success / Prediction for the in-flight run (null when idle). */
   let replayRunLockedLatencyMs = null;
   let replayRunLockedFillSuccessPct = null;
-  /** @type {{ enabled: boolean, maxQuoteCents: number, minQuoteCents: number, shiftCents: number, sensitivitySec: number, areaStart: number, areaEnd: number } | null} */
+  /** @type {{ enabled: boolean, maxQuoteCents: number, minQuoteCents: number, shiftCents: number, riseCents: number, sensitivitySec: number, areaStart: number, areaEnd: number } | null} */
   let replayRunLockedPrediction = null;
   let replayPredictionAreaStart = DEFAULT_REPLAY_PREDICTION.areaStart;
   let replayPredictionAreaEnd = DEFAULT_REPLAY_PREDICTION.areaEnd;
@@ -3559,6 +3560,11 @@
     return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_REPLAY_PREDICTION.shiftCents));
   }
 
+  function normalizeReplayPredictionRise(value) {
+    const n = Math.round(Number(value));
+    return Math.max(1, Math.min(50, Number.isFinite(n) ? n : DEFAULT_REPLAY_PREDICTION.riseCents));
+  }
+
   function normalizeReplayPredictionSensitivity(value) {
     const n = Math.round(Number(value));
     return Math.max(1, Math.min(120, Number.isFinite(n) ? n : DEFAULT_REPLAY_PREDICTION.sensitivitySec));
@@ -3594,6 +3600,7 @@
     const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
     const minQuoteInput = document.getElementById("replay-prediction-min-quote");
     const shiftInput = document.getElementById("replay-prediction-shift");
+    const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
     const area = normalizeReplayPredictionArea(
       replayPredictionAreaStart,
@@ -3608,6 +3615,7 @@
       maxQuoteCents: quotes.maxQuoteCents,
       minQuoteCents: quotes.minQuoteCents,
       shiftCents: normalizeReplayPredictionShift(shiftInput?.value),
+      riseCents: normalizeReplayPredictionRise(riseInput?.value),
       sensitivitySec: normalizeReplayPredictionSensitivity(durationInput?.value),
       areaStart: area.areaStart,
       areaEnd: area.areaEnd,
@@ -3622,6 +3630,7 @@
       maxQuoteCents: config.maxQuoteCents,
       minQuoteCents: config.minQuoteCents,
       shiftCents: config.shiftCents,
+      riseCents: config.riseCents,
       sensitivitySec: config.sensitivitySec,
       areaStart: config.areaStart,
       areaEnd: config.areaEnd,
@@ -3638,6 +3647,7 @@
       maxQuoteCents: quotes.maxQuoteCents,
       minQuoteCents: quotes.minQuoteCents,
       shiftCents: normalizeReplayPredictionShift(config?.shiftCents),
+      riseCents: normalizeReplayPredictionRise(config?.riseCents),
       sensitivitySec: normalizeReplayPredictionSensitivity(config?.sensitivitySec),
       ...normalizeReplayPredictionArea(config?.areaStart, config?.areaEnd),
     };
@@ -3709,6 +3719,7 @@
       maxQuoteCents: quotes.maxQuoteCents,
       minQuoteCents: quotes.minQuoteCents,
       shiftCents: normalizeReplayPredictionShift(config?.shiftCents),
+      riseCents: normalizeReplayPredictionRise(config?.riseCents),
       sensitivitySec: normalizeReplayPredictionSensitivity(config?.sensitivitySec),
       ...normalizeReplayPredictionArea(config?.areaStart, config?.areaEnd),
     };
@@ -3716,11 +3727,13 @@
     const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
     const minQuoteInput = document.getElementById("replay-prediction-min-quote");
     const shiftInput = document.getElementById("replay-prediction-shift");
+    const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
     if (toggle) toggle.checked = next.enabled;
     if (maxQuoteInput) maxQuoteInput.value = String(next.maxQuoteCents);
     if (minQuoteInput) minQuoteInput.value = String(next.minQuoteCents);
     if (shiftInput) shiftInput.value = String(next.shiftCents);
+    if (riseInput) riseInput.value = String(next.riseCents);
     if (durationInput) durationInput.value = String(next.sensitivitySec);
     replayPredictionAreaStart = next.areaStart;
     replayPredictionAreaEnd = next.areaEnd;
@@ -3738,6 +3751,7 @@
     const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
     const minQuoteInput = document.getElementById("replay-prediction-min-quote");
     const shiftInput = document.getElementById("replay-prediction-shift");
+    const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
     const startThumb = document.getElementById("replay-prediction-area-start");
     const endThumb = document.getElementById("replay-prediction-area-end");
@@ -3745,7 +3759,7 @@
     if (settings) settings.setAttribute("aria-hidden", enabled ? "false" : "true");
     if (label) label.textContent = enabled ? "Prediction · On" : "Prediction · Off";
     const settingsLocked = !enabled || replayRunning;
-    for (const input of [maxQuoteInput, minQuoteInput, shiftInput, durationInput]) {
+    for (const input of [maxQuoteInput, minQuoteInput, shiftInput, riseInput, durationInput]) {
       if (!input) continue;
       input.disabled = settingsLocked;
       input.setAttribute("aria-disabled", settingsLocked ? "true" : "false");
@@ -3883,6 +3897,7 @@
     const maxQuoteInput = document.getElementById("replay-prediction-max-quote");
     const minQuoteInput = document.getElementById("replay-prediction-min-quote");
     const shiftInput = document.getElementById("replay-prediction-shift");
+    const riseInput = document.getElementById("replay-prediction-rise");
     const durationInput = document.getElementById("replay-prediction-duration");
     if (enabledToggle && enabledToggle.dataset.bound !== "1") {
       enabledToggle.dataset.bound = "1";
@@ -3929,6 +3944,22 @@
       shiftInput.addEventListener("blur", commit);
       shiftInput.addEventListener("input", () => {
         if (replayRunning || shiftInput.disabled) applyReplayRunLockedInputs();
+      });
+    }
+    if (riseInput && riseInput.dataset.bound !== "1") {
+      riseInput.dataset.bound = "1";
+      const commit = () => {
+        if (replayRunning || riseInput.disabled || !isReplayPredictionEnabled()) {
+          applyReplayRunLockedInputs();
+          return;
+        }
+        const next = persistReplayPredictionConfig(readReplayPredictionConfig());
+        riseInput.value = String(next.riseCents);
+      };
+      riseInput.addEventListener("change", commit);
+      riseInput.addEventListener("blur", commit);
+      riseInput.addEventListener("input", () => {
+        if (replayRunning || riseInput.disabled) applyReplayRunLockedInputs();
       });
     }
     if (durationInput && durationInput.dataset.bound !== "1") {

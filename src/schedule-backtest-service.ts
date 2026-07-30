@@ -332,7 +332,12 @@ export async function simulateRecordedWindow(
     const predictionSensitivitySec = predictionHit
       ? predictionConfig.sensitivitySec
       : null;
-    const predictionScore = scorePrediction(predictionSide, window.windowOutcome);
+    const predictionScore = scorePrediction(
+      predictionHit,
+      ticksForPred,
+      window.windowEnd,
+      predictionConfig.riseCents,
+    );
     return {
       result: cached.result,
       markers: cached.markers.map((m) => ({ ...m })),
@@ -395,7 +400,14 @@ export async function simulateRecordedWindow(
   const predictionSensitivitySec = predictionHit
     ? predictionConfig!.sensitivitySec
     : null;
-  const predictionScore = scorePrediction(predictionSide, window.windowOutcome);
+  const predictionScore = predictionHit
+    ? scorePrediction(
+        predictionHit,
+        ticks,
+        windowEnd,
+        predictionConfig!.riseCents,
+      )
+    : null;
 
   // Mute per-fill/GTD spam — otherwise Replay floods SSE/console and freezes the UI.
   return logService.runWithMutedSources(["sim"], () => {

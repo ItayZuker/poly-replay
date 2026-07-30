@@ -105,6 +105,7 @@ function defaultTrading(): TradingConfig {
     predictionMaxQuoteCents: 90,
     predictionMinQuoteCents: 70,
     predictionShiftCents: 5,
+    predictionRiseCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -147,6 +148,11 @@ function normalizePredictionQuoteBand(
 }
 
 function normalizePredictionShiftCents(raw: unknown, fallback = 5): number {
+  const n = Math.round(Number(raw));
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
+}
+
+function normalizePredictionRiseCents(raw: unknown, fallback = 5): number {
   const n = Math.round(Number(raw));
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
 }
@@ -199,6 +205,10 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     raw.predictionShiftCents,
     base.predictionShiftCents,
   );
+  const predictionRiseCents = normalizePredictionRiseCents(
+    raw.predictionRiseCents,
+    base.predictionRiseCents,
+  );
   const area = normalizeManipulationArea(
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
@@ -215,6 +225,7 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     manipulationSensitivitySec,
     ...quotes,
     predictionShiftCents,
+    predictionRiseCents,
     ...area,
     predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
     predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),

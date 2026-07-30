@@ -15,6 +15,11 @@ export interface PredictionDetectorConfig {
   minQuoteCents: number;
   /** Minimum drop (¢) of that cheapening Buy over Duration. */
   shiftCents: number;
+  /**
+   * Profit prediction (¢): after trigger, predicted-side Buy must rise by at
+   * least this many ¢ sometime before window end for the prediction to score right.
+   */
+  riseCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */
   areaStart: number;
   /** End of detection area as fraction of the market window [0, 1]. */
@@ -50,6 +55,11 @@ export function normalizePredictionMinQuoteCents(value: unknown, fallback = 70):
 }
 
 export function normalizePredictionShiftCents(value: unknown, fallback = 5): number {
+  const n = Math.round(Number(value));
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
+}
+
+export function normalizePredictionRiseCents(value: unknown, fallback = 5): number {
   const n = Math.round(Number(value));
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
 }
@@ -97,6 +107,7 @@ export function normalizePredictionDetectorConfig(
     sensitivitySec: normalizePredictionSensitivitySec(raw?.sensitivitySec),
     ...quotes,
     shiftCents: normalizePredictionShiftCents(raw?.shiftCents),
+    riseCents: normalizePredictionRiseCents(raw?.riseCents),
     ...area,
   };
 }
@@ -163,6 +174,12 @@ export interface WindowPredictionHit {
   side: WindowOutcome;
   /** Tick time (ms) when the detector first fired. */
   triggeredAtMs: number;
+  /** Predicted-side Buy (0–1) at trigger time. */
+  triggerSideBuy: number;
+}
+
+function sideBuy(side: WindowOutcome, upBuy: number, downBuy: number): number {
+  return side === "up" ? upBuy : downBuy;
 }
 
 /**
@@ -232,7 +249,11 @@ export function evaluateWindowPrediction(
           config.minQuoteCents,
         )
       ) {
-        return { side: "down", triggeredAtMs: nowMs };
+        return {
+          side: "down",
+          triggeredAtMs: nowMs,
+          triggerSideBuy: downBuy,
+        };
       }
     } else if (baseline.gap < 0) {
       if (
@@ -248,7 +269,11 @@ export function evaluateWindowPrediction(
           config.minQuoteCents,
         )
       ) {
-        return { side: "up", triggeredAtMs: nowMs };
+        return {
+          side: "up",
+          triggeredAtMs: nowMs,
+          triggerSideBuy: upBuy,
+        };
       }
     }
   }
@@ -256,11 +281,31 @@ export function evaluateWindowPrediction(
   return null;
 }
 
+/**
+ * Score a prediction by whether the predicted-side Buy rose by ≥ Profit
+ * prediction (¢) anytime after trigger and before window end. Window outcome is ignored.
+ */
 export function scorePrediction(
-  side: WindowOutcome | null | undefined,
-  outcome: WindowOutcome | null | undefined,
+  hit: WindowPredictionHit | null | undefined,
+  ticks: PredictionTickSample[],
+  windowEndSec: number,
+  riseCents: number,
 ): "right" | "wrong" | null {
-  if (side !== "up" && side !== "down") return null;
-  if (outcome !== "up" && outcome !== "down") return null;
-  return side === outcome ? "right" : "wrong";
+  if (!hit || (hit.side !== "up" && hit.side !== "down")) return null;
+  if (!Number.isFinite(hit.triggeredAtMs) || !Number.isFinite(hit.triggerSideBuy)) return null;
+  const riseP = normalizePredictionRiseCents(riseCents) / 100;
+  const target = hit.triggerSideBuy + riseP;
+  const endMs = windowEndSec * 1000;
+
+  for (const tick of ticks) {
+    if (tick.tMs < hit.triggeredAtMs) continue;
+    if (!(tick.tMs < endMs)) break;
+    const upBuy = Number(tick.yesAsk);
+    const downBuy = Number(tick.noAsk);
+    if (!Number.isFinite(upBuy) || !Number.isFinite(downBuy)) continue;
+    if (sideBuy(hit.side, upBuy, downBuy) >= target - 1e-12) {
+      return "right";
+    }
+  }
+  return "wrong";
 }

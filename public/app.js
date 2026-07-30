@@ -1828,7 +1828,7 @@ function updateQuoteBoxes(state) {
       box.classList.remove("quote-triggered-up", "quote-triggered-down", "quote-box-latched");
     }
   }
-  syncPredictionBuyButtonEnabled(state);
+  syncPredictionActionBoxes(state);
 }
 
 let quoteOrderInFlight = false;
@@ -1843,6 +1843,15 @@ async function postTradingOrder(side, leg) {
   return { ok: res.ok, status: res.status, body };
 }
 
+function predictionActionBoxForLeg(leg) {
+  return leg === "buy" ? $("prediction-buy-box") : leg === "sell" ? $("prediction-sell-box") : null;
+}
+
+function predictionActionBoxMatchesSide(box, side) {
+  if (!box || (side !== "up" && side !== "down")) return false;
+  return box.classList.contains(side === "up" ? "quote-box-up" : "quote-box-down");
+}
+
 async function clickQuoteBox(side, leg) {
   if (quoteOrderInFlight) return;
   const trading = tradingState(windowState);
@@ -1852,12 +1861,11 @@ async function clickQuoteBox(side, leg) {
   const boxId = QUOTE_BOXES.find((b) => b.side === side && b.leg === leg)?.boxId;
   const box = boxId ? $(boxId) : null;
   if (box) box.classList.add("quote-box-pending");
-  const predBox = $("prediction-status-box");
+  const predBox = predictionActionBoxForLeg(leg);
   const predPending =
-    leg === "buy" &&
-    predBox?.classList.contains("is-buyable") &&
-    ((side === "up" && predBox.classList.contains("is-up")) ||
-      (side === "down" && predBox.classList.contains("is-down")));
+    predBox?.classList.contains("quote-box") &&
+    !predBox.classList.contains("quote-box-disabled") &&
+    predictionActionBoxMatchesSide(predBox, side);
   if (predPending) predBox.classList.add("quote-box-pending");
 
   try {
@@ -3225,9 +3233,9 @@ function ensurePredictionPositionCard(
   return predictionPositionCards.find((c) => c.id === id) || null;
 }
 
-function settlePredictionPositionCard(side, windowStart, outcome) {
+function settlePredictionPositionCard(side, windowStart, right) {
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
-  if (outcome !== "up" && outcome !== "down") return false;
+  if (typeof right !== "boolean") return false;
   const series = selectedSeries || "btc-5m";
   const id = predictionCardId(series, windowStart);
   let card = predictionPositionCards.find((c) => c.id === id);
@@ -3237,12 +3245,10 @@ function settlePredictionPositionCard(side, windowStart, outcome) {
   }
   if (!card) return false;
   if (card.status === "right" || card.status === "wrong") return false;
-  const right = (side === "up" || side === "down" ? side : card.side) === outcome;
   upsertPredictionPositionCard({
     ...card,
     side: side === "up" || side === "down" ? side : card.side,
     status: right ? "right" : "wrong",
-    outcome,
     confirmed: true,
   });
   return true;
@@ -3914,6 +3920,7 @@ async function onMarketSeriesChanged(nextSeries) {
     predictionMaxQuoteCents: 90,
     predictionMinQuoteCents: 70,
     predictionShiftCents: 5,
+    predictionRiseCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -5433,6 +5440,24 @@ function normalizePredictionShiftCents(value) {
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : 5));
 }
 
+function normalizePredictionRiseCents(value) {
+  const n = Math.round(Number(value));
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : 5));
+}
+
+function predictedSideBuy(side, upBuy, downBuy) {
+  return side === "up" ? upBuy : downBuy;
+}
+
+function buyMeetsPredictionRise(side, upBuy, downBuy, triggerBuy, riseCents) {
+  if (side !== "up" && side !== "down") return false;
+  if (!Number.isFinite(triggerBuy) || !Number.isFinite(upBuy) || !Number.isFinite(downBuy)) {
+    return false;
+  }
+  const target = triggerBuy + normalizePredictionRiseCents(riseCents) / 100;
+  return predictedSideBuy(side, upBuy, downBuy) >= target - 1e-12;
+}
+
 /** Cheapening Buy within [Min, Max] Quote at Duration start, and drops by ≥ Shift over Duration. */
 function meetsPredictionMaxQuoteAndShift(
   predictionSide,
@@ -5514,6 +5539,7 @@ function readLocalTradingConfig() {
         };
       })(),
       predictionShiftCents: normalizePredictionShiftCents(parsed.predictionShiftCents),
+      predictionRiseCents: normalizePredictionRiseCents(parsed.predictionRiseCents),
       ...area,
       predictionRightCount: normalizePredictionCount(parsed.predictionRightCount),
       predictionWrongCount: normalizePredictionCount(parsed.predictionWrongCount),
@@ -5547,6 +5573,7 @@ function writeLocalTradingConfig(config) {
         predictionMaxQuoteCents: quotes.maxQuoteCents,
         predictionMinQuoteCents: quotes.minQuoteCents,
         predictionShiftCents: normalizePredictionShiftCents(config.predictionShiftCents),
+        predictionRiseCents: normalizePredictionRiseCents(config.predictionRiseCents),
         ...area,
         predictionRightCount: normalizePredictionCount(config.predictionRightCount),
         predictionWrongCount: normalizePredictionCount(config.predictionWrongCount),
@@ -5598,6 +5625,7 @@ function buildTradingConfigPatch(overrides = {}) {
   const maxQuoteInput = $("prediction-max-quote");
   const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
+  const riseInput = $("prediction-rise");
   const manualOrderUnit = unitSelect?.value === "usdc" ? "usdc" : "shares";
   const area = normalizeManipulationArea(manipAreaStart, manipAreaEnd);
   const quotes = normalizePredictionQuoteBand(minQuoteInput?.value, maxQuoteInput?.value);
@@ -5614,6 +5642,7 @@ function buildTradingConfigPatch(overrides = {}) {
     predictionMaxQuoteCents: quotes.maxQuoteCents,
     predictionMinQuoteCents: quotes.minQuoteCents,
     predictionShiftCents: normalizePredictionShiftCents(shiftInput?.value),
+    predictionRiseCents: normalizePredictionRiseCents(riseInput?.value),
     ...area,
     predictionRightCount: normalizePredictionCount(manipDetectorRuntime.rightCount),
     predictionWrongCount: normalizePredictionCount(manipDetectorRuntime.wrongCount),
@@ -5653,6 +5682,10 @@ const manipDetectorRuntime = {
   predictionWindowStart: null,
   predictionWindowEnd: null,
   predictionSlug: null,
+  /** Predicted-side Buy (0–1) at trigger. */
+  predictionTriggerBuy: null,
+  /** Profit prediction (¢) required after trigger for Right. */
+  predictionRiseCents: 5,
   /** @type {"none"|"active"|"pending"|"right"|"wrong"} */
   uiPhase: "none",
   /** @type {number[]} */
@@ -5663,10 +5696,14 @@ const manipDetectorRuntime = {
   resolveStartedAt: 0,
   resultClearTimer: null,
   /**
-   * Pending predictions parked when a newer one takes the UI.
+   * Active predictions parked when a newer one takes the UI.
+   * Scored by predicted-side Buy rise (or Wrong at window end).
    * @type {Array<{
    *   side: "up"|"down",
    *   windowStart: number,
+   *   windowEnd: number|null,
+   *   triggerSideBuy: number|null,
+   *   riseCents: number,
    *   slug: string|null,
    *   lastPrice: number|null,
    *   lastPtb: number|null,
@@ -5735,6 +5772,9 @@ function serializeBackgroundResolutions() {
   return manipDetectorRuntime.backgroundResolutions.map((job) => ({
     side: job.side,
     windowStart: job.windowStart,
+    windowEnd: Number.isFinite(job.windowEnd) ? job.windowEnd : null,
+    triggerSideBuy: Number.isFinite(job.triggerSideBuy) ? job.triggerSideBuy : null,
+    riseCents: normalizePredictionRiseCents(job.riseCents),
     slug: job.slug,
     lastPrice: Number.isFinite(job.lastPrice) ? job.lastPrice : null,
     lastPtb: Number.isFinite(job.lastPtb) ? job.lastPtb : null,
@@ -5768,6 +5808,12 @@ function persistPredictionRuntime() {
         predictionWindowStart: active ? manipDetectorRuntime.predictionWindowStart : null,
         predictionWindowEnd: active ? manipDetectorRuntime.predictionWindowEnd : null,
         predictionSlug: active ? manipDetectorRuntime.predictionSlug : null,
+        predictionTriggerBuy: active && Number.isFinite(manipDetectorRuntime.predictionTriggerBuy)
+          ? manipDetectorRuntime.predictionTriggerBuy
+          : null,
+        predictionRiseCents: active
+          ? normalizePredictionRiseCents(manipDetectorRuntime.predictionRiseCents)
+          : null,
         uiPhase: active ? phase : "none",
         scoredWindowStarts: scored,
         // legacy single field for older clients
@@ -5826,6 +5872,7 @@ function restoreBackgroundResolutions(rawList) {
   stopBackgroundResolutionTimers();
   manipDetectorRuntime.backgroundResolutions = [];
   if (!Array.isArray(rawList)) return;
+  const nowMs = Date.now();
   for (const item of rawList) {
     if (!item || typeof item !== "object") continue;
     const side = item.side === "up" || item.side === "down" ? item.side : null;
@@ -5834,9 +5881,13 @@ function restoreBackgroundResolutions(rawList) {
     if (manipDetectorRuntime.backgroundResolutions.some((j) => j.windowStart === windowStart)) {
       continue;
     }
+    const windowEnd = Number.isFinite(item.windowEnd) ? item.windowEnd : null;
     const job = {
       side,
       windowStart,
+      windowEnd,
+      triggerSideBuy: Number.isFinite(item.triggerSideBuy) ? item.triggerSideBuy : null,
+      riseCents: normalizePredictionRiseCents(item.riseCents),
       slug:
         typeof item.slug === "string" && item.slug.trim() ? item.slug.trim() : null,
       lastPrice: Number.isFinite(item.lastPrice) ? item.lastPrice : null,
@@ -5847,8 +5898,15 @@ function restoreBackgroundResolutions(rawList) {
           : Date.now(),
       timer: null,
     };
+    // Window already over while offline — cannot verify Profit prediction; count Wrong.
+    if (windowEnd != null && nowMs >= windowEnd * 1000) {
+      recordPredictionScore(side, windowStart, false, {
+        showResultUi: false,
+        source: "window-end",
+      });
+      continue;
+    }
     manipDetectorRuntime.backgroundResolutions.push(job);
-    scheduleBackgroundPredictionPoll(job, 400);
   }
 }
 
@@ -5905,33 +5963,30 @@ function restorePredictionRuntime() {
       typeof parsed.predictionSlug === "string" && parsed.predictionSlug.trim()
         ? parsed.predictionSlug.trim()
         : null;
+    manipDetectorRuntime.predictionTriggerBuy = Number.isFinite(parsed.predictionTriggerBuy)
+      ? parsed.predictionTriggerBuy
+      : null;
+    manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(
+      parsed.predictionRiseCents ?? $("prediction-rise")?.value,
+    );
     manipDetectorRuntime.lastPrice = Number.isFinite(parsed.lastPrice) ? parsed.lastPrice : null;
     manipDetectorRuntime.lastPtb = Number.isFinite(parsed.lastPtb) ? parsed.lastPtb : null;
     // Align detector window so the first tick does not wipe the restored prediction.
     manipDetectorRuntime.windowStart = windowStart;
-    manipDetectorRuntime.uiPhase = phase;
+    manipDetectorRuntime.uiPhase = phase === "pending" ? "active" : phase;
 
     const nowMs = Date.now();
     const windowEndMs = windowEnd != null ? windowEnd * 1000 : null;
 
-    if (phase === "active" && windowEndMs != null && nowMs >= windowEndMs) {
-      beginPredictionPending();
+    if (windowEndMs != null && nowMs >= windowEndMs) {
+      finalizePredictionAtWindowEnd({ showResultUi: true, source: "window-end" });
       syncPredictionCardsFromRuntime();
       return;
     }
 
     syncPredictionStatusUi();
-    if (phase === "active") {
+    if (manipDetectorRuntime.uiPhase === "active") {
       restorePredictionGraphBorder(side, windowEnd);
-    } else if (phase === "pending") {
-      stopPredictionResolveLoop();
-      manipDetectorRuntime.resolveStartedAt =
-        Number.isFinite(parsed.resolveStartedAt) && parsed.resolveStartedAt > 0
-          ? parsed.resolveStartedAt
-          : Date.now();
-      manipDetectorRuntime.resolveTimer = setTimeout(() => {
-        void pollPredictionOfficialOutcome();
-      }, 400);
     }
     syncPredictionCardsFromRuntime();
   } catch {
@@ -5959,124 +6014,230 @@ function stopPredictionResultClearTimer() {
   }
 }
 
-/** Active Prediction status is a manual Buy shortcut for that side (same gates as quote Buy). */
-function syncPredictionBuyButtonEnabled(state = windowState) {
-  const box = $("prediction-status-box");
-  if (!box || !box.classList.contains("is-buyable")) return;
-  const side = box.classList.contains("is-up")
-    ? "up"
-    : box.classList.contains("is-down")
-      ? "down"
-      : null;
-  if (side !== "up" && side !== "down") return;
-  const detectorOn = Boolean($("manipulation-detector")?.checked);
-  const trading = tradingState(state);
-  const allowed = detectorOn && canQuoteAction(trading, side, "buy");
-  box.classList.toggle("is-buy-disabled", !allowed);
-  box.setAttribute("aria-disabled", allowed ? "false" : "true");
-
-  // Latch/fill only after a real Buy (same quoteLocks as the graph Buy boxes).
-  const locks = trading?.quoteLocks ?? state?.sim?.quoteLocks ?? {};
-  const lockKey = side === "up" ? "upBuy" : "downBuy";
-  const lockedPrice = locks[lockKey];
-  const latched = lockedPrice != null && Number.isFinite(lockedPrice);
-  box.classList.toggle("quote-box-latched", latched);
-  box.classList.toggle("quote-triggered-up", latched && side === "up");
-  box.classList.toggle("quote-triggered-down", latched && side === "down");
-  if (latched) box.classList.remove("quote-box-pressing");
-}
-
-function setPredictionStatusBuyable(box, side) {
-  const buyable = side === "up" || side === "down";
-  box.classList.toggle("is-buyable", buyable);
-  if (!buyable) {
-    box.classList.remove(
-      "is-buy-disabled",
-      "quote-box-pressing",
-      "quote-box-pending",
-      "quote-box-latched",
-      "quote-triggered-up",
-      "quote-triggered-down",
-    );
-    box.removeAttribute("role");
-    box.removeAttribute("tabindex");
-    box.removeAttribute("aria-disabled");
-    box.setAttribute("aria-label", "Prediction status");
-    return;
-  }
-  box.setAttribute("role", "button");
-  box.tabIndex = 0;
-  box.setAttribute("aria-label", `Buy Prediction ${side.toUpperCase()}`);
-  syncPredictionBuyButtonEnabled();
-}
-
-function syncPredictionStatusUi() {
-  const box = $("prediction-status-box");
-  const label = $("prediction-status-label");
-  const icon = $("prediction-status-icon");
-  if (!box || !label || !icon) return;
-
-  const side = manipDetectorRuntime.predictionSide;
-  const phase = manipDetectorRuntime.uiPhase;
+function clearPredictionQuoteBoxClasses(box) {
+  if (!box) return;
   box.classList.remove(
-    "is-none",
+    "quote-box",
+    "quote-box-up",
+    "quote-box-down",
+    "quote-box-disabled",
+    "quote-box-pressing",
+    "quote-box-pending",
+    "quote-box-latched",
+    "quote-triggered-up",
+    "quote-triggered-down",
+    "is-buyable",
+    "is-buy-disabled",
     "is-up",
     "is-down",
+    "is-none",
     "is-pending",
     "is-right",
     "is-wrong",
     "is-result-only",
+    "is-sell-disabled",
+    "prediction-status-box",
   );
+  box.removeAttribute("role");
+  box.removeAttribute("tabindex");
+  box.removeAttribute("aria-disabled");
+}
 
-  if (phase === "none" || ((side !== "up" && side !== "down") && phase !== "right" && phase !== "wrong")) {
-    box.classList.add("is-none");
-    setPredictionStatusBuyable(box, null);
-    label.hidden = false;
-    label.innerHTML =
-      'Waiting<span class="prediction-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>';
-    icon.hidden = true;
-    icon.innerHTML = "";
-    return;
-  }
-
-  const sideText = side === "up" ? "UP" : "DOWN";
-  if (phase === "active") {
-    box.classList.add(side === "up" ? "is-up" : "is-down");
-    setPredictionStatusBuyable(box, side);
-    label.hidden = false;
-    label.textContent = `Prediction ${sideText}`;
-    icon.hidden = true;
-    icon.innerHTML = "";
-    return;
-  }
-  setPredictionStatusBuyable(box, null);
-  if (phase === "pending") {
-    box.classList.add("is-pending");
-    label.hidden = false;
-    label.textContent = `Prediction ${sideText} · Pending`;
-    icon.hidden = true;
-    icon.innerHTML = "";
-    return;
-  }
-  if (phase === "right" || phase === "wrong") {
-    box.classList.add(phase === "right" ? "is-right" : "is-wrong", "is-result-only");
+function setPredictionBuyWaitingUi() {
+  const box = $("prediction-buy-box");
+  const label = $("prediction-status-label");
+  const icon = $("prediction-status-icon");
+  const quote = $("prediction-buy-quote");
+  if (!box) return;
+  clearPredictionQuoteBoxClasses(box);
+  box.className = "quote-box quote-box-disabled";
+  box.setAttribute("aria-label", "Buy disabled");
+  box.setAttribute("aria-disabled", "true");
+  if (label) {
     label.hidden = true;
     label.textContent = "";
-    icon.hidden = false;
-    icon.innerHTML = phase === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
+  }
+  if (icon) {
+    icon.hidden = true;
+    icon.innerHTML = "";
+  }
+  if (quote) quote.hidden = false;
+  const locked = $("prediction-buy-locked");
+  const live = $("prediction-buy-live");
+  if (locked) {
+    locked.hidden = true;
+    locked.textContent = "";
+  }
+  if (live) live.textContent = "—";
+  locked?.parentElement?.classList.remove("quote-has-locked");
+}
+
+function setPredictionSellDisabledUi() {
+  const box = $("prediction-sell-box");
+  const quote = $("prediction-sell-quote");
+  if (!box) return;
+  clearPredictionQuoteBoxClasses(box);
+  box.className = "quote-box quote-box-disabled";
+  box.setAttribute("aria-label", "Sell disabled");
+  box.setAttribute("aria-disabled", "true");
+  if (quote) quote.hidden = false;
+  const locked = $("prediction-sell-locked");
+  const live = $("prediction-sell-live");
+  if (locked) {
+    locked.hidden = true;
+    locked.textContent = "";
+  }
+  if (live) live.textContent = "—";
+  locked?.parentElement?.classList.remove("quote-has-locked");
+}
+
+function applyPredictionQuoteLatch(box, side, leg, state) {
+  if (!box || (side !== "up" && side !== "down")) return;
+  const trading = tradingState(state);
+  const detectorOn = Boolean($("manipulation-detector")?.checked);
+  const allowed = detectorOn && canQuoteAction(trading, side, leg);
+  box.classList.toggle("quote-box-disabled", !allowed);
+  box.setAttribute("aria-disabled", allowed ? "false" : "true");
+
+  const locks = trading?.quoteLocks ?? state?.sim?.quoteLocks ?? {};
+  const lockKey =
+    side === "up" ? (leg === "buy" ? "upBuy" : "upSell") : leg === "buy" ? "downBuy" : "downSell";
+  const lockedEl = $(leg === "buy" ? "prediction-buy-locked" : "prediction-sell-locked");
+  const liveEl = $(leg === "buy" ? "prediction-buy-live" : "prediction-sell-live");
+  const values = lockedEl?.parentElement;
+  const livePrice =
+    leg === "buy"
+      ? side === "up"
+        ? state?.yesAsk
+        : state?.noAsk
+      : side === "up"
+        ? state?.yesBid
+        : state?.noBid;
+  if (liveEl) liveEl.textContent = fmtQuote(livePrice);
+
+  const lockedPrice = locks[lockKey];
+  if (lockedPrice != null && Number.isFinite(lockedPrice)) {
+    if (lockedEl) {
+      lockedEl.hidden = false;
+      lockedEl.textContent = fmtQuote(lockedPrice);
+    }
+    values?.classList.add("quote-has-locked");
+    box.classList.add(side === "up" ? "quote-triggered-up" : "quote-triggered-down");
+    box.classList.add("quote-box-latched");
+    box.classList.remove("quote-box-pressing");
+  } else {
+    if (lockedEl) {
+      lockedEl.hidden = true;
+      lockedEl.textContent = "";
+    }
+    values?.classList.remove("quote-has-locked");
+    box.classList.remove("quote-triggered-up", "quote-triggered-down", "quote-box-latched");
   }
 }
 
-function bindPredictionStatusBuyButton() {
-  const box = $("prediction-status-box");
-  if (!box || box.dataset.buyBound === "1") return;
-  box.dataset.buyBound = "1";
+function setPredictionBuyActiveUi(side, state = windowState) {
+  const box = $("prediction-buy-box");
+  const label = $("prediction-status-label");
+  const icon = $("prediction-status-icon");
+  const quote = $("prediction-buy-quote");
+  if (!box || (side !== "up" && side !== "down")) return;
+  clearPredictionQuoteBoxClasses(box);
+  box.className = `quote-box ${side === "up" ? "quote-box-up" : "quote-box-down"}`;
+  box.setAttribute("role", "button");
+  box.tabIndex = 0;
+  box.setAttribute("aria-label", `Buy Prediction ${side.toUpperCase()}`);
+  if (label) {
+    label.hidden = true;
+    label.textContent = "";
+  }
+  if (icon) {
+    icon.hidden = true;
+    icon.innerHTML = "";
+  }
+  if (quote) quote.hidden = false;
+  applyPredictionQuoteLatch(box, side, "buy", state);
+}
+
+function setPredictionSellActiveUi(side, state = windowState) {
+  const box = $("prediction-sell-box");
+  const quote = $("prediction-sell-quote");
+  if (!box || (side !== "up" && side !== "down")) return;
+  clearPredictionQuoteBoxClasses(box);
+  box.className = `quote-box ${side === "up" ? "quote-box-up" : "quote-box-down"}`;
+  box.setAttribute("role", "button");
+  box.tabIndex = 0;
+  box.setAttribute("aria-label", `Sell Prediction ${side.toUpperCase()}`);
+  if (quote) quote.hidden = false;
+  applyPredictionQuoteLatch(box, side, "sell", state);
+}
+
+function setPredictionBuyResultUi(phase) {
+  const box = $("prediction-buy-box");
+  const label = $("prediction-status-label");
+  const icon = $("prediction-status-icon");
+  const quote = $("prediction-buy-quote");
+  if (!box || !label || !icon) return;
+  clearPredictionQuoteBoxClasses(box);
+  box.className = `prediction-status-box is-result-only ${
+    phase === "right" ? "is-right" : "is-wrong"
+  }`;
+  box.setAttribute("aria-label", phase === "right" ? "Prediction right" : "Prediction wrong");
+  label.hidden = true;
+  label.textContent = "";
+  icon.hidden = false;
+  icon.innerHTML = phase === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
+  if (quote) quote.hidden = true;
+}
+
+/** Keep Prediction Buy/Sell prices + latch in sync with graph quote boxes. */
+function syncPredictionActionBoxes(state = windowState) {
+  const side = manipDetectorRuntime.predictionSide;
+  const phase = manipDetectorRuntime.uiPhase;
+  if (phase !== "active" || (side !== "up" && side !== "down")) return;
+  const buyBox = $("prediction-buy-box");
+  const sellBox = $("prediction-sell-box");
+  if (buyBox?.classList.contains("quote-box")) {
+    applyPredictionQuoteLatch(buyBox, side, "buy", state);
+  }
+  if (sellBox?.classList.contains("quote-box")) {
+    applyPredictionQuoteLatch(sellBox, side, "sell", state);
+  }
+}
+
+function syncPredictionStatusUi() {
+  const buyBox = $("prediction-buy-box");
+  const sellBox = $("prediction-sell-box");
+  if (!buyBox || !sellBox) return;
+
+  const side = manipDetectorRuntime.predictionSide;
+  const phase = manipDetectorRuntime.uiPhase;
+
+  if (phase === "right" || phase === "wrong") {
+    setPredictionBuyResultUi(phase);
+    setPredictionSellDisabledUi();
+    return;
+  }
+
+  if (phase === "active" && (side === "up" || side === "down")) {
+    setPredictionBuyActiveUi(side, windowState);
+    setPredictionSellActiveUi(side, windowState);
+    return;
+  }
+
+  // Idle / pending / cleared — disabled Buy + disabled Sell until next trigger.
+  setPredictionBuyWaitingUi();
+  setPredictionSellDisabledUi();
+}
+
+function bindPredictionActionBox(box, leg) {
+  if (!box || box.dataset.predBound === "1") return;
+  box.dataset.predBound = "1";
 
   box.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     if (
-      !box.classList.contains("is-buyable") ||
-      box.classList.contains("is-buy-disabled") ||
+      !box.classList.contains("quote-box") ||
+      box.classList.contains("quote-box-disabled") ||
       box.classList.contains("quote-box-latched")
     ) {
       return;
@@ -6094,19 +6255,19 @@ function bindPredictionStatusBuyButton() {
 
   const activate = () => {
     if (
-      !box.classList.contains("is-buyable") ||
-      box.classList.contains("is-buy-disabled") ||
+      !box.classList.contains("quote-box") ||
+      box.classList.contains("quote-box-disabled") ||
       box.classList.contains("quote-box-latched")
     ) {
       return;
     }
-    const side = box.classList.contains("is-up")
+    const side = box.classList.contains("quote-box-up")
       ? "up"
-      : box.classList.contains("is-down")
+      : box.classList.contains("quote-box-down")
         ? "down"
         : null;
     if (side !== "up" && side !== "down") return;
-    void clickQuoteBox(side, "buy");
+    void clickQuoteBox(side, leg);
   };
 
   box.addEventListener("click", activate);
@@ -6115,6 +6276,11 @@ function bindPredictionStatusBuyButton() {
     e.preventDefault();
     activate();
   });
+}
+
+function bindPredictionStatusBuyButton() {
+  bindPredictionActionBox($("prediction-buy-box"), "buy");
+  bindPredictionActionBox($("prediction-sell-box"), "sell");
 }
 
 function syncPredictionStatsUi() {
@@ -6136,29 +6302,30 @@ function persistPredictionStats() {
   return manipDetectorRuntime.statsPersistChain;
 }
 
-function recordPredictionScore(side, windowStart, outcome, { showResultUi, source } = {}) {
+function recordPredictionScore(side, windowStart, right, { showResultUi, source } = {}) {
   if (side !== "up" && side !== "down") return false;
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
-  if (outcome !== "up" && outcome !== "down") return false;
+  if (typeof right !== "boolean") return false;
   if (isPredictionWindowScored(windowStart)) return false;
 
   markPredictionWindowScored(windowStart);
-  const right = side === outcome;
   if (right) manipDetectorRuntime.rightCount += 1;
   else manipDetectorRuntime.wrongCount += 1;
   syncPredictionStatsUi();
   void persistPredictionStats();
-  settlePredictionPositionCard(side, windowStart, outcome);
+  settlePredictionPositionCard(side, windowStart, right);
   appendLogEntry({
     level: "info",
     source: "client",
-    message: `Prediction ${side.toUpperCase()} → ${outcome.toUpperCase()} (${right ? "right" : "wrong"}${
+    message: `Prediction ${side.toUpperCase()} → ${right ? "right" : "wrong"} (profit prediction${
       source ? `, ${source}` : ""
     })`,
   });
 
   if (showResultUi) {
+    stopPredictionResolveLoop();
     stopPredictionResultClearTimer();
+    clearManipulationFlash();
     manipDetectorRuntime.uiPhase = right ? "right" : "wrong";
     syncPredictionStatusUi();
     manipDetectorRuntime.resultClearTimer = setTimeout(() => {
@@ -6172,22 +6339,38 @@ function recordPredictionScore(side, windowStart, outcome, { showResultUi, sourc
       manipDetectorRuntime.predictionWindowStart = null;
       manipDetectorRuntime.predictionWindowEnd = null;
       manipDetectorRuntime.predictionSlug = null;
+      manipDetectorRuntime.predictionTriggerBuy = null;
       manipDetectorRuntime.uiPhase = "none";
       syncPredictionStatusUi();
       persistPredictionRuntime();
     }, PREDICTION_RESULT_SHOW_MS);
+  } else if (
+    manipDetectorRuntime.predictionWindowStart === windowStart &&
+    (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending")
+  ) {
+    manipDetectorRuntime.predictionSide = null;
+    manipDetectorRuntime.predictionWindowStart = null;
+    manipDetectorRuntime.predictionWindowEnd = null;
+    manipDetectorRuntime.predictionSlug = null;
+    manipDetectorRuntime.predictionTriggerBuy = null;
+    manipDetectorRuntime.uiPhase = "none";
+    clearManipulationFlash();
+    syncPredictionStatusUi();
   }
 
   persistPredictionRuntime();
   return true;
 }
 
-function applyPredictionOutcome(outcome, source = "crypto-price") {
+/** Score Wrong when the window ends without a Profit prediction hit (foreground). */
+function finalizePredictionAtWindowEnd({ showResultUi = true, source = "window-end" } = {}) {
   const side = manipDetectorRuntime.predictionSide;
   const windowStart = manipDetectorRuntime.predictionWindowStart;
-  if (manipDetectorRuntime.uiPhase !== "pending") return;
+  if (side !== "up" && side !== "down") return false;
+  if (windowStart == null || !Number.isFinite(windowStart)) return false;
+  if (isPredictionWindowScored(windowStart)) return false;
   stopPredictionResolveLoop();
-  recordPredictionScore(side, windowStart, outcome, { showResultUi: true, source });
+  return recordPredictionScore(side, windowStart, false, { showResultUi, source });
 }
 
 function removeBackgroundResolution(windowStart) {
@@ -6203,50 +6386,12 @@ function removeBackgroundResolution(windowStart) {
   return job;
 }
 
-function scheduleBackgroundPredictionPoll(job, delayMs = PREDICTION_RESOLVE_INTERVAL_MS) {
-  if (!job) return;
-  if (job.timer != null) clearTimeout(job.timer);
-  job.timer = setTimeout(() => {
-    job.timer = null;
-    void pollBackgroundPredictionOutcome(job);
-  }, delayMs);
-}
-
-async function pollBackgroundPredictionOutcome(job) {
-  if (!job) return;
-  if (!manipDetectorRuntime.backgroundResolutions.includes(job)) return;
-  if (isPredictionWindowScored(job.windowStart)) {
-    removeBackgroundResolution(job.windowStart);
-    persistPredictionRuntime();
-    return;
-  }
-
-  const slug = job.slug;
-  if (slug) {
-    try {
-      const res = await fetch(`/api/window-resolution?slug=${encodeURIComponent(slug)}`);
-      if (res.ok) {
-        const body = await res.json();
-        if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
-          removeBackgroundResolution(job.windowStart);
-          recordPredictionScore(job.side, job.windowStart, body.outcome, {
-            showResultUi: false,
-            source: body.source === "crypto-price" ? "crypto-price" : "gamma",
-          });
-          return;
-        }
-      }
-    } catch {
-      // keep polling until crypto-price completes or Gamma resolves
-    }
-  }
-
-  scheduleBackgroundPredictionPoll(job, PREDICTION_RESOLVE_INTERVAL_MS);
-}
-
 function enqueueBackgroundResolution({
   side,
   windowStart,
+  windowEnd,
+  triggerSideBuy,
+  riseCents,
   slug,
   lastPrice,
   lastPtb,
@@ -6258,9 +6403,21 @@ function enqueueBackgroundResolution({
   if (manipDetectorRuntime.backgroundResolutions.some((j) => j.windowStart === windowStart)) {
     return false;
   }
+  const nowMs = Date.now();
+  const endSec = Number.isFinite(windowEnd) ? windowEnd : null;
+  if (endSec != null && nowMs >= endSec * 1000) {
+    recordPredictionScore(side, windowStart, false, {
+      showResultUi: false,
+      source: "window-end",
+    });
+    return true;
+  }
   const job = {
     side,
     windowStart,
+    windowEnd: endSec,
+    triggerSideBuy: Number.isFinite(triggerSideBuy) ? triggerSideBuy : null,
+    riseCents: normalizePredictionRiseCents(riseCents),
     slug: typeof slug === "string" && slug.trim() ? slug.trim() : null,
     lastPrice: Number.isFinite(lastPrice) ? lastPrice : null,
     lastPtb: Number.isFinite(lastPtb) ? lastPtb : null,
@@ -6269,14 +6426,14 @@ function enqueueBackgroundResolution({
     timer: null,
   };
   manipDetectorRuntime.backgroundResolutions.push(job);
-  scheduleBackgroundPredictionPoll(job, 400);
   persistPredictionRuntime();
   return true;
 }
 
-/** Move UI pending prediction into background so a newer trigger can take the status box. */
-function parkForegroundPendingToBackground() {
-  if (manipDetectorRuntime.uiPhase !== "pending") return false;
+/** Move foreground prediction into background so a newer trigger can take the status box. */
+function parkForegroundPredictionToBackground() {
+  const phase = manipDetectorRuntime.uiPhase;
+  if (phase !== "pending" && phase !== "active") return false;
   const side = manipDetectorRuntime.predictionSide;
   const windowStart = manipDetectorRuntime.predictionWindowStart;
   if (side !== "up" && side !== "down") return false;
@@ -6291,6 +6448,9 @@ function parkForegroundPendingToBackground() {
   enqueueBackgroundResolution({
     side,
     windowStart,
+    windowEnd: manipDetectorRuntime.predictionWindowEnd,
+    triggerSideBuy: manipDetectorRuntime.predictionTriggerBuy,
+    riseCents: manipDetectorRuntime.predictionRiseCents,
     slug: manipDetectorRuntime.predictionSlug,
     lastPrice: manipDetectorRuntime.lastPrice,
     lastPtb: manipDetectorRuntime.lastPtb,
@@ -6301,6 +6461,7 @@ function parkForegroundPendingToBackground() {
   manipDetectorRuntime.predictionWindowStart = null;
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.predictionTriggerBuy = null;
   manipDetectorRuntime.uiPhase = "none";
   manipDetectorRuntime.resolveStartedAt = 0;
   return true;
@@ -6313,76 +6474,78 @@ function clearForegroundPredictionUi() {
   manipDetectorRuntime.predictionWindowStart = null;
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.predictionTriggerBuy = null;
   manipDetectorRuntime.uiPhase = "none";
 }
 
-async function pollPredictionOfficialOutcome() {
-  manipDetectorRuntime.resolveTimer = null;
-  if (manipDetectorRuntime.uiPhase !== "pending") return;
-  if (manipDetectorRuntime.predictionSide !== "up" && manipDetectorRuntime.predictionSide !== "down") {
-    return;
+/** Watch predicted-side Buy for Profit prediction hits (foreground + parked background). */
+function watchPredictionRiseOnQuotes(upBuy, downBuy, state) {
+  if (!Number.isFinite(upBuy) || !Number.isFinite(downBuy)) return;
+
+  if (
+    manipDetectorRuntime.uiPhase === "active" &&
+    (manipDetectorRuntime.predictionSide === "up" ||
+      manipDetectorRuntime.predictionSide === "down") &&
+    manipDetectorRuntime.predictionWindowStart != null &&
+    !isPredictionWindowScored(manipDetectorRuntime.predictionWindowStart) &&
+    buyMeetsPredictionRise(
+      manipDetectorRuntime.predictionSide,
+      upBuy,
+      downBuy,
+      manipDetectorRuntime.predictionTriggerBuy,
+      manipDetectorRuntime.predictionRiseCents,
+    )
+  ) {
+    recordPredictionScore(
+      manipDetectorRuntime.predictionSide,
+      manipDetectorRuntime.predictionWindowStart,
+      true,
+      { showResultUi: true, source: "rise" },
+    );
   }
 
-  const slug = manipDetectorRuntime.predictionSlug;
-  if (slug) {
-    try {
-      const res = await fetch(`/api/window-resolution?slug=${encodeURIComponent(slug)}`);
-      if (res.ok) {
-        const body = await res.json();
-        if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
-          applyPredictionOutcome(
-            body.outcome,
-            body.source === "crypto-price" ? "crypto-price" : "gamma",
-          );
-          return;
-        }
-      }
-    } catch {
-      // keep polling until crypto-price completes or Gamma resolves
+  const nowMs = Date.now();
+  for (const job of [...manipDetectorRuntime.backgroundResolutions]) {
+    if (isPredictionWindowScored(job.windowStart)) {
+      removeBackgroundResolution(job.windowStart);
+      persistPredictionRuntime();
+      continue;
+    }
+    if (job.windowEnd != null && Number.isFinite(job.windowEnd) && nowMs >= job.windowEnd * 1000) {
+      removeBackgroundResolution(job.windowStart);
+      recordPredictionScore(job.side, job.windowStart, false, {
+        showResultUi: false,
+        source: "window-end",
+      });
+      continue;
+    }
+    if (
+      state?.windowStart === job.windowStart &&
+      buyMeetsPredictionRise(job.side, upBuy, downBuy, job.triggerSideBuy, job.riseCents)
+    ) {
+      removeBackgroundResolution(job.windowStart);
+      recordPredictionScore(job.side, job.windowStart, true, {
+        showResultUi: false,
+        source: "rise",
+      });
     }
   }
-
-  manipDetectorRuntime.resolveTimer = setTimeout(() => {
-    void pollPredictionOfficialOutcome();
-  }, PREDICTION_RESOLVE_INTERVAL_MS);
-}
-
-function beginPredictionPending() {
-  if (manipDetectorRuntime.predictionSide !== "up" && manipDetectorRuntime.predictionSide !== "down") {
-    return;
-  }
-  if (manipDetectorRuntime.uiPhase === "pending" || manipDetectorRuntime.uiPhase === "right" || manipDetectorRuntime.uiPhase === "wrong") {
-    return;
-  }
-  if (isPredictionWindowScored(manipDetectorRuntime.predictionWindowStart)) {
-    return;
-  }
-  manipDetectorRuntime.uiPhase = "pending";
-  clearManipulationFlash();
-  syncPredictionStatusUi();
-  stopPredictionResolveLoop();
-  manipDetectorRuntime.resolveStartedAt = Date.now();
-  persistPredictionRuntime();
-  ensurePredictionPositionCard({
-    side: manipDetectorRuntime.predictionSide,
-    windowStart: manipDetectorRuntime.predictionWindowStart,
-    windowEnd: manipDetectorRuntime.predictionWindowEnd,
-    slug: manipDetectorRuntime.predictionSlug,
-  });
-  manipDetectorRuntime.resolveTimer = setTimeout(() => {
-    void pollPredictionOfficialOutcome();
-  }, 400);
 }
 
 function clearPredictionForNewWindow() {
-  if (manipDetectorRuntime.uiPhase === "pending") return;
   // Keep ✓/✕ visible for their timed window.
   if (manipDetectorRuntime.uiPhase === "right" || manipDetectorRuntime.uiPhase === "wrong") return;
+  if (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending") {
+    // Score Wrong if the previous window's prediction never hit Profit prediction.
+    finalizePredictionAtWindowEnd({ showResultUi: false, source: "window-end" });
+    return;
+  }
   stopPredictionResolveLoop();
   manipDetectorRuntime.predictionSide = null;
   manipDetectorRuntime.predictionWindowStart = null;
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.predictionTriggerBuy = null;
   manipDetectorRuntime.uiPhase = "none";
   syncPredictionStatusUi();
   persistPredictionRuntime();
@@ -6400,20 +6563,22 @@ function predictionHoldsWindow(windowStart) {
   return manipDetectorRuntime.backgroundResolutions.some((job) => job.windowStart === windowStart);
 }
 
-function setActivePrediction(side, state) {
+function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
   if (side !== "up" && side !== "down") return false;
   const windowStart = state?.windowStart;
   if (windowStart == null || !Number.isFinite(windowStart)) return false;
   if (predictionHoldsWindow(windowStart)) return false;
+  if (!Number.isFinite(triggerSideBuy)) return false;
 
   const phase = manipDetectorRuntime.uiPhase;
-  if (phase === "pending") {
-    parkForegroundPendingToBackground();
+  if (phase === "pending" || phase === "active") {
+    if (manipDetectorRuntime.predictionWindowStart !== windowStart) {
+      parkForegroundPredictionToBackground();
+    } else if (manipDetectorRuntime.predictionSide != null) {
+      return false;
+    }
   } else if (phase === "right" || phase === "wrong") {
     clearForegroundPredictionUi();
-  } else if (phase === "active" && manipDetectorRuntime.predictionWindowStart !== windowStart) {
-    beginPredictionPending();
-    parkForegroundPendingToBackground();
   } else if (manipDetectorRuntime.predictionSide != null) {
     return false;
   }
@@ -6424,6 +6589,8 @@ function setActivePrediction(side, state) {
     state?.windowEnd != null && Number.isFinite(state.windowEnd) ? state.windowEnd : null;
   manipDetectorRuntime.predictionSlug =
     typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
+  manipDetectorRuntime.predictionTriggerBuy = triggerSideBuy;
+  manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(riseCents);
   manipDetectorRuntime.uiPhase = "active";
   syncPredictionStatusUi();
   persistPredictionRuntime();
@@ -6507,6 +6674,7 @@ function syncManipulationSettingsEnabled(enabled) {
   const maxQuoteInput = $("prediction-max-quote");
   const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
+  const riseInput = $("prediction-rise");
   const sensInput = $("manipulation-sensitivity");
   const startThumb = $("manipulation-area-start");
   const endThumb = $("manipulation-area-end");
@@ -6516,6 +6684,7 @@ function syncManipulationSettingsEnabled(enabled) {
   if (maxQuoteInput) maxQuoteInput.disabled = !on;
   if (minQuoteInput) minQuoteInput.disabled = !on;
   if (shiftInput) shiftInput.disabled = !on;
+  if (riseInput) riseInput.disabled = !on;
   if (sensInput) sensInput.disabled = !on;
   if (startThumb) startThumb.disabled = !on;
   if (endThumb) endThumb.disabled = !on;
@@ -6546,6 +6715,7 @@ function resetManipulationDetector() {
   manipDetectorRuntime.predictionWindowStart = null;
   manipDetectorRuntime.predictionWindowEnd = null;
   manipDetectorRuntime.predictionSlug = null;
+  manipDetectorRuntime.predictionTriggerBuy = null;
   manipDetectorRuntime.uiPhase = "none";
   manipDetectorRuntime.scoredWindowStarts = [];
   manipDetectorRuntime.lastPrice = null;
@@ -6554,8 +6724,9 @@ function resetManipulationDetector() {
   syncPredictionStatusUi();
 }
 
-function triggerManipulationFlash(state, predictionSide) {
+function triggerManipulationFlash(state, predictionSide, triggerSideBuy) {
   if (predictionSide !== "up" && predictionSide !== "down") return;
+  if (!Number.isFinite(triggerSideBuy)) return;
 
   const now = Date.now();
   const windowEndMs =
@@ -6565,7 +6736,14 @@ function triggerManipulationFlash(state, predictionSide) {
   const duration = windowEndMs != null ? Math.max(0, windowEndMs - now) : null;
   if (duration != null && duration <= 0) return;
 
-  if (!setActivePrediction(predictionSide, state)) return;
+  if (
+    !setActivePrediction(predictionSide, state, {
+      triggerSideBuy,
+      riseCents: normalizePredictionRiseCents($("prediction-rise")?.value),
+    })
+  ) {
+    return;
+  }
   manipDetectorRuntime.samples = [];
   restorePredictionGraphBorder(predictionSide, state?.windowEnd);
 }
@@ -6610,11 +6788,10 @@ function tickManipulationDetector(state) {
     if (
       prevStart != null &&
       manipDetectorRuntime.predictionWindowStart === prevStart &&
-      manipDetectorRuntime.uiPhase === "active"
+      (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending")
     ) {
-      beginPredictionPending();
-    } else if (manipDetectorRuntime.uiPhase !== "pending") {
-      // Keep Pending until official outcome; otherwise reset for the new window.
+      finalizePredictionAtWindowEnd({ showResultUi: true, source: "window-end" });
+    } else {
       clearPredictionForNewWindow();
     }
     manipDetectorRuntime.windowStart = state.windowStart ?? null;
@@ -6623,14 +6800,20 @@ function tickManipulationDetector(state) {
   }
 
   const nowMs = Date.now();
+  const liveUpBuy = Number(state.yesAsk);
+  const liveDownBuy = Number(state.noAsk);
+  if (Number.isFinite(liveUpBuy) && Number.isFinite(liveDownBuy)) {
+    watchPredictionRiseOnQuotes(liveUpBuy, liveDownBuy, state);
+  }
+
   if (state.windowEnd != null && Number.isFinite(state.windowEnd) && nowMs >= state.windowEnd * 1000) {
     if (
       manipDetectorRuntime.predictionWindowStart === state.windowStart &&
-      manipDetectorRuntime.uiPhase === "active"
+      (manipDetectorRuntime.uiPhase === "active" || manipDetectorRuntime.uiPhase === "pending")
     ) {
       if (Number.isFinite(state.assetPrice)) manipDetectorRuntime.lastPrice = state.assetPrice;
       if (Number.isFinite(state.prevCloseAsset)) manipDetectorRuntime.lastPtb = state.prevCloseAsset;
-      beginPredictionPending();
+      finalizePredictionAtWindowEnd({ showResultUi: true, source: "window-end" });
     }
     if (manipDetectorRuntime.flashUntilMs > 0) clearManipulationFlash();
     manipDetectorRuntime.samples = [];
@@ -6662,8 +6845,8 @@ function tickManipulationDetector(state) {
   }
 
   const gap = Number(state.assetGap);
-  const upBuy = Number(state.yesAsk);
-  const downBuy = Number(state.noAsk);
+  const upBuy = liveUpBuy;
+  const downBuy = liveDownBuy;
   if (!Number.isFinite(gap) || gap === 0 || !Number.isFinite(upBuy) || !Number.isFinite(downBuy)) {
     return;
   }
@@ -6714,7 +6897,7 @@ function tickManipulationDetector(state) {
         minQuoteCents,
       )
     ) {
-      triggerManipulationFlash(state, "down");
+      triggerManipulationFlash(state, "down", downBuy);
     }
   } else if (baseline.gap < 0) {
     if (
@@ -6730,7 +6913,7 @@ function tickManipulationDetector(state) {
         minQuoteCents,
       )
     ) {
-      triggerManipulationFlash(state, "up");
+      triggerManipulationFlash(state, "up", upBuy);
     }
   }
 }
@@ -6796,6 +6979,7 @@ function applyTradingConfigToUi(config) {
   const maxQuoteInput = $("prediction-max-quote");
   const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
+  const riseInput = $("prediction-rise");
   const sensInput = $("manipulation-sensitivity");
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
   if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
@@ -6811,6 +6995,9 @@ function applyTradingConfigToUi(config) {
   if (minQuoteInput) minQuoteInput.value = String(quotes.minQuoteCents);
   if (shiftInput) {
     shiftInput.value = String(normalizePredictionShiftCents(config.predictionShiftCents));
+  }
+  if (riseInput) {
+    riseInput.value = String(normalizePredictionRiseCents(config.predictionRiseCents));
   }
   if (sensInput) {
     sensInput.value = String(
@@ -6878,6 +7065,7 @@ function bindTradeToggles() {
   const maxQuoteInput = $("prediction-max-quote");
   const minQuoteInput = $("prediction-min-quote");
   const shiftInput = $("prediction-shift");
+  const riseInput = $("prediction-rise");
   const sensInput = $("manipulation-sensitivity");
   if (!autoTradeInput || !useScheduleInput || !startTradingInput) return;
 
@@ -6961,7 +7149,7 @@ function bindTradeToggles() {
       manipDetectorRuntime.samples = [];
       clearManipulationFlash();
     }
-    syncPredictionBuyButtonEnabled();
+    syncPredictionStatusUi();
     refreshPositionsForPrediction();
     await persistManipulationConfigPatch();
     appendLogEntry({
@@ -6993,6 +7181,13 @@ function bindTradeToggles() {
     const next = normalizePredictionShiftCents(shiftInput.value);
     shiftInput.value = String(next);
     manipDetectorRuntime.samples = [];
+    await persistManipulationConfigPatch();
+  });
+
+  riseInput?.addEventListener("change", async () => {
+    if (riseInput.disabled) return;
+    const next = normalizePredictionRiseCents(riseInput.value);
+    riseInput.value = String(next);
     await persistManipulationConfigPatch();
   });
 

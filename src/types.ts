@@ -400,6 +400,11 @@ export interface TradingConfig {
   predictionMinQuoteCents: number;
   /** Minimum drop (¢) of that cheapening Buy over Duration (1–50). */
   predictionShiftCents: number;
+  /**
+   * Profit prediction (¢): after trigger, predicted-side Buy must rise by at
+   * least this many ¢ before window end for Right (1–50).
+   */
+  predictionRiseCents: number;
   /** Start of detection area as fraction of the market window [0, 1]. */
   manipulationAreaStart: number;
   /** End of detection area as fraction of the market window [0, 1]. */

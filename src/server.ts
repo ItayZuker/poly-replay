@@ -538,6 +538,7 @@ async function runScheduleReplaySse(
       maxQuoteCents?: number;
       minQuoteCents?: number;
       shiftCents?: number;
+      riseCents?: number;
       areaStart?: number;
       areaEnd?: number;
     } | null;
@@ -1681,6 +1682,7 @@ async function runPlacementPlay(
       maxQuoteCents?: number;
       minQuoteCents?: number;
       shiftCents?: number;
+      riseCents?: number;
       areaStart?: number;
       areaEnd?: number;
     } | null;
@@ -1726,6 +1728,7 @@ function parsePlayRequestBody(req: express.Request): {
     maxQuoteCents?: number;
     minQuoteCents?: number;
     shiftCents?: number;
+    riseCents?: number;
     areaStart?: number;
     areaEnd?: number;
   } | null;

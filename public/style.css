@@ -1575,6 +1575,11 @@ body {
     margin 0.22s ease;
 }
 
+/* Indent setting labels under the Prediction switcher (not Trigger Area). */
+.schedule-replay-prediction-settings > .schedule-replay-latency > .schedule-replay-latency-label {
+  padding-left: 12px;
+}
+
 /* Off: collapse inputs so only the Prediction switcher remains (footer sits lower). */
 .schedule-replay-prediction.is-disabled .schedule-replay-prediction-settings {
   max-height: 0;
@@ -5849,7 +5854,6 @@ body.is-column-resizing * {
   cursor: default;
   /* Room for Prediction Buy hover lift (same -4px as quote boxes). */
   overflow: visible;
-  padding-top: 2px;
 }
 
 .manipulation-detector-head {
@@ -5949,6 +5953,11 @@ body.is-column-resizing * {
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+}
+
+/* Indent setting labels under the Prediction switcher (not Trigger Area). */
+.manipulation-detector-row:not(.manipulation-detector-row--area) > .wallet-control-label {
+  padding-left: 12px;
 }
 
 .manipulation-detector-row--area {
@@ -6058,6 +6067,23 @@ body.is-column-resizing * {
   background: #484f58;
 }
 
+.prediction-action-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.prediction-action-row > .prediction-status-box,
+.prediction-action-row > .quote-box {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
 .prediction-status-box {
   display: flex;
   align-items: center;
@@ -6080,87 +6106,6 @@ body.is-column-resizing * {
     color 0.12s ease,
     box-shadow 0.16s ease,
     opacity 0.12s ease;
-}
-
-/* Active Prediction: same Buy affordance as quote Buy UP/DOWN above the graph. */
-.prediction-status-box.is-buyable {
-  cursor: pointer;
-  position: relative;
-  z-index: 1;
-  background: var(--bg);
-  color: var(--text);
-}
-
-.prediction-status-box.is-buyable .prediction-status-label {
-  color: inherit;
-}
-
-.prediction-status-box.is-buyable.is-up {
-  border-color: var(--up);
-  background: var(--bg);
-  color: var(--text);
-}
-
-.prediction-status-box.is-buyable.is-down {
-  border-color: var(--down);
-  background: var(--bg);
-  color: var(--text);
-}
-
-.prediction-status-box.is-buyable:not(.is-buy-disabled):not(.quote-box-pending):not(.quote-box-latched):hover {
-  transform: translateY(-4px);
-  box-shadow:
-    0 -1px 0 0 var(--quote-hover-edge, var(--border)),
-    0 4px 12px rgba(0, 0, 0, 0.28);
-  z-index: 2;
-}
-
-.prediction-status-box.is-buyable.is-up:not(.is-buy-disabled):not(.quote-box-pending):not(.quote-box-latched):hover {
-  --quote-hover-edge: var(--up);
-}
-
-.prediction-status-box.is-buyable.is-down:not(.is-buy-disabled):not(.quote-box-pending):not(.quote-box-latched):hover {
-  --quote-hover-edge: var(--down);
-}
-
-.prediction-status-box.is-buyable:not(.is-buy-disabled).quote-box-pressing,
-.prediction-status-box.is-buyable:not(.is-buy-disabled):active {
-  transform: translateY(0);
-  box-shadow: none;
-  transition-duration: 0.08s;
-}
-
-.prediction-status-box.is-buyable.is-buy-disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  transform: translateY(0);
-  box-shadow: none;
-}
-
-/* After a real fill — same latched fill as quote Buy; keep full opacity when disabled. */
-.prediction-status-box.is-buyable.quote-triggered-up {
-  background: rgba(63, 185, 80, 0.24);
-}
-
-.prediction-status-box.is-buyable.quote-triggered-down {
-  background: rgba(248, 81, 73, 0.24);
-}
-
-.prediction-status-box.is-buyable.is-buy-disabled.quote-triggered-up,
-.prediction-status-box.is-buyable.is-buy-disabled.quote-triggered-down {
-  opacity: 1;
-}
-
-.prediction-status-box.is-buyable.quote-box-latched {
-  transform: translateY(0);
-  box-shadow: none;
-}
-
-.prediction-status-box.is-buyable.quote-box-pending {
-  pointer-events: none;
-  opacity: 0.65;
-  transform: translateY(0);
-  box-shadow: none;
 }
 
 .prediction-status-label {
@@ -6206,36 +6151,6 @@ body.is-column-resizing * {
   }
 }
 
-/* Non-buyable UP/DOWN (not the active Buy shortcut) — keep prior tint if ever used. */
-.prediction-status-box.is-up:not(.is-buyable) {
-  border-color: var(--up);
-  background: rgba(63, 185, 80, 0.24);
-  color: var(--up);
-}
-
-.prediction-status-box.is-up:not(.is-buyable) .prediction-status-label {
-  color: var(--up);
-}
-
-.prediction-status-box.is-down:not(.is-buyable) {
-  border-color: var(--down);
-  background: rgba(248, 81, 73, 0.24);
-  color: var(--down);
-}
-
-.prediction-status-box.is-down:not(.is-buyable) .prediction-status-label {
-  color: var(--down);
-}
-
-.prediction-status-box.is-pending {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
-}
-
-.prediction-status-box.is-pending .prediction-status-label {
-  color: var(--accent);
-}
-
 .prediction-status-box.is-result-only {
   border-color: var(--border);
   background: var(--bg);
@@ -6266,6 +6181,15 @@ body.is-column-resizing * {
 
 .prediction-status-box.is-wrong .prediction-status-icon {
   color: var(--down);
+}
+
+/* Active Prediction Buy/Sell reuse .quote-box; keep row height + inner layout. */
+.prediction-action-row > .quote-box {
+  padding: 4px 10px;
+}
+
+.prediction-action-row > .quote-box .quote-cell {
+  width: 100%;
 }
 
 .prediction-stats-row {
@@ -6310,7 +6234,7 @@ body.is-column-resizing * {
   flex-shrink: 0;
 }
 
-.wallet-control-field--manipulation.is-disabled .prediction-status-box,
+.wallet-control-field--manipulation.is-disabled .prediction-action-row,
 .wallet-control-field--manipulation.is-disabled .prediction-stats-row {
   opacity: 0.55;
 }

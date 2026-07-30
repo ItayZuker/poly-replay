@@ -643,6 +643,7 @@ function defaultTradingConfig(): TradingConfig {
     predictionMaxQuoteCents: 90,
     predictionMinQuoteCents: 70,
     predictionShiftCents: 5,
+    predictionRiseCents: 5,
     manipulationAreaStart: 0,
     manipulationAreaEnd: 1,
     predictionRightCount: 0,
@@ -685,6 +686,11 @@ function normalizePredictionQuoteBand(
 }
 
 function normalizePredictionShiftCents(raw: unknown, fallback = 5): number {
+  const n = Math.round(Number(raw));
+  return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
+}
+
+function normalizePredictionRiseCents(raw: unknown, fallback = 5): number {
   const n = Math.round(Number(raw));
   return Math.max(1, Math.min(50, Number.isFinite(n) ? n : fallback));
 }
@@ -739,6 +745,10 @@ function normalizeTradingConfig(
     raw.predictionShiftCents,
     base.predictionShiftCents,
   );
+  const predictionRiseCents = normalizePredictionRiseCents(
+    raw.predictionRiseCents,
+    base.predictionRiseCents,
+  );
   const area = normalizeManipulationArea(
     raw.manipulationAreaStart ?? base.manipulationAreaStart,
     raw.manipulationAreaEnd ?? base.manipulationAreaEnd,
@@ -755,6 +765,7 @@ function normalizeTradingConfig(
     manipulationSensitivitySec,
     ...quotes,
     predictionShiftCents,
+    predictionRiseCents,
     ...area,
     predictionRightCount: normalizePredictionCount(raw.predictionRightCount),
     predictionWrongCount: normalizePredictionCount(raw.predictionWrongCount),
@@ -1492,6 +1503,12 @@ export class LiveTradingService {
       this.config.predictionShiftCents = normalizePredictionShiftCents(
         patch.predictionShiftCents,
         this.config.predictionShiftCents,
+      );
+    }
+    if (patch.predictionRiseCents != null) {
+      this.config.predictionRiseCents = normalizePredictionRiseCents(
+        patch.predictionRiseCents,
+        this.config.predictionRiseCents,
       );
     }
     if (patch.manipulationAreaStart != null || patch.manipulationAreaEnd != null) {
