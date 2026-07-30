@@ -1911,16 +1911,29 @@
       body.append(title, sub);
       btn.append(dot, body);
 
-      const score = win.predictionScore;
-      if (score === "right" || score === "wrong") {
-        const scoreEl = document.createElement("span");
-        scoreEl.className = `schedule-play-prediction-score is-${score}`;
-        scoreEl.setAttribute(
+      const scores = Array.isArray(win.predictionScores)
+        ? win.predictionScores.filter((s) => s === "right" || s === "wrong")
+        : win.predictionScore === "right" || win.predictionScore === "wrong"
+          ? [win.predictionScore]
+          : [];
+      if (scores.length > 0) {
+        const wrap = document.createElement("span");
+        wrap.className = "schedule-play-prediction-scores";
+        wrap.setAttribute(
           "aria-label",
-          score === "right" ? "Prediction right" : "Prediction wrong",
+          scores.map((s) => (s === "right" ? "Right" : "Wrong")).join(", "),
         );
-        scoreEl.innerHTML = score === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
-        btn.append(scoreEl);
+        for (const score of scores) {
+          const scoreEl = document.createElement("span");
+          scoreEl.className = `schedule-play-prediction-score is-${score}`;
+          scoreEl.setAttribute(
+            "aria-label",
+            score === "right" ? "Prediction right" : "Prediction wrong",
+          );
+          scoreEl.innerHTML = score === "right" ? PREDICTION_ICON_CHECK : PREDICTION_ICON_CROSS;
+          wrap.appendChild(scoreEl);
+        }
+        btn.append(wrap);
       }
 
       btn.addEventListener("click", () => {

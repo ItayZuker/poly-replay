@@ -6870,8 +6870,8 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
   manipDetectorRuntime.predictionTriggerId = triggerId;
   manipDetectorRuntime.predictionRiseCents = normalizePredictionRiseCents(riseCents);
   manipDetectorRuntime.uiPhase = "active";
-  const traded = isPredictionTradeArmed();
-  manipDetectorRuntime.predictionTraded = traded;
+  // Only mark traded after a successful buy — phase (or other) open position blocks Prediction.
+  manipDetectorRuntime.predictionTraded = false;
   syncPredictionStatusUi();
   persistPredictionRuntime();
   ensurePredictionPositionCard({
@@ -6881,10 +6881,23 @@ function setActivePrediction(side, state, { triggerSideBuy, riseCents } = {}) {
     slug: manipDetectorRuntime.predictionSlug,
     buyAt: Date.now() / 1000,
     triggerId,
-    sim: !traded,
+    sim: !isPredictionTradeArmed(),
   });
-  if (traded) {
-    void placePredictionTradeOrder(side, "buy");
+  if (isPredictionTradeArmed()) {
+    void placePredictionTradeOrder(side, "buy").then((result) => {
+      const ok = Boolean(result?.ok);
+      manipDetectorRuntime.predictionTraded = ok;
+      if (!ok) {
+        // Keep scoring/UI; no real Prediction position — phase may still race.
+        const id = predictionCardId(selectedSeries || "btc-5m", windowStart, triggerId);
+        const card = predictionPositionCards.find((c) => c.id === id);
+        if (card && card.status === "open") {
+          upsertPredictionPositionCard({ ...card, sim: true }, { refresh: true });
+        }
+      }
+      persistPredictionRuntime();
+      syncPredictionStatusUi();
+    });
   }
   return true;
 }

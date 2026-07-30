@@ -21,19 +21,6 @@ function acceptFillSuccess(fillSuccessPct: number): boolean {
   return Math.random() * 100 < pct;
 }
 
-function tickAtOrAfter(
-  ticks: ReplayTickDocument[],
-  tMs: number,
-  endMs: number,
-): ReplayTickDocument | null {
-  for (const tick of ticks) {
-    if (tick.tMs < tMs) continue;
-    if (!(tick.tMs < endMs)) break;
-    return tick;
-  }
-  return null;
-}
-
 function asksForSide(tick: ReplayTickDocument, side: WindowOutcome) {
   if (side === "up") {
     const levels = takeLevels(tick.yesAsks);
@@ -89,7 +76,6 @@ function walkBidsAvailable(
   }
   const filled = maxShares - remaining;
   if (filled <= 0) return null;
-  // Fees via walkBids path when full; for partial reuse walkBids on truncated size.
   if (chargeTakerFee) {
     const full = walkBids(
       legs.map((l) => ({ price: l.price, size: l.shares })),
@@ -114,9 +100,196 @@ export interface PredictionTradeSimResult {
   traded: boolean;
 }
 
+type OpenPredPosition = {
+  evaluation: WindowPredictionEvaluation;
+  side: WindowOutcome;
+  shares: number;
+  positionCost: number;
+};
+
 /**
- * Simulate Prediction Trade fills for scored detector hits: Buy after latency at
- * trigger, Sell after latency at Profit hit (or settle at window end if Wrong).
+ * Tick-driven Prediction Trade session that races with phase Auto Trade:
+ * - If phase has an open position, Prediction cannot buy.
+ * - While Prediction holds, caller must pause phase buys (`isHolding()`).
+ * - After Prediction sells (or settles), both may race again.
+ */
+export class PredictionTradeRaceSession {
+  private readonly evals: WindowPredictionEvaluation[];
+  private readonly endMs: number;
+  private readonly windowKey: string;
+  private readonly shares: number;
+  private readonly buyType: PredictionOrderType;
+  private readonly sellType: PredictionOrderType;
+  private readonly latency: number;
+  private readonly fillSuccessPct: number;
+  private readonly windowOutcome: WindowOutcome | null | undefined;
+
+  private evalIdx = 0;
+  private open: OpenPredPosition | null = null;
+  private pl = 0;
+  private markers: SimMarker[] = [];
+  private traded = false;
+
+  constructor(input: {
+    ticks: ReplayTickDocument[];
+    evals: WindowPredictionEvaluation[];
+    config: PredictionDetectorConfig & {
+      shares?: number;
+      buyOrderType?: PredictionOrderType;
+      sellOrderType?: PredictionOrderType;
+    };
+    windowStart: number;
+    windowEnd: number;
+    latencyMs: number;
+    fillSuccessPct: number;
+    windowOutcome?: WindowOutcome | null;
+  }) {
+    this.evals = input.evals;
+    this.endMs = input.windowEnd * 1000;
+    this.windowKey = `pred:${input.windowStart}`;
+    this.shares = normalizeShares(input.config.shares);
+    this.buyType = normalizeOrderType(input.config.buyOrderType);
+    this.sellType = normalizeOrderType(input.config.sellOrderType);
+    this.latency = Math.max(0, Number(input.latencyMs) || 0);
+    this.fillSuccessPct = input.fillSuccessPct;
+    this.windowOutcome = input.windowOutcome;
+  }
+
+  isHolding(): boolean {
+    return this.open != null;
+  }
+
+  /**
+   * Process Prediction sell (if due) then buy attempts that are due. Call before
+   * phase tick so same-ms Prediction buy can take the race when phase is flat.
+   * If the slot is busy when a buy becomes due, that Prediction trade is skipped
+   * (same as a rejected live buy) — detector scoring is unchanged.
+   */
+  onTickBeforePhase(tick: ReplayTickDocument, phaseOpen: boolean): void {
+    if (!(tick.tMs < this.endMs)) return;
+    this.trySell(tick);
+    this.consumeDueBuys(tick, phaseOpen);
+  }
+
+  /** Settle any still-open Prediction position at window end. */
+  finalize(): PredictionTradeSimResult {
+    if (this.open) {
+      this.settleOpen();
+      this.open = null;
+    }
+    return { pl: this.pl, markers: this.markers, traded: this.traded };
+  }
+
+  result(): PredictionTradeSimResult {
+    return { pl: this.pl, markers: this.markers, traded: this.traded };
+  }
+
+  private trySell(tick: ReplayTickDocument): void {
+    if (!this.open) return;
+    const { evaluation, side, shares, positionCost } = this.open;
+    if (evaluation.score !== "right" || evaluation.resolvedAtMs == null) return;
+    const sellAt = evaluation.resolvedAtMs + this.latency;
+    if (tick.tMs < sellAt) return;
+    if (!(tick.tMs < this.endMs)) return;
+    if (!acceptFillSuccess(this.fillSuccessPct)) {
+      this.settleOpen();
+      this.open = null;
+      return;
+    }
+    const bids = bidsForSide(tick, side);
+    const sellFill =
+      this.sellType === "FOK"
+        ? walkBids(bids, shares, true)
+        : walkBidsAvailable(bids, shares, true);
+    if (sellFill && sellFill.shares > 0) {
+      const tradePl = sellFill.proceeds - sellFill.fees - positionCost;
+      this.pl += tradePl;
+      this.markers.push({
+        type: "sell",
+        side,
+        t: tick.tMs / 1000,
+        y: null,
+        shares: sellFill.shares,
+        price: sellFill.avgPrice,
+        proceeds: sellFill.proceeds,
+        fees: sellFill.fees,
+        profit: tradePl,
+        windowKey: this.windowKey,
+      });
+      this.open = null;
+      return;
+    }
+    this.settleOpen();
+    this.open = null;
+  }
+
+  private consumeDueBuys(tick: ReplayTickDocument, phaseOpen: boolean): void {
+    while (this.evalIdx < this.evals.length) {
+      const evaluation = this.evals[this.evalIdx];
+      const hit = evaluation?.hit;
+      if (!hit || (hit.side !== "up" && hit.side !== "down")) {
+        this.evalIdx += 1;
+        continue;
+      }
+      const buyAt = hit.triggeredAtMs + this.latency;
+      if (buyAt >= this.endMs) {
+        this.evalIdx += 1;
+        continue;
+      }
+      if (tick.tMs < buyAt) return;
+
+      // Buy time arrived — consume this eval once (fill or miss).
+      this.evalIdx += 1;
+      if (this.open || phaseOpen) continue;
+      if (!acceptFillSuccess(this.fillSuccessPct)) continue;
+
+      const asks = asksForSide(tick, hit.side);
+      const buyFill =
+        this.buyType === "FOK"
+          ? walkAsks(asks, this.shares, true)
+          : walkAsksAvailable(asks, this.shares, true, undefined, Infinity);
+      if (!buyFill || buyFill.shares <= 0) continue;
+
+      this.traded = true;
+      const positionCost = buyFill.cost + buyFill.fees;
+      this.markers.push({
+        type: "buy",
+        side: hit.side,
+        t: tick.tMs / 1000,
+        y: null,
+        shares: buyFill.shares,
+        price: buyFill.avgPrice,
+        cost: buyFill.cost,
+        fees: buyFill.fees,
+        windowKey: this.windowKey,
+      });
+      this.open = {
+        evaluation,
+        side: hit.side,
+        shares: buyFill.shares,
+        positionCost,
+      };
+      return;
+    }
+  }
+
+  private settleOpen(): void {
+    if (!this.open) return;
+    const { side, shares, positionCost } = this.open;
+    if (this.windowOutcome === "up" || this.windowOutcome === "down") {
+      const won = this.windowOutcome === side;
+      const settlement = won ? shares * 1 : 0;
+      this.pl += settlement - positionCost;
+    } else {
+      this.pl -= positionCost;
+    }
+  }
+}
+
+/**
+ * Simulate Prediction Trade fills for scored detector hits with no phase race
+ * (legacy / tests). Prefer {@link PredictionTradeRaceSession} when phase Auto
+ * Trade also runs in the window.
  */
 export function simulatePredictionTrades(input: {
   ticks: ReplayTickDocument[];
@@ -132,98 +305,13 @@ export function simulatePredictionTrades(input: {
   fillSuccessPct: number;
   windowOutcome?: WindowOutcome | null;
 }): PredictionTradeSimResult {
-  const {
-    ticks,
-    evals,
-    config,
-    windowStart,
-    windowEnd,
-    latencyMs,
-    fillSuccessPct,
-    windowOutcome,
-  } = input;
-  const endMs = windowEnd * 1000;
-  const windowKey = `pred:${windowStart}`;
-  const shares = normalizeShares(config.shares);
-  const buyType = normalizeOrderType(config.buyOrderType);
-  const sellType = normalizeOrderType(config.sellOrderType);
-  const latency = Math.max(0, Number(latencyMs) || 0);
-  let pl = 0;
-  const markers: SimMarker[] = [];
-  let traded = false;
-
-  for (const evaluation of evals) {
-    const hit = evaluation.hit;
-    if (!hit || (hit.side !== "up" && hit.side !== "down")) continue;
-    const buyAt = hit.triggeredAtMs + latency;
-    if (!(buyAt < endMs)) continue;
-    const buyTick = tickAtOrAfter(ticks, buyAt, endMs);
-    if (!buyTick) continue;
-    if (!acceptFillSuccess(fillSuccessPct)) continue;
-
-    const asks = asksForSide(buyTick, hit.side);
-    const buyFill =
-      buyType === "FOK"
-        ? walkAsks(asks, shares, true)
-        : walkAsksAvailable(asks, shares, true, undefined, Infinity);
-    if (!buyFill || buyFill.shares <= 0) continue;
-
-    traded = true;
-    const positionCost = buyFill.cost + buyFill.fees;
-    markers.push({
-      type: "buy",
-      side: hit.side,
-      t: buyTick.tMs / 1000,
-      y: null,
-      shares: buyFill.shares,
-      price: buyFill.avgPrice,
-      cost: buyFill.cost,
-      fees: buyFill.fees,
-      windowKey,
-    });
-
-    if (evaluation.score === "right" && evaluation.resolvedAtMs != null) {
-      const sellAt = evaluation.resolvedAtMs + latency;
-      const sellTick =
-        sellAt < endMs ? tickAtOrAfter(ticks, sellAt, endMs) : null;
-      if (sellTick && acceptFillSuccess(fillSuccessPct)) {
-        const bids = bidsForSide(sellTick, hit.side);
-        const sellFill =
-          sellType === "FOK"
-            ? walkBids(bids, buyFill.shares, true)
-            : walkBidsAvailable(bids, buyFill.shares, true);
-        if (sellFill && sellFill.shares > 0) {
-          const tradePl = sellFill.proceeds - sellFill.fees - positionCost;
-          pl += tradePl;
-          markers.push({
-            type: "sell",
-            side: hit.side,
-            t: sellTick.tMs / 1000,
-            y: null,
-            shares: sellFill.shares,
-            price: sellFill.avgPrice,
-            proceeds: sellFill.proceeds,
-            fees: sellFill.fees,
-            profit: tradePl,
-            windowKey,
-          });
-          continue;
-        }
-      }
-    }
-
-    // Wrong or failed sell: settle vs official window outcome if known.
-    if (windowOutcome === "up" || windowOutcome === "down") {
-      const won = windowOutcome === hit.side;
-      const settlement = won ? buyFill.shares * 1 : 0;
-      pl += settlement - positionCost;
-    } else {
-      // No outcome: mark-to-zero remaining (lose premium).
-      pl -= positionCost;
-    }
+  const session = new PredictionTradeRaceSession(input);
+  const endMs = input.windowEnd * 1000;
+  for (const tick of input.ticks) {
+    if (!(tick.tMs < endMs)) break;
+    session.onTickBeforePhase(tick, false);
   }
-
-  return { pl, markers, traded };
+  return session.finalize();
 }
 
 export function mergePredictionTradeResult(
@@ -233,11 +321,13 @@ export function mergePredictionTradeResult(
   windowEnd: number,
 ): SimLastWindow | null {
   if (!trade.traded && trade.pl === 0) return result;
+  const predSold = trade.markers.some((m) => m.type === "sell");
   if (result) {
     const nextPl = (Number.isFinite(result.pl) ? result.pl : 0) + trade.pl;
     return {
       ...result,
       pl: nextPl,
+      sold: Boolean(result.sold) || predSold,
       plLabel: result.plLabel === "No trade" && trade.traded ? "Trade" : result.plLabel,
     };
   }
@@ -246,7 +336,7 @@ export function mergePredictionTradeResult(
     windowKey: `pred:${windowStart}`,
     windowStart,
     windowEnd,
-    sold: trade.markers.some((m) => m.type === "sell"),
+    sold: predSold,
     pl: trade.pl,
     plLabel: "Trade",
   };

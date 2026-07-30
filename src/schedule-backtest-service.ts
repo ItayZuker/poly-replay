@@ -25,7 +25,7 @@ import {
 } from "./prediction-detector.js";
 import {
   mergePredictionTradeResult,
-  simulatePredictionTrades,
+  PredictionTradeRaceSession,
 } from "./prediction-trade-sim.js";
 import type {
   ChainlinkTickDocument,
@@ -305,70 +305,21 @@ export async function simulateRecordedWindow(
   predictionConfig?: PredictionDetectorConfig | null,
 ): Promise<RecordedWindowSimulation> {
   const simCacheKey = simResultCache ? windowSimCacheKey(window.windowStart, setup) : null;
-  if (simCacheKey && simResultCache!.has(simCacheKey)) {
+  // Phase-only cache: Prediction races with phase on a shared timeline, so never
+  // layer unrestricted Prediction fills onto a cached phase result.
+  if (simCacheKey && simResultCache!.has(simCacheKey) && !predictionConfig) {
     const cached = simResultCache!.get(simCacheKey)!;
-    // Prediction is cheap vs sim; recompute so cache keys need not include prediction settings.
-    if (!predictionConfig) {
-      return {
-        result: cached.result,
-        markers: cached.markers.map((m) => ({ ...m })),
-        windowStart: window.windowStart,
-        windowEnd: window.windowEnd,
-        hadTicks: true,
-        predictionSide: null,
-        predictionScore: null,
-        predictionScores: [],
-        predictionTriggeredAtMs: null,
-        predictionSensitivitySec: null,
-      };
-    }
-    let ticksForPred = tickCache?.get(window.windowStart);
-    if (!ticksForPred) {
-      ticksForPred = await listReplayTicks(market, window.windowStart, 50_000);
-      tickCache?.set(window.windowStart, ticksForPred);
-    }
-    const predictionEvals = evaluateWindowPredictions(
-      ticksForPred,
-      window.windowStart,
-      window.windowEnd,
-      predictionConfig,
-    );
-    const predictionHit = predictionEvals[0]?.hit ?? null;
-    const predictionSide = predictionHit?.side ?? null;
-    const predictionTriggeredAtMs = predictionHit?.triggeredAtMs ?? null;
-    const predictionSensitivitySec = predictionHit
-      ? predictionConfig.sensitivitySec
-      : null;
-    const predictionScores = predictionEvals.map((e) => e.score);
-    const predictionScore = predictionScores[predictionScores.length - 1] ?? null;
-    const trade = simulatePredictionTrades({
-      ticks: ticksForPred,
-      evals: predictionEvals,
-      config: predictionConfig,
-      windowStart: window.windowStart,
-      windowEnd: window.windowEnd,
-      latencyMs: setup.latencyMs,
-      fillSuccessPct: setup.fillSuccessPct ?? 100,
-      windowOutcome: window.windowOutcome ?? null,
-    });
-    const result = mergePredictionTradeResult(
-      cached.result,
-      trade,
-      window.windowStart,
-      window.windowEnd,
-    );
     return {
-      result,
-      markers: [...cached.markers.map((m) => ({ ...m })), ...trade.markers],
+      result: cached.result,
+      markers: cached.markers.map((m) => ({ ...m })),
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
-      // Cached entries were only stored after a tickful sim.
       hadTicks: true,
-      predictionSide,
-      predictionScore,
-      predictionScores,
-      predictionTriggeredAtMs,
-      predictionSensitivitySec,
+      predictionSide: null,
+      predictionScore: null,
+      predictionScores: [],
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
     };
   }
 
@@ -431,6 +382,19 @@ export async function simulateRecordedWindow(
     const engine = new SimulatorEngine();
     const priceHistory: Array<{ t: number; price: number }> = [];
     let bookTickSequence = 0;
+    const predSession =
+      predictionConfig && predictionEvals.length > 0
+        ? new PredictionTradeRaceSession({
+            ticks,
+            evals: predictionEvals,
+            config: predictionConfig,
+            windowStart,
+            windowEnd,
+            latencyMs: setup.latencyMs,
+            fillSuccessPct: setup.fillSuccessPct ?? 100,
+            windowOutcome: window.windowOutcome ?? null,
+          })
+        : null;
 
     for (const tick of ticks) {
       if (tick.tMs >= windowEnd * 1000) break;
@@ -451,6 +415,11 @@ export async function simulateRecordedWindow(
         recordAskSamples(state);
         bookTickSequence = state.bookTickSequence ?? bookTickSequence;
       }
+
+      // Shared race with live: first buy holds until sell; then both may race again.
+      const phaseOpenBefore = engine.hasOpenPosition();
+      predSession?.onTickBeforePhase(tick, phaseOpenBefore);
+      engine.setExternalBuyPaused(Boolean(predSession?.isHolding()));
       engine.tick(state, setup, tick.tMs);
     }
 
@@ -462,7 +431,12 @@ export async function simulateRecordedWindow(
     if (lastInWindow.source === "clob-book") {
       recordAskSamples(endState);
     }
+    engine.setExternalBuyPaused(Boolean(predSession?.isHolding()));
     engine.tick({ ...endState, lastTickMs: endMs }, setup, endMs);
+
+    const trade = predSession
+      ? predSession.finalize()
+      : { pl: 0, markers: [] as SimMarker[], traded: false };
 
     // Settle from stored Polymarket outcome in window JSON (backfilled / recorded at finalize).
     const result = engine.finalizeWindow(
@@ -470,26 +444,14 @@ export async function simulateRecordedWindow(
     );
     const markers = engine.getMarkers();
 
-    if (simCacheKey) {
+    // Only cache phase-only results (Prediction race must re-run with ticks).
+    if (simCacheKey && !predictionConfig) {
       simResultCache!.set(simCacheKey, {
         result: result ?? null,
         markers: markers.map((m) => ({ ...m })),
       });
     }
 
-    const trade =
-      predictionConfig && predictionEvals.length > 0
-        ? simulatePredictionTrades({
-            ticks,
-            evals: predictionEvals,
-            config: predictionConfig,
-            windowStart,
-            windowEnd,
-            latencyMs: setup.latencyMs,
-            fillSuccessPct: setup.fillSuccessPct ?? 100,
-            windowOutcome: window.windowOutcome ?? null,
-          })
-        : { pl: 0, markers: [] as SimMarker[], traded: false };
     const mergedResult = mergePredictionTradeResult(result, trade, windowStart, windowEnd);
 
     return {
@@ -997,8 +959,10 @@ export interface PlacementPlayWindowItem {
   markers: SimMarker[];
   /** Replay Prediction side when the detector fired in this window. */
   predictionSide?: WindowOutcome | null;
-  /** Last Prediction score in the window (null if none). Earlier Rights may re-trigger. */
+  /** Last Prediction score in the window (null if none). Prefer predictionScores. */
   predictionScore?: "right" | "wrong" | null;
+  /** Every Prediction score in the window (one ✓/✕ each in Open Replay). */
+  predictionScores?: Array<"right" | "wrong">;
   /** Tick time (ms) when Prediction first triggered. */
   predictionTriggeredAtMs?: number | null;
   /** Duration (sec) used for the trigger (Open Replay highlight band). */
@@ -1154,6 +1118,12 @@ async function playWindowsFromSims(
       markers,
       predictionSide: sim.predictionSide ?? null,
       predictionScore: sim.predictionScore ?? null,
+      predictionScores:
+        Array.isArray(sim.predictionScores) && sim.predictionScores.length > 0
+          ? [...sim.predictionScores]
+          : sim.predictionScore === "right" || sim.predictionScore === "wrong"
+            ? [sim.predictionScore]
+            : [],
       predictionTriggeredAtMs: sim.predictionTriggeredAtMs ?? null,
       predictionSensitivitySec: sim.predictionSensitivitySec ?? null,
     });
@@ -1179,6 +1149,7 @@ function stripPredictionFromPlayWindows(
     ...w,
     predictionSide: null,
     predictionScore: null,
+    predictionScores: [],
     predictionTriggeredAtMs: null,
     predictionSensitivitySec: null,
   }));
@@ -1375,6 +1346,12 @@ export async function buildPlacementPlayPayload(
       markers,
       predictionSide: sim.predictionSide ?? null,
       predictionScore: sim.predictionScore ?? null,
+      predictionScores:
+        Array.isArray(sim.predictionScores) && sim.predictionScores.length > 0
+          ? [...sim.predictionScores]
+          : sim.predictionScore === "right" || sim.predictionScore === "wrong"
+            ? [sim.predictionScore]
+            : [],
       predictionTriggeredAtMs: sim.predictionTriggeredAtMs ?? null,
       predictionSensitivitySec: sim.predictionSensitivitySec ?? null,
     });

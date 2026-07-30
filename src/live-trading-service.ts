@@ -829,8 +829,9 @@ export class LiveTradingService {
   /** Successful manual BUY suppresses all phase buys until this window rolls. */
   private manualBuyOverrideWindowKey: string | null = null;
   /**
-   * While a Prediction Trade position is open, suppress phase Auto Trade for
-   * this window (buys and sells). Cleared on Prediction sell or window roll.
+   * While a Prediction Trade position is open, suppress phase Auto Trade buys
+   * for this window (open race with phase — first buy wins until sell).
+   * Cleared on Prediction sell or window roll; then both may race again.
    */
   private predictionTradeHoldWindowKey: string | null = null;
   /**
@@ -2721,7 +2722,7 @@ export class LiveTradingService {
       return;
     }
 
-    // Prediction Trade open position: pause phase Auto Trade until sold / window roll.
+    // Prediction Trade open: pause phase Auto Trade until Prediction sells (then race again).
     if (this.predictionTradeHoldWindowKey === sessionKey(state)) {
       if (this.restingBuys.size > 0) {
         await this.cancelAllRestingBuys("prediction trade hold");

@@ -186,6 +186,11 @@ export class SimulatorEngine {
   private hasAnyPosition(): boolean {
     return this.positions.up != null || this.positions.down != null;
   }
+
+  /** True while a phase (or adopted) position is open — used for Prediction ↔ phase race. */
+  hasOpenPosition(): boolean {
+    return this.hasAnyPosition();
+  }
   private buysFullySatisfied(phase: { gapVsPtb: string }): boolean {
     if (gapAllowsSecondSide(phase.gapVsPtb as "with" | "opposite" | "first" | "both")) {
       return this.positions.up != null && this.positions.down != null;

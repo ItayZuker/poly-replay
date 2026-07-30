@@ -15,7 +15,7 @@ Live trading console for the selected series.
 
 | Setting | Meaning |
 |---------|---------|
-| **Trade** | When **On** (requires Allow trade + Prediction On): detector places a real Buy on trigger and a real Sell when Profit hits, using Prediction **Shares** and Prediction Buy/Sell **FAK/FOK**. While that Prediction position is open, phase Auto Trade is paused for the window. When **Off**: same UI/scoring as sim (no orders). Replay has no Trade switch — Prediction On/Off alone applies scoring there |
+| **Trade** | When **On** (requires Allow trade + Prediction On): detector places a real Buy on trigger and a real Sell when Profit hits, using Prediction **Shares** and Prediction Buy/Sell **FAK/FOK**. **Race with phase Auto Trade** (same as Replay): from the start of the window either side may buy first; while one position is open the other cannot buy; after that position sells both may race again. When **Off**: same UI/scoring as sim (no orders). Replay has no Trade switch — Prediction On implies sim trades there |
 | **Order type** | Prediction Trade **Buy** / **Sell** `FAK` or `FOK` (default **FOK**). Separate from Manual Override |
 | **Shares** | Share count for Prediction Trade buys (1–100000, default **10**). Sells use held shares |
 | **Max Quote (¢)** | Max price of the cheapening Buy when Duration starts (1–99, default **90**). For Prediction DOWN that is UP Buy; for Prediction UP that is DOWN Buy |
