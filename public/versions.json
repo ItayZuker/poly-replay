@@ -1,6 +1,11 @@
 {
-  "current": "1.19.2",
+  "current": "1.20.0",
   "releases": [
+    {
+      "version": "1.20.0",
+      "releasedAt": "2026-07-30T07:30:12.098Z",
+      "notes": "Prediction scores by Profit prediction (¢) rise after trigger, not window outcome. Dual Buy/Sell quote controls under Trigger Area. Docs updated."
+    },
     {
       "version": "1.19.2",
       "releasedAt": "2026-07-29T16:04:39.948Z",
