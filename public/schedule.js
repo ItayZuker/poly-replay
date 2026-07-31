@@ -2444,7 +2444,8 @@
             windowCountHint: hint,
             latencyMs: readReplayLatencyMs(),
             fillSuccessPct: readReplayFillSuccessPct(),
-            prediction: replayPredictionRequestBody(),
+            prediction: null,
+            triggers: window.ScheduleReplayTriggers?.listForRun?.() ?? [],
             series: placement.series || selectedSeries(),
             setup: setupDoc?.setup ?? null,
           });
@@ -3416,6 +3417,7 @@
       locked: false,
     };
     activeReplayStats.set(stats.placementId, next);
+    window.ScheduleReplayTriggers?.accumulatePlacementTriggerStats?.(stats.triggerStats);
     // Update the visible board only while Simulator is active.
     if (!isReplayWorkspace()) return;
     placementStats.set(stats.placementId, { ...next });
@@ -3591,9 +3593,10 @@
   }
 
   function isReplayPredictionEnabled() {
+    if (!document.getElementById("schedule-replay-prediction")) return false;
     if (replayRunLockedPrediction) return Boolean(replayRunLockedPrediction.enabled);
     const toggle = document.getElementById("replay-prediction-enabled");
-    return toggle ? Boolean(toggle.checked) : DEFAULT_REPLAY_PREDICTION.enabled;
+    return toggle ? Boolean(toggle.checked) : false;
   }
 
   function normalizeReplayPredictionShares(value) {
@@ -3877,6 +3880,7 @@
       input.disabled = locked;
       input.setAttribute("aria-disabled", locked ? "true" : "false");
     }
+    window.ScheduleReplayTriggers?.setLocked?.(locked);
     if (locked) applyReplayRunLockedInputs();
     syncReplayPredictionEnabledUi();
   }
@@ -3932,6 +3936,8 @@
   }
 
   function initReplayPredictionInputs() {
+    // Prediction footer removed — keep helpers as no-ops when DOM is absent.
+    if (!document.getElementById("schedule-replay-prediction")) return;
     let stored = null;
     try {
       const raw = localStorage.getItem(REPLAY_PREDICTION_STORAGE_KEY);
@@ -4132,7 +4138,13 @@
       });
     }
 
-    initReplayPredictionInputs();
+    // Prediction footer removed — Triggers section replaces it.
+    try {
+      initReplayPredictionInputs();
+    } catch {
+      /* prediction DOM may be absent */
+    }
+    window.ScheduleReplayTriggers?.init?.();
 
     // Prefer live feed latency / 7-day fill success when available.
     syncReplayInputsFromLive();
@@ -4165,14 +4177,19 @@
 
   function interruptReplayIfRunning(reason = "schedule changed") {
     if (!replayRunning) return;
-    // Workspace toggles must not abort Replay — only schedule edits / explicit Stop.
+    // Workspace toggles must not abort Replay — only schedule/trigger edits / explicit Stop.
     if (reason === "workspace changed") return;
     stopReplay(reason);
+    const message =
+      reason === "schedule changed"
+        ? "Replay stopped — schedule changed"
+        : reason === "triggers changed"
+          ? "Replay stopped — triggers changed"
+          : "Replay stopped";
     window.appendLogEntry?.({
       level: "info",
       source: "client",
-      message:
-        reason === "schedule changed" ? "Replay stopped — schedule changed" : "Replay stopped",
+      message,
     });
   }
 
@@ -4205,27 +4222,13 @@
     replayStopReason = null;
     const latencyMs = readReplayLatencyMs();
     const fillSuccessPct = readReplayFillSuccessPct();
-    const predictionSettings = persistReplayPredictionConfig(readReplayPredictionConfig());
-    const prediction = predictionSettings.enabled
-      ? {
-          maxQuoteCents: predictionSettings.maxQuoteCents,
-          minQuoteCents: predictionSettings.minQuoteCents,
-          shiftCents: predictionSettings.shiftCents,
-          riseCents: predictionSettings.riseCents,
-          sensitivitySec: predictionSettings.sensitivitySec,
-          shares: predictionSettings.shares,
-          buyOrderType: predictionSettings.buyOrderType,
-          sellOrderType: predictionSettings.sellOrderType,
-          areaStart: predictionSettings.areaStart,
-          areaEnd: predictionSettings.areaEnd,
-        }
-      : null;
+    const triggers = window.ScheduleReplayTriggers?.listForRun?.() ?? [];
     replayRunLockedLatencyMs = latencyMs;
     replayRunLockedFillSuccessPct = fillSuccessPct;
-    replayRunLockedPrediction = { ...predictionSettings };
+    replayRunLockedPrediction = null;
     persistReplayLatencyMs(latencyMs);
     persistReplayFillSuccessPct(fillSuccessPct);
-    applyReplayPredictionInputsFromConfig(predictionSettings);
+    window.ScheduleReplayTriggers?.resetRunStats?.();
     replayRunning = true;
     syncReplayRunButton();
     placementStats.clear();
@@ -4243,13 +4246,10 @@
     });
     activeReplayPlacementIds = new Set(orderedPlacements.map((p) => p._id));
     const first = orderedPlacements[0];
-    const predMsg = prediction
-      ? `prediction ${prediction.minQuoteCents}–${prediction.maxQuoteCents}¢ shift ${prediction.shiftCents}¢ / ${prediction.sensitivitySec}s`
-      : "prediction off";
     window.appendLogEntry?.({
       level: "info",
       source: "client",
-      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, ${predMsg}; applying setups to recorded windows…`,
+      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, ${triggers.length} trigger(s); applying setups to recorded windows…`,
     });
 
     const setupIds = [...new Set(orderedPlacements.map((p) => p.setupId).filter(Boolean))];
@@ -4272,7 +4272,8 @@
           setups,
           latencyMs,
           fillSuccessPct,
-          prediction,
+          prediction: null,
+          triggers,
         }),
       });
       if (!res.ok || !res.body) {
@@ -4396,6 +4397,7 @@
       // Early stop: leave unfinished cards without stats so they don't look like zero-trade results.
       if (gotDoneEvent && !signal.aborted) {
         finalizeReplayCardStats();
+        window.ScheduleReplayTriggers?.commitRunStatsToCards?.();
       } else {
         clearReplayLoadingOnly();
         syncReplayPredictionTotalsUi();
@@ -4459,6 +4461,7 @@
     clearWorkspaceBoard,
     runReplay,
     stopReplay,
+    interruptReplayIfRunning,
     toggleReplay,
     isReplayRunning: () => replayRunning,
     onHeatmapUpdated,

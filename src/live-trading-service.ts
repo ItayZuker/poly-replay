@@ -184,8 +184,8 @@ interface RestingSellOrder {
   limitPrice: number;
   sizeMatched: number;
   phaseIdx: number;
-  /** Phase Auto Trade vs Prediction Trade GTD sell. */
-  source?: "phase" | "prediction";
+  /** Phase Auto Trade vs Prediction / Trigger Trade GTD sell. */
+  source?: "phase" | "prediction" | "trigger";
   /** Limit was touched while live (fill-success GTD opportunity). */
   levelTouched?: boolean;
   tokenId?: string;
@@ -2722,11 +2722,14 @@ export class LiveTradingService {
     await this.refreshScheduleContext(windowRolled);
     await this.resolvePendingBuyConfirm(state, nowMs);
 
-    // Prediction GTD sells must poll / retry even when Auto Trade is off / phase tick is paused.
-    if (!this.orderInFlight && this.config.predictionSellOrderType === "GTD") {
-      if (this.restingSell?.source === "prediction") {
+    // Prediction / Trigger GTD sells must poll / retry even when Auto Trade is off / phase tick is paused.
+    if (!this.orderInFlight) {
+      if (this.restingSell?.source === "prediction" || this.restingSell?.source === "trigger") {
         await this.pollRestingSell(state);
-      } else if (this.predictionTradeHoldWindowKey === sessionKey(state)) {
+      } else if (
+        this.config.predictionSellOrderType === "GTD" &&
+        this.predictionTradeHoldWindowKey === sessionKey(state)
+      ) {
         const side = this.positions.up ? "up" : this.positions.down ? "down" : null;
         const pos = side ? this.positions[side] : null;
         if (side && pos) {
@@ -2746,13 +2749,17 @@ export class LiveTradingService {
       return;
     }
 
-    // Prediction Trade open: pause phase Auto Trade until Prediction sells (then race again).
+    // Prediction / Trigger Trade open: pause phase Auto Trade until that position sells.
     if (this.predictionTradeHoldWindowKey === sessionKey(state)) {
       if (this.restingBuys.size > 0) {
         await this.cancelAllRestingBuys("prediction trade hold");
       }
-      // Keep Prediction GTD resting sell; cancel only phase rests.
-      if (this.restingSell && this.restingSell.source !== "prediction") {
+      // Keep Prediction/Trigger GTD resting sell; cancel only phase rests.
+      if (
+        this.restingSell &&
+        this.restingSell.source !== "prediction" &&
+        this.restingSell.source !== "trigger"
+      ) {
         await this.cancelRestingSell("prediction trade hold", state);
       }
       if (!this.isLiveArmed()) {
@@ -3549,8 +3556,11 @@ export class LiveTradingService {
     setup: SimSetup,
     nowMs?: number,
   ): Promise<void> {
-    // Prediction GTD is owned/polled separately — do not retarget to phase profit.
-    if (this.restingSell?.source === "prediction") {
+    // Prediction / Trigger GTD is owned/polled separately — do not retarget to phase profit.
+    if (
+      this.restingSell?.source === "prediction" ||
+      this.restingSell?.source === "trigger"
+    ) {
       if (!this.orderInFlight) await this.pollRestingSell(state);
       return;
     }
@@ -3733,6 +3743,46 @@ export class LiveTradingService {
     const nowSec = Math.floor((state.lastTickMs ?? Date.now()) / 1000);
     const riseCents = Math.max(1, Math.min(50, Math.round(this.config.predictionRiseCents || 5)));
     const limitPrice = Math.min(0.99, Math.max(0.01, buyPrice + centsToPrice(riseCents)));
+    await this.placeOwnedGtdSell(state, side, fillShares, limitPrice, "prediction", riseCents);
+  }
+
+  /**
+   * Trigger Trade Sell=GTD: rest limit at buy fill + Take Profit offset (¢) as soon as Buy fills.
+   */
+  private async ensureTriggerGtdSell(
+    state: LiveWindowState,
+    side: "up" | "down",
+    takeProfitOffsetCents: number,
+    fillShares: number,
+    fillPrice?: number,
+  ): Promise<void> {
+    if (!this.isLiveArmed()) return;
+    const pos = this.positions[side];
+    if (!pos || pos.shares <= 0) return;
+    const tpOff = Math.max(1, Math.min(100, Math.round(takeProfitOffsetCents)));
+    // Offset 100 = Take Profit disabled — do not rest a sell.
+    if (tpOff >= 100) return;
+    const buyPrice =
+      fillPrice != null && Number.isFinite(fillPrice) && fillPrice > 0
+        ? fillPrice
+        : Number(pos.avgPrice);
+    if (!Number.isFinite(buyPrice) || !(buyPrice > 0)) return;
+    const limitPrice = Math.min(0.99, Math.max(0.01, buyPrice + centsToPrice(tpOff)));
+    await this.placeOwnedGtdSell(state, side, fillShares, limitPrice, "trigger");
+  }
+
+  private async placeOwnedGtdSell(
+    state: LiveWindowState,
+    side: "up" | "down",
+    fillShares: number,
+    limitPrice: number,
+    source: "prediction" | "trigger",
+    riseCents?: number,
+  ): Promise<void> {
+    const pos = this.positions[side];
+    if (!pos || pos.shares <= 0) return;
+
+    const nowSec = Math.floor((state.lastTickMs ?? Date.now()) / 1000);
     const shares = Math.max(1, Math.floor(fillShares > 0 ? fillShares : pos.shares));
     const key = sessionKey(state);
     if (this.gtdSellBlockedWindowKey === key) return;
@@ -3741,7 +3791,7 @@ export class LiveTradingService {
 
     if (
       this.restingSell &&
-      this.restingSell.source === "prediction" &&
+      this.restingSell.source === source &&
       this.restingSell.side === side &&
       this.restingSell.sessionKey === key &&
       Math.abs(this.restingSell.limitPrice - limitPrice) < 1e-9 &&
@@ -3751,7 +3801,7 @@ export class LiveTradingService {
     }
 
     if (this.restingSell) {
-      await this.cancelRestingSell("prediction GTD sell", state);
+      await this.cancelRestingSell(`${source} GTD sell`, state);
     }
 
     const windowEnd = state.windowEnd ?? nowSec + 300;
@@ -3765,17 +3815,17 @@ export class LiveTradingService {
         price: limitPrice,
         expirationSec: gtdExpirationUnix(windowEnd, nowSec),
         state,
-        logTag: "prediction",
+        logTag: source,
       });
       if (!result.success || !result.orderId) {
         const err = result.error ?? "";
         if (/expiration/i.test(err)) {
           this.gtdSellBlockedWindowKey = key;
-          logService.warn("trading", `Prediction GTD sell skipped for rest of window (${err})`);
+          logService.warn("trading", `${source} GTD sell skipped for rest of window (${err})`);
         } else if (isBalanceAllowanceError(err)) {
           this.gtdSellRepressUntilMs = now + GTD_SELL_BALANCE_REPRESS_MS;
         } else if (err) {
-          logService.warn("trading", `Prediction GTD sell place failed: ${err}`);
+          logService.warn("trading", `${source} GTD sell place failed: ${err}`);
         }
         return;
       }
@@ -3818,14 +3868,20 @@ export class LiveTradingService {
         limitPrice,
         sizeMatched: 0,
         phaseIdx: -1,
-        source: "prediction",
+        source,
         tokenId: result.tokenId ?? pos.asset,
         conditionId: result.conditionId ?? pos.conditionId,
         cardId: pos.cardId,
       };
+      const detail =
+        source === "prediction" && riseCents != null
+          ? ` (buy + ${riseCents}¢)`
+          : source === "trigger"
+            ? " (trigger take-profit)"
+            : "";
       logService.info(
         "trading",
-        `Prediction GTD sell resting: ${side.toUpperCase()} ${shares} sh @ ${(limitPrice * 100).toFixed(0)}¢ (buy + ${riseCents}¢)`,
+        `${source} GTD sell resting: ${side.toUpperCase()} ${shares} sh @ ${(limitPrice * 100).toFixed(0)}¢${detail}`,
       );
       this.notify();
     } finally {
@@ -4115,13 +4171,33 @@ export class LiveTradingService {
     state: LiveWindowState,
     side: "up" | "down",
     leg: "buy" | "sell",
-    options?: { source?: "manual" | "prediction" },
-  ): Promise<{ ok: boolean; error?: string; fillShares?: number; fillPrice?: number }> {
+    options?: {
+      source?: "manual" | "prediction" | "trigger";
+      shares?: number;
+      orderType?: "FAK" | "FOK";
+      sellOrderType?: "FAK" | "FOK" | "GTD";
+      takeProfitCents?: number;
+    },
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    fillShares?: number;
+    fillPrice?: number;
+    remainingShares?: number;
+  }> {
     this.ensureWindow(state);
     if (!this.canExecuteOrders()) {
       return { ok: false, error: "Allow trade to place orders" };
     }
     const fromPrediction = options?.source === "prediction";
+    const fromTrigger = options?.source === "trigger";
+    const holdsPhases = fromPrediction || fromTrigger;
+    const triggerSellOrderType =
+      options?.sellOrderType === "FOK" || options?.sellOrderType === "GTD"
+        ? options.sellOrderType
+        : options?.sellOrderType === "FAK"
+          ? "FAK"
+          : "FAK";
     if (fromPrediction) {
       if (
         !this.config.predictionTrade ||
@@ -4131,9 +4207,12 @@ export class LiveTradingService {
         return { ok: false, error: "Prediction Trade is off" };
       }
     }
+    if (fromTrigger && !this.config.startTrading) {
+      return { ok: false, error: "Allow trade to place trigger orders" };
+    }
     if (leg === "buy") {
       const key = sessionKey(state);
-      if (fromPrediction) {
+      if (holdsPhases) {
         // May buy after a prior manual override; still respect pending/unresolved buys.
         if (
           this.manualBuyPending ||
@@ -4163,25 +4242,40 @@ export class LiveTradingService {
     if (!this.canManualTrade(side, leg)) {
       return { ok: false, error: leg === "buy" ? "Already holding position" : "No position to sell" };
     }
+    const requestedShares =
+      options?.shares != null && Number.isFinite(options.shares) && options.shares > 0
+        ? Math.max(1, Math.floor(options.shares))
+        : null;
     const size =
       leg === "sell" && this.positions[side]
         ? this.positions[side]!.shares
-        : fromPrediction
-          ? this.config.predictionShares
-          : this.config.autoTrade
-            ? (this.getPhaseBuyShares(state) ?? this.config.manualShares)
-            : this.config.manualShares;
+        : fromTrigger && requestedShares != null
+          ? requestedShares
+          : fromPrediction
+            ? this.config.predictionShares
+            : this.config.autoTrade && !fromTrigger
+              ? (this.getPhaseBuyShares(state) ?? this.config.manualShares)
+              : this.config.manualShares;
     const sizeUnit =
-      fromPrediction || leg === "sell" || this.config.autoTrade
+      fromPrediction || fromTrigger || leg === "sell" || this.config.autoTrade
         ? "shares"
         : this.config.manualOrderUnit;
     if (leg === "buy") {
       this.manualBuyPending = true;
       this.liveFakWatch = null;
       if (!this.isLiveArmed()) this.autoEngine.setExternalBuyPaused(true);
-      await this.cancelAllRestingBuys(fromPrediction ? "prediction buy" : "manual buy");
-    } else if (!(fromPrediction && this.config.predictionSellOrderType === "GTD")) {
-      await this.cancelRestingSell(fromPrediction ? "prediction sell" : "manual sell", state);
+      await this.cancelAllRestingBuys(
+        fromPrediction ? "prediction buy" : fromTrigger ? "trigger buy" : "manual buy",
+      );
+    } else if (
+      !(fromPrediction && this.config.predictionSellOrderType === "GTD") &&
+      !(fromTrigger && this.restingSell?.source === "trigger" && options?.orderType == null)
+    ) {
+      // Trigger SL / window-end / FAK-FOK exits cancel any resting GTD first.
+      await this.cancelRestingSell(
+        fromPrediction ? "prediction sell" : fromTrigger ? "trigger sell" : "manual sell",
+        state,
+      );
     }
 
     try {
@@ -4192,15 +4286,31 @@ export class LiveTradingService {
         }
         return { ok: false, error: "Prediction Sell is GTD (resting after buy)" };
       }
-      const orderType = fromPrediction
+      // Trigger GTD: resting TP was placed on buy; ignore client TP sells (SL uses orderType).
+      if (
+        fromTrigger &&
+        leg === "sell" &&
+        this.restingSell?.source === "trigger" &&
+        this.restingSell.side === side &&
+        options?.orderType == null
+      ) {
+        return { ok: true };
+      }
+      const orderType: "FAK" | "FOK" = fromTrigger
         ? leg === "buy"
-          ? this.config.predictionBuyOrderType
-          : this.config.predictionSellOrderType === "GTD"
+          ? "FOK"
+          : options?.orderType === "FOK"
             ? "FOK"
-            : this.config.predictionSellOrderType
-        : leg === "buy"
-          ? this.config.manualBuyOrderType
-          : this.config.manualSellOrderType;
+            : "FAK"
+        : fromPrediction
+          ? leg === "buy"
+            ? this.config.predictionBuyOrderType
+            : this.config.predictionSellOrderType === "GTD"
+              ? "FOK"
+              : this.config.predictionSellOrderType
+          : leg === "buy"
+            ? this.config.manualBuyOrderType
+            : this.config.manualSellOrderType;
       const result = await this.executeOrder(
         state,
         side,
@@ -4228,11 +4338,13 @@ export class LiveTradingService {
                 nowSec,
               );
             }
-            if (!fromPrediction) this.autoEngine.suppressBuysForWindow();
+            if (!holdsPhases) this.autoEngine.suppressBuysForWindow();
           }
-          if (fromPrediction) {
+          if (holdsPhases) {
+            // Pause phase Auto Trade for the window (Prediction + detector Triggers).
             this.predictionTradeHoldWindowKey = sessionKey(state);
             if (
+              fromPrediction &&
               this.config.predictionSellOrderType === "GTD" &&
               result.fillPrice != null &&
               result.fillShares != null
@@ -4244,17 +4356,36 @@ export class LiveTradingService {
                 result.fillShares,
               );
             }
+            if (
+              fromTrigger &&
+              triggerSellOrderType === "GTD" &&
+              result.fillShares != null
+            ) {
+              const tpOff =
+                options?.takeProfitCents != null && Number.isFinite(options.takeProfitCents)
+                  ? Math.round(options.takeProfitCents)
+                  : 10;
+              await this.ensureTriggerGtdSell(
+                state,
+                side,
+                tpOff,
+                result.fillShares,
+                result.fillPrice ?? undefined,
+              );
+            }
           } else {
             this.manualBuyOverrideWindowKey = sessionKey(state);
           }
         } else {
-          if (fromPrediction) {
+          const remaining = this.positions[side]?.shares ?? 0;
+          if (holdsPhases && remaining <= 0) {
             this.predictionTradeHoldWindowKey = null;
             if (!this.isLiveArmed()) this.autoEngine.setExternalBuyPaused(false);
           }
-          if (!this.isLiveArmed()) {
+          if (!this.isLiveArmed() && remaining <= 0) {
             this.autoEngine.clearExternalPosition(side);
           }
+          return { ...result, remainingShares: remaining };
         }
         return result;
       }

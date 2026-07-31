@@ -349,6 +349,11 @@
             <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 4.5h10M3 8h10M3 11.5h7" />
           </svg>
         </button>
+        <button type="button" class="left-column-rail-btn" data-left-section="triggers" title="Triggers" aria-label="Open Triggers">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M4 2.5h8l-2.5 4.5H12L6.5 13.5 8 8H4.5z" />
+          </svg>
+        </button>
         <button type="button" class="left-column-rail-btn" data-left-section="log" title="Log" aria-label="Open Log">
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3.5 3h9v10h-9zM6 6h4M6 8.5h4M6 11h2.5" />
@@ -476,293 +481,6 @@
                     <span class="switch-slider"></span>
                   </span>
                 </label>
-                <div
-                  id="manipulation-detector-card"
-                  class="wallet-control-field wallet-control-field--manipulation"
-                >
-                  <div class="manipulation-detector-head">
-                    <div class="manipulation-detector-label-row">
-                      <button
-                        type="button"
-                        id="prediction-info-btn"
-                        class="prediction-info-btn"
-                        aria-expanded="false"
-                        aria-controls="prediction-info-panel"
-                        aria-label="About Prediction"
-                      >
-                        <span class="settings-info-icon" aria-hidden="true">
-                          <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
-                        </span>
-                      </button>
-                      <label class="wallet-control-label" id="manipulation-detector-label" for="manipulation-detector"
-                        >Prediction · Off</label
-                      >
-                    </div>
-                    <label class="switch" for="manipulation-detector">
-                      <input type="checkbox" id="manipulation-detector" />
-                      <span class="switch-slider"></span>
-                    </label>
-                  </div>
-                  <label
-                    class="wallet-control-field wallet-control-field--toggle prediction-trade-toggle"
-                    for="prediction-trade"
-                    id="prediction-trade-field"
-                  >
-                    <span class="wallet-control-label" id="prediction-trade-label">Trade · Off</span>
-                    <span class="switch">
-                      <input type="checkbox" id="prediction-trade" disabled />
-                      <span class="switch-slider"></span>
-                    </span>
-                  </label>
-                  <div
-                    id="prediction-info-panel"
-                    class="prediction-info-panel"
-                    role="note"
-                    aria-hidden="true"
-                  >
-                    <div class="prediction-info-panel-body">
-                      <p>
-                        Triggers when Gap holds or strengthens while UP/DOWN Buys move against it, for
-                        the set Duration inside the Trigger Area.
-                      </p>
-                      <p>
-                        On top of that: when Duration starts, the cheapening Buy must be between
-                        Min Quote (¢) and Max Quote (¢), and over Duration it must drop by at least
-                        Shift (¢).
-                      </p>
-                      <p>
-                        After trigger, Buy locks at the trigger price. With Trade On (and Allow trade On),
-                        that places a real Buy; with Trade Off it is simulated. Right means the predicted
-                        side’s Sell reaches that Buy plus Profit prediction (¢) sometime before the window
-                        ends (not that the side wins the window).
-                      </p>
-                    </div>
-                  </div>
-                  <div id="manipulation-detector-settings" class="manipulation-detector-settings">
-                    <div class="manipulation-detector-row manipulation-detector-row--order-types">
-                      <span class="wallet-control-label">Order type</span>
-                      <div class="manual-order-type-controls">
-                        <label class="manual-order-type-field" for="prediction-buy-order-type">
-                          <span class="manual-order-type-caption">Buy</span>
-                          <select
-                            id="prediction-buy-order-type"
-                            class="wallet-order-unit"
-                            aria-label="Prediction Trade buy order type"
-                          >
-                            <option value="FOK" selected>FOK</option>
-                            <option value="FAK">FAK</option>
-                          </select>
-                        </label>
-                        <label class="manual-order-type-field" for="prediction-sell-order-type">
-                          <span class="manual-order-type-caption">Sell</span>
-                          <select
-                            id="prediction-sell-order-type"
-                            class="wallet-order-unit"
-                            aria-label="Prediction Trade sell order type"
-                          >
-                            <option value="FOK" selected>FOK</option>
-                            <option value="FAK">FAK</option>
-                            <option value="GTD">GTD</option>
-                          </select>
-                        </label>
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="prediction-shares">Shares</label>
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          type="number"
-                          id="prediction-shares"
-                          class="schedule-replay-latency-input"
-                          min="1"
-                          max="100000"
-                          step="1"
-                          value="10"
-                          inputmode="numeric"
-                          aria-label="Prediction Trade share count"
-                        />
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="prediction-max-quote">Max Quote (¢)</label>
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          type="number"
-                          id="prediction-max-quote"
-                          class="schedule-replay-latency-input"
-                          min="1"
-                          max="99"
-                          step="1"
-                          value="90"
-                          inputmode="numeric"
-                          aria-label="Max Buy price in cents when Duration starts on the cheapening side"
-                        />
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="prediction-min-quote">Min Quote (¢)</label>
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          type="number"
-                          id="prediction-min-quote"
-                          class="schedule-replay-latency-input"
-                          min="1"
-                          max="99"
-                          step="1"
-                          value="70"
-                          inputmode="numeric"
-                          aria-label="Min Buy price in cents when Duration starts on the cheapening side"
-                        />
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="manipulation-sensitivity">Duration (Sec)</label>
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          type="number"
-                          id="manipulation-sensitivity"
-                          class="schedule-replay-latency-input"
-                          min="1"
-                          max="120"
-                          step="1"
-                          value="5"
-                          inputmode="numeric"
-                          aria-label="Manipulation duration in seconds"
-                        />
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="prediction-shift">Shift (¢)</label>
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          type="number"
-                          id="prediction-shift"
-                          class="schedule-replay-latency-input"
-                          min="1"
-                          max="50"
-                          step="1"
-                          value="5"
-                          inputmode="numeric"
-                          aria-label="Minimum drop in cents of the cheapening Buy over Duration"
-                        />
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row">
-                      <label class="wallet-control-label" for="prediction-rise">Profit prediction (¢)</label>
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          type="number"
-                          id="prediction-rise"
-                          class="schedule-replay-latency-input"
-                          min="1"
-                          max="50"
-                          step="1"
-                          value="5"
-                          inputmode="numeric"
-                          aria-label="Profit prediction in cents: Sell must reach trigger Buy plus this many cents before window end"
-                        />
-                      </div>
-                    </div>
-                    <div class="manipulation-detector-row manipulation-detector-row--area">
-                      <span class="wallet-control-label" id="manipulation-area-label">Trigger Area</span>
-                      <div
-                        class="manipulation-area-slider"
-                        id="manipulation-area-slider"
-                        role="group"
-                        aria-labelledby="manipulation-area-label"
-                      >
-                        <div class="manipulation-area-track">
-                          <div class="manipulation-area-range" id="manipulation-area-range"></div>
-                          <button
-                            type="button"
-                            class="manipulation-area-thumb"
-                            id="manipulation-area-start"
-                            data-thumb="start"
-                            aria-label="Detection area start"
-                          ></button>
-                          <button
-                            type="button"
-                            class="manipulation-area-thumb"
-                            id="manipulation-area-end"
-                            data-thumb="end"
-                            aria-label="Detection area end"
-                          ></button>
-                        </div>
-                        <span class="manipulation-area-thumb-label" id="manipulation-area-start-label">0:00</span>
-                        <span class="manipulation-area-thumb-label" id="manipulation-area-end-label">5:00</span>
-                      </div>
-                    </div>
-                    <div class="prediction-action-row" id="prediction-action-row" aria-label="Prediction actions">
-                      <div
-                        id="prediction-buy-box"
-                        class="quote-box quote-box-disabled"
-                        aria-live="polite"
-                        aria-label="Buy disabled"
-                        aria-disabled="true"
-                      >
-                        <span id="prediction-status-label" class="prediction-status-label" hidden></span>
-                        <span id="prediction-status-icon" class="prediction-status-icon" hidden aria-hidden="true"></span>
-                        <div id="prediction-buy-quote" class="quote-cell">
-                          <div class="quote-label">Buy</div>
-                          <div class="quote-values">
-                            <span id="prediction-buy-locked" class="quote-locked" hidden></span>
-                            <span id="prediction-buy-live" class="quote-live">—</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div
-                        id="prediction-sell-box"
-                        class="quote-box quote-box-disabled"
-                        aria-label="Sell disabled"
-                        aria-disabled="true"
-                      >
-                        <div id="prediction-sell-quote" class="quote-cell">
-                          <div class="quote-label">Sell</div>
-                          <div class="quote-values">
-                            <span id="prediction-sell-locked" class="quote-locked" hidden></span>
-                            <span id="prediction-sell-live" class="quote-live">—</span>
-                            <span
-                              id="prediction-sell-result-icon"
-                              class="prediction-status-icon prediction-sell-result-icon"
-                              hidden
-                              aria-hidden="true"
-                            ></span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="prediction-stats-row" aria-label="Prediction stats">
-                      <button type="button" id="prediction-stats-reset" class="settings-secondary-btn prediction-stats-reset">
-                        <svg class="prediction-stats-reset-icon" viewBox="0 0 16 16" aria-hidden="true">
-                          <path
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M2.5 3.5v3h3M13.5 12.5v-3h-3"
-                          />
-                          <path
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5"
-                          />
-                        </svg>
-                        Reset
-                      </button>
-                      <div class="prediction-stats-counts">
-                        <span class="prediction-stat">
-                          Right <strong id="prediction-stats-right">0</strong>
-                        </span>
-                        <span class="prediction-stat">
-                          Wrong <strong id="prediction-stats-wrong">0</strong>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -794,6 +512,29 @@
           </div>
         </section>
 
+        <section class="panel triggers-panel" aria-label="Triggers">
+          <div class="triggers-panel-header">
+            <div
+              class="panel-header-drag-handle"
+              data-drag-edge="triggers"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize Positions and Triggers sections"
+              tabindex="0"
+            ></div>
+            <div class="panel-header-main">
+              <h2 class="triggers-panel-title">Triggers</h2>
+              <div class="triggers-panel-actions">
+                <button type="button" id="triggers-create-btn" class="log-clear-btn">Create Trigger</button>
+              </div>
+            </div>
+          </div>
+          <div id="triggers-list" class="triggers-body">
+            <div class="triggers-empty" id="triggers-empty">No triggers yet</div>
+            <div class="triggers-cards" id="triggers-cards"></div>
+          </div>
+        </section>
+
         <section class="panel log-panel" aria-label="Application log">
           <div class="log-panel-header">
             <div
@@ -801,7 +542,7 @@
               data-drag-edge="log"
               role="separator"
               aria-orientation="horizontal"
-              aria-label="Resize Positions and Log sections"
+              aria-label="Resize Triggers and Log sections"
               tabindex="0"
             ></div>
             <div class="panel-header-main">
@@ -1276,211 +1017,29 @@
                   </div>
                 </div>
                 <div
-                  id="schedule-replay-prediction"
-                  class="schedule-replay-prediction"
-                  aria-label="Replay Prediction"
+                  id="schedule-replay-triggers"
+                  class="schedule-replay-triggers"
+                  aria-label="Replay Triggers"
                 >
-                  <div class="schedule-replay-prediction-head">
-                    <span class="schedule-replay-prediction-title" id="replay-prediction-label"
-                      >Prediction · On</span
+                  <div class="schedule-replay-triggers-head">
+                    <span class="schedule-replay-triggers-title">Triggers</span>
+                    <button
+                      type="button"
+                      id="schedule-replay-triggers-add"
+                      class="schedule-replay-triggers-add"
+                      tabindex="-1"
                     >
-                    <label class="switch" for="replay-prediction-enabled">
-                      <input type="checkbox" id="replay-prediction-enabled" checked tabindex="-1" />
-                      <span class="switch-slider"></span>
-                    </label>
+                      Add Trigger
+                    </button>
                   </div>
-                  <div id="schedule-replay-prediction-settings" class="schedule-replay-prediction-settings">
-                  <div class="schedule-replay-latency schedule-replay-prediction-order-types">
-                    <span class="schedule-replay-latency-label">Order type</span>
-                    <div class="manual-order-type-controls">
-                      <label class="manual-order-type-field" for="replay-prediction-buy-order-type">
-                        <span class="manual-order-type-caption">Buy</span>
-                        <select
-                          id="replay-prediction-buy-order-type"
-                          class="wallet-order-unit"
-                          aria-label="Replay Prediction buy order type"
-                          tabindex="-1"
-                          title="Replay Prediction Trade buy order type (FAK or FOK)."
-                        >
-                          <option value="FOK" selected>FOK</option>
-                          <option value="FAK">FAK</option>
-                        </select>
-                      </label>
-                      <label class="manual-order-type-field" for="replay-prediction-sell-order-type">
-                        <span class="manual-order-type-caption">Sell</span>
-                        <select
-                          id="replay-prediction-sell-order-type"
-                          class="wallet-order-unit"
-                          aria-label="Replay Prediction sell order type"
-                          tabindex="-1"
-                          title="Replay Prediction Trade sell order type (FAK or FOK)."
-                        >
-                          <option value="FOK" selected>FOK</option>
-                          <option value="FAK">FAK</option>
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-                  <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-shares"
-                      >Shares</label
-                    >
-                    <div class="schedule-replay-latency-field">
-                      <input
-                        id="replay-prediction-shares"
-                        class="schedule-replay-latency-input"
-                        type="number"
-                        min="1"
-                        max="100000"
-                        step="1"
-                        value="10"
-                        inputmode="numeric"
-                        tabindex="-1"
-                        title="Replay Prediction Trade share count for buys."
-                      />
-                    </div>
-                  </div>
-                  <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-max-quote"
-                      >Max Quote (¢)</label
-                    >
-                    <div class="schedule-replay-latency-field">
-                      <input
-                        id="replay-prediction-max-quote"
-                        class="schedule-replay-latency-input"
-                        type="number"
-                        min="1"
-                        max="99"
-                        step="1"
-                        value="90"
-                        inputmode="numeric"
-                        tabindex="-1"
-                        title="Replay Prediction: max Buy price (¢) when Duration starts on the cheapening side."
-                      />
-                    </div>
-                  </div>
-                  <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-min-quote"
-                      >Min Quote (¢)</label
-                    >
-                    <div class="schedule-replay-latency-field">
-                      <input
-                        id="replay-prediction-min-quote"
-                        class="schedule-replay-latency-input"
-                        type="number"
-                        min="1"
-                        max="99"
-                        step="1"
-                        value="70"
-                        inputmode="numeric"
-                        tabindex="-1"
-                        title="Replay Prediction: min Buy price (¢) when Duration starts on the cheapening side."
-                      />
-                    </div>
-                  </div>
-                  <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-duration"
-                      >Duration (Sec)</label
-                    >
-                    <div class="schedule-replay-latency-field">
-                      <input
-                        id="replay-prediction-duration"
-                        class="schedule-replay-latency-input"
-                        type="number"
-                        min="1"
-                        max="120"
-                        step="1"
-                        value="5"
-                        inputmode="numeric"
-                        tabindex="-1"
-                        title="Replay Prediction: seconds the Gap vs Buy condition must hold."
-                      />
-                    </div>
-                  </div>
-                  <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-shift"
-                      >Shift (¢)</label
-                    >
-                    <div class="schedule-replay-latency-field">
-                      <input
-                        id="replay-prediction-shift"
-                        class="schedule-replay-latency-input"
-                        type="number"
-                        min="1"
-                        max="50"
-                        step="1"
-                        value="5"
-                        inputmode="numeric"
-                        tabindex="-1"
-                        title="Replay Prediction: minimum drop (¢) of the cheapening Buy over Duration."
-                      />
-                    </div>
-                  </div>
-                  <div class="schedule-replay-latency">
-                    <label class="schedule-replay-latency-label" for="replay-prediction-rise"
-                      >Profit prediction (¢)</label
-                    >
-                    <div class="schedule-replay-latency-field">
-                      <input
-                        id="replay-prediction-rise"
-                        class="schedule-replay-latency-input"
-                        type="number"
-                        min="1"
-                        max="50"
-                        step="1"
-                        value="5"
-                        inputmode="numeric"
-                        tabindex="-1"
-                        title="Replay Prediction: predicted-side Sell must reach trigger Buy + this many ¢ (Profit prediction) before window end."
-                      />
-                    </div>
-                  </div>
-                  <div class="schedule-replay-prediction-area">
-                    <span class="schedule-replay-latency-label" id="replay-prediction-area-label"
-                      >Trigger Area</span
-                    >
-                    <div
-                      class="manipulation-area-slider schedule-replay-prediction-slider"
-                      id="replay-prediction-area-slider"
-                      role="group"
-                      aria-labelledby="replay-prediction-area-label"
-                    >
-                      <div class="manipulation-area-track">
-                        <div class="manipulation-area-range" id="replay-prediction-area-range"></div>
-                        <button
-                          type="button"
-                          class="manipulation-area-thumb"
-                          id="replay-prediction-area-start"
-                          data-thumb="start"
-                          tabindex="-1"
-                          aria-label="Replay prediction trigger area start"
-                        ></button>
-                        <button
-                          type="button"
-                          class="manipulation-area-thumb"
-                          id="replay-prediction-area-end"
-                          data-thumb="end"
-                          tabindex="-1"
-                          aria-label="Replay prediction trigger area end"
-                        ></button>
-                      </div>
-                      <span class="manipulation-area-thumb-label" id="replay-prediction-area-start-label"
-                        >0:00</span
-                      >
-                      <span class="manipulation-area-thumb-label" id="replay-prediction-area-end-label"
-                        >5:00</span
-                      >
-                    </div>
-                  </div>
-                  <div class="schedule-replay-prediction-stats" aria-label="Replay prediction stats">
-                    <span class="schedule-replay-prediction-stat"
-                      >Right <strong id="replay-prediction-right">0</strong></span
-                    >
-                    <span class="schedule-replay-prediction-stat"
-                      >Wrong <strong id="replay-prediction-wrong">0</strong></span
-                    >
-                  </div>
-                  </div>
+                  <div
+                    id="schedule-replay-triggers-list"
+                    class="schedule-replay-triggers-list"
+                    aria-label="Replay trigger cards"
+                  ></div>
+                  <p class="schedule-replay-triggers-note" id="schedule-replay-triggers-note">
+                    Triggers apply on every simulated window. Cards show exit counts and P/L after a Run.
+                  </p>
                 </div>
               </div>
             </div>
@@ -1647,6 +1206,454 @@
           To change settings turn off &quot;Use Schedule&quot;
         </p>
         <button type="button" id="phase-modal-save" class="modal-btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="trigger-create-modal" class="modal-overlay" hidden>
+    <div class="modal-card trigger-create-card" role="dialog" aria-labelledby="trigger-create-modal-title" aria-modal="true">
+      <div class="modal-header setup-edit-modal-header">
+        <div class="setup-edit-modal-heading">
+          <span class="setup-edit-color-swatch" title="Trigger color">
+            <input type="color" id="trigger-create-color" value="#58a6ff" aria-label="Trigger color" />
+            <svg class="setup-edit-color-edit-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M11.2 1.3a1.3 1.3 0 0 1 1.8 0l1.7 1.7a1.3 1.3 0 0 1 0 1.8L6.1 13.4H2.6v-3.5L11.2 1.3z" />
+            </svg>
+          </span>
+          <h2 id="trigger-create-modal-title">Create Trigger</h2>
+        </div>
+        <button type="button" id="trigger-create-modal-close" class="modal-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-field modal-field-stack trigger-create-name-field">
+          <span>Title</span>
+          <input
+            type="text"
+            id="trigger-create-name"
+            maxlength="200"
+            autocomplete="off"
+            placeholder="Trigger title"
+            aria-label="Trigger title"
+          />
+        </label>
+        <div class="settings-tabs trigger-create-tabs" role="tablist" aria-label="Trigger settings">
+          <button
+            type="button"
+            class="settings-tab trigger-create-tab is-active is-buy"
+            id="trigger-tab-buy"
+            role="tab"
+            aria-selected="true"
+            aria-controls="trigger-tab-panel-buy"
+            data-trigger-tab="buy"
+          >
+            BUY
+          </button>
+          <button
+            type="button"
+            class="settings-tab trigger-create-tab is-sell"
+            id="trigger-tab-sell"
+            role="tab"
+            aria-selected="false"
+            aria-controls="trigger-tab-panel-sell"
+            data-trigger-tab="sell"
+            tabindex="-1"
+          >
+            SELL
+          </button>
+          <button
+            type="button"
+            class="settings-tab trigger-create-tab"
+            id="trigger-tab-stats"
+            role="tab"
+            aria-selected="false"
+            aria-controls="trigger-tab-panel-stats"
+            data-trigger-tab="stats"
+            tabindex="-1"
+          >
+            Stats
+          </button>
+        </div>
+        <div class="trigger-create-tab-panels">
+        <div
+          class="settings-tab-panel trigger-create-tab-panel"
+          id="trigger-tab-panel-buy"
+          role="tabpanel"
+          aria-labelledby="trigger-tab-buy"
+          data-trigger-tab-panel="buy"
+        >
+        <section class="modal-section trigger-duration-section" aria-label="Duration">
+          <div class="trigger-duration-diagram" aria-label="Trigger duration period">
+            <div class="trigger-duration-stage">
+              <div class="trigger-price-column" data-edge="start">
+                <label class="trigger-price-side-wrap">
+                  <span class="visually-hidden">Price side</span>
+                  <select
+                    id="trigger-price-side-start"
+                    class="trigger-price-side is-buy"
+                    aria-label="Price side: Buy or Sell"
+                  >
+                    <option value="buy" selected>BUY Price</option>
+                    <option value="sell">SELL Price</option>
+                  </select>
+                </label>
+                <div
+                  class="trigger-price-track"
+                  id="trigger-start-track"
+                  role="group"
+                  aria-label="Start price range in cents"
+                >
+                  <div class="trigger-price-scale">
+                    <div class="trigger-price-rail" aria-hidden="true"></div>
+                    <div class="trigger-price-range" data-range="start" aria-hidden="true"></div>
+                    <button
+                      type="button"
+                      class="trigger-price-thumb"
+                      data-edge="start"
+                      data-thumb="high"
+                      aria-label="Start max price"
+                    >
+                      <span class="trigger-price-thumb-label" data-label="start-high">70¢</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="trigger-price-thumb"
+                      data-edge="start"
+                      data-thumb="low"
+                      aria-label="Start min price"
+                    >
+                      <span class="trigger-price-thumb-label" data-label="start-low">40¢</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <svg
+                class="trigger-market-overlay"
+                id="trigger-market-overlay"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path class="trigger-gap-fill" data-edge="start" hidden></path>
+                <path class="trigger-gap-fill" data-edge="end" hidden></path>
+                <polyline class="trigger-market-line" id="trigger-market-line"></polyline>
+                <polyline
+                  class="trigger-market-line trigger-market-line-side"
+                  data-edge="start"
+                  hidden
+                ></polyline>
+                <polyline
+                  class="trigger-market-line trigger-market-line-side"
+                  data-edge="end"
+                  hidden
+                ></polyline>
+              </svg>
+
+              <div class="trigger-ptb-line" id="trigger-ptb-mid-line" aria-hidden="true"></div>
+
+              <div class="trigger-gap-size-control" data-edge="start" hidden>
+                <div class="trigger-gap-size-box">
+                  <select
+                    class="trigger-gap-size-bound"
+                    data-gap-bound
+                    aria-label="Start gap size bound"
+                  >
+                    <option value="min" selected>Min</option>
+                    <option value="max">Max</option>
+                  </select>
+                  <span class="trigger-gap-size-unit">$</span>
+                  <input
+                    type="number"
+                    class="trigger-gap-size-value"
+                    data-gap-value
+                    min="0"
+                    max="100000"
+                    step="0.01"
+                    value="0"
+                    inputmode="decimal"
+                    aria-label="Start gap size in dollars"
+                    title="0 = any size"
+                  />
+                </div>
+              </div>
+              <div class="trigger-gap-size-control" data-edge="end" hidden>
+                <div class="trigger-gap-size-box">
+                  <select
+                    class="trigger-gap-size-bound"
+                    data-gap-bound
+                    aria-label="End gap size bound"
+                  >
+                    <option value="min" selected>Min</option>
+                    <option value="max">Max</option>
+                  </select>
+                  <span class="trigger-gap-size-unit">$</span>
+                  <input
+                    type="number"
+                    class="trigger-gap-size-value"
+                    data-gap-value
+                    min="0"
+                    max="100000"
+                    step="0.01"
+                    value="0"
+                    inputmode="decimal"
+                    aria-label="End gap size in dollars"
+                    title="0 = any size"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                class="trigger-ptb-btn"
+                data-edge="start"
+                data-ptb="positive"
+                aria-pressed="false"
+                title="Require market above PTB (positive gap)"
+                aria-label="Start: + Gap"
+              >
+                + Gap
+              </button>
+              <button
+                type="button"
+                class="trigger-ptb-btn"
+                data-edge="start"
+                data-ptb="negative"
+                aria-pressed="false"
+                title="Require market below PTB (negative gap)"
+                aria-label="Start: - Gap"
+              >
+                - Gap
+              </button>
+              <button
+                type="button"
+                class="trigger-ptb-btn"
+                data-edge="end"
+                data-ptb="positive"
+                aria-pressed="false"
+                title="Require market above PTB (positive gap)"
+                aria-label="End: + Gap"
+              >
+                + Gap
+              </button>
+              <button
+                type="button"
+                class="trigger-ptb-btn"
+                data-edge="end"
+                data-ptb="negative"
+                aria-pressed="false"
+                title="Require market below PTB (negative gap)"
+                aria-label="End: - Gap"
+              >
+                - Gap
+              </button>
+
+              <div class="trigger-duration-timeline" aria-hidden="true"></div>
+
+              <div class="trigger-price-column" data-edge="end">
+                <label class="trigger-price-side-wrap">
+                  <span class="visually-hidden">End condition type</span>
+                  <select
+                    id="trigger-end-mode"
+                    class="trigger-price-side is-buy"
+                    aria-label="End condition: price range or price change"
+                  >
+                    <option value="range" selected>BUY Price Range</option>
+                    <option value="change-side">BUY Price Change</option>
+                  </select>
+                </label>
+                <div
+                  class="trigger-price-track"
+                  id="trigger-end-track"
+                  role="group"
+                  aria-label="End price range in cents"
+                >
+                  <div class="trigger-price-scale">
+                    <div class="trigger-price-rail" aria-hidden="true"></div>
+                    <div class="trigger-price-zero" aria-hidden="true"></div>
+                    <div class="trigger-price-range" data-range="end" aria-hidden="true"></div>
+                    <button
+                      type="button"
+                      class="trigger-price-thumb"
+                      data-edge="end"
+                      data-thumb="high"
+                      aria-label="End max price"
+                    >
+                      <span class="trigger-price-thumb-label" data-label="end-high">70¢</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="trigger-price-thumb"
+                      data-edge="end"
+                      data-thumb="low"
+                      aria-label="End min price"
+                    >
+                      <span class="trigger-price-thumb-label" data-label="end-low">40¢</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="trigger-duration-labels">
+              <div class="trigger-duration-start-controls">
+                <span class="trigger-duration-label trigger-duration-label--start">Start</span>
+                <label class="trigger-shares-field" for="trigger-buy-shares">
+                  <span class="trigger-shares-caption">Shares</span>
+                  <input
+                    type="number"
+                    id="trigger-buy-shares"
+                    class="trigger-buy-shares"
+                    min="1"
+                    max="100000"
+                    step="1"
+                    value="10"
+                    inputmode="numeric"
+                    aria-label="Buy shares (FAK)"
+                    title="Buy size (FAK only)"
+                  />
+                </label>
+              </div>
+              <div class="trigger-duration-end-controls">
+                <label class="trigger-duration-input-label" for="trigger-duration-value">
+                  <span class="visually-hidden">Duration length</span>
+                  <input
+                    type="number"
+                    id="trigger-duration-value"
+                    class="trigger-duration-value"
+                    min="1"
+                    step="1"
+                    value="5"
+                    inputmode="numeric"
+                    aria-label="Duration value"
+                  />
+                </label>
+                <select id="trigger-duration-unit" class="trigger-duration-unit" aria-label="Duration unit">
+                  <option value="ms">ms</option>
+                  <option value="s" selected>sec</option>
+                  <option value="min">min</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="modal-section trigger-window-area-section" aria-label="Apply window">
+          <div class="trigger-window-area-head">
+            <span class="trigger-window-area-title" id="trigger-window-area-label">Apply window</span>
+          </div>
+          <div
+            class="manipulation-area-slider trigger-window-area-slider"
+            id="trigger-window-area-slider"
+            role="group"
+            aria-labelledby="trigger-window-area-label"
+          >
+            <div class="manipulation-area-track">
+              <div class="manipulation-area-range" id="trigger-window-area-range"></div>
+              <button
+                type="button"
+                class="manipulation-area-thumb"
+                id="trigger-window-area-start"
+                data-thumb="start"
+                aria-label="Apply window start"
+              ></button>
+              <button
+                type="button"
+                class="manipulation-area-thumb"
+                id="trigger-window-area-end"
+                data-thumb="end"
+                aria-label="Apply window end"
+              ></button>
+            </div>
+            <span class="manipulation-area-thumb-label" id="trigger-window-area-start-label">0:00</span>
+            <span class="manipulation-area-thumb-label" id="trigger-window-area-end-label">5:00</span>
+          </div>
+        </section>
+        </div>
+        <div
+          class="settings-tab-panel trigger-create-tab-panel"
+          id="trigger-tab-panel-sell"
+          role="tabpanel"
+          aria-labelledby="trigger-tab-sell"
+          data-trigger-tab-panel="sell"
+          hidden
+        >
+          <label class="modal-field" for="trigger-sell-order-type">
+            <span>Sell order type</span>
+            <select id="trigger-sell-order-type" class="modal-select" aria-label="Trigger sell order type">
+              <option value="FAK" selected>FAK</option>
+              <option value="FOK">FOK</option>
+              <option value="GTD">GTD</option>
+            </select>
+          </label>
+          <p class="trigger-sell-order-note" id="trigger-sell-order-note">
+            Buy is always FOK (full size or no fill). FAK sell retries until flat. Take Profit / Stop Loss are ¢ offsets from the buy fill (1–100; <strong>100 = disabled</strong> for that exit). Held to window end without TP/SL counts blue (win) or red (loss). GTD rests at fill + Take Profit as soon as the buy fills (skipped when TP is 100).
+          </p>
+          <label class="modal-field" for="trigger-take-profit">
+            <span>Take Profit (¢ from fill)</span>
+            <input
+              type="number"
+              id="trigger-take-profit"
+              min="1"
+              max="100"
+              step="1"
+              value="10"
+              inputmode="numeric"
+              aria-label="Take profit offset in cents from buy fill"
+            />
+          </label>
+          <label class="modal-field" for="trigger-stop-loss">
+            <span>Stop Loss (¢ from fill)</span>
+            <input
+              type="number"
+              id="trigger-stop-loss"
+              min="1"
+              max="100"
+              step="1"
+              value="10"
+              inputmode="numeric"
+              aria-label="Stop loss offset in cents from buy fill"
+            />
+          </label>
+        </div>
+        <div
+          class="settings-tab-panel trigger-create-tab-panel"
+          id="trigger-tab-panel-stats"
+          role="tabpanel"
+          aria-labelledby="trigger-tab-stats"
+          data-trigger-tab-panel="stats"
+          hidden
+        >
+          <p class="trigger-stats-note" id="trigger-stats-note">
+            All-time Trade stats for this trigger across every live session (stored on the server).
+          </p>
+          <table class="trigger-stats-table" aria-label="Trigger trade stats">
+            <tbody>
+              <tr>
+                <th scope="row">Success</th>
+                <td id="trigger-stats-live-success">—</td>
+              </tr>
+              <tr>
+                <th scope="row">Fail</th>
+                <td id="trigger-stats-live-fail">—</td>
+              </tr>
+              <tr>
+                <th scope="row">Take Profit</th>
+                <td id="trigger-stats-live-take-profit">—</td>
+              </tr>
+              <tr>
+                <th scope="row">Stop Loss</th>
+                <td id="trigger-stats-live-stop-loss">—</td>
+              </tr>
+              <tr>
+                <th scope="row">P/L</th>
+                <td id="trigger-stats-live-pnl">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        </div>
+      </div>
+      <div class="modal-footer modal-footer-actions">
+        <button type="button" id="trigger-create-cancel" class="modal-btn-secondary">Cancel</button>
+        <button type="button" id="trigger-create-submit" class="modal-btn-primary" disabled>Create</button>
       </div>
     </div>
   </div>
@@ -1957,6 +1964,7 @@
   <script src="/markdown.js?v=1.5.2"></script>
   <script src="/simulator.js?v=1.5.5"></script>
   <script src="/setup-editor.js?v=1.5.2"></script>
+  <script src="/schedule-replay-triggers.js?v=1"></script>
   <script src="/schedule.js?v=1.5.3"></script>
   <script src="/schedule-play.js?v=1.5.5"></script>
   <script src="/app.js?v=1.5.5"></script>

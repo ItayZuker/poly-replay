@@ -61,6 +61,11 @@ import {
   sumTradingSessionMemory,
   sumTradingStatEventsForSeries,
 } from "./db/trading-session-memory-repository.js";
+import {
+  deleteTriggerLiveStats,
+  getTriggerLiveStats,
+  recordTriggerLiveStatsEvent,
+} from "./db/trigger-live-stats-repository.js";
 import { closeMongoClient } from "./db/mongo-client.js";
 import {
   getHeatmapState,
@@ -545,6 +550,7 @@ async function runScheduleReplaySse(
       buyOrderType?: "FAK" | "FOK";
       sellOrderType?: "FAK" | "FOK";
     } | null;
+    triggers?: unknown[] | null;
   },
 ): Promise<void> {
   let market;
@@ -565,8 +571,10 @@ async function runScheduleReplaySse(
     typeof input.fillSuccessPct === "number" && Number.isFinite(input.fillSuccessPct)
       ? Math.max(0, Math.min(100, input.fillSuccessPct))
       : 100;
-  // null = Prediction Off; object = On; undefined = server default (On with defaults).
-  const prediction = input.prediction === null ? null : input.prediction;
+  const triggers = Array.isArray(input.triggers) ? input.triggers : [];
+  // Triggers replace Prediction. null = Prediction Off; object = On; undefined = default.
+  const prediction =
+    triggers.length > 0 ? null : input.prediction === null ? null : input.prediction;
 
   writeSseEvent(res, closed, "progress", {
     completed: 0,
@@ -576,7 +584,7 @@ async function runScheduleReplaySse(
 
   logService.info(
     "replay",
-    `Schedule replay started for ${input.series} (${input.placements.length} placement(s), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, prediction ${prediction === null ? "off" : "on"}) — loads ticks + applies setups`,
+    `Schedule replay started for ${input.series} (${input.placements.length} placement(s), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, triggers ${triggers.length}, prediction ${prediction === null ? "off" : "on"}) — loads ticks + applies setups`,
   );
 
   let lastProgress = { completed: 0, total: Math.max(1, input.placements.length) };
@@ -590,6 +598,7 @@ async function runScheduleReplaySse(
       setupsById: setupsByIdFromBody(input.setups),
       fillSuccessPct,
       prediction,
+      triggers,
       // Always re-sim on interactive Replay so stats match current setups + recordings.
       forceResimulate: true,
       shouldAbort: () => closed.value,
@@ -831,7 +840,12 @@ app.post("/api/trading/order", async (req, res) => {
     }
     const side = req.body?.side;
     const leg = req.body?.leg;
-    const source = req.body?.source === "prediction" ? "prediction" : "manual";
+    const source =
+      req.body?.source === "prediction"
+        ? "prediction"
+        : req.body?.source === "trigger"
+          ? "trigger"
+          : "manual";
     if (side !== "up" && side !== "down") {
       res.status(400).json({ error: "side must be up or down" });
       return;
@@ -842,7 +856,29 @@ app.post("/api/trading/order", async (req, res) => {
     }
     const state = displayService.getState();
     await assertSeriesAvailable(state.series);
-    const result = await tradingFor(req).manualOrder(state, side, leg, { source });
+    const sharesRaw = Number(req.body?.shares);
+    const takeProfitCentsRaw = Number(req.body?.takeProfitCents);
+    const orderType =
+      req.body?.orderType === "FAK" || req.body?.orderType === "FOK"
+        ? req.body.orderType
+        : undefined;
+    const sellOrderType =
+      req.body?.sellOrderType === "FAK" ||
+      req.body?.sellOrderType === "FOK" ||
+      req.body?.sellOrderType === "GTD"
+        ? req.body.sellOrderType
+        : undefined;
+    const result = await tradingFor(req).manualOrder(state, side, leg, {
+      source,
+      ...(Number.isFinite(sharesRaw) && sharesRaw > 0
+        ? { shares: Math.floor(sharesRaw) }
+        : {}),
+      ...(orderType ? { orderType } : {}),
+      ...(sellOrderType ? { sellOrderType } : {}),
+      ...(Number.isFinite(takeProfitCentsRaw)
+        ? { takeProfitCents: Math.round(takeProfitCentsRaw) }
+        : {}),
+    });
     pushWindowStateImmediate();
     if (!result.ok) {
       res.status(400).json({ error: result.error ?? "Order failed" });
@@ -855,6 +891,9 @@ app.post("/api/trading/order", async (req, res) => {
         : {}),
       ...(result.fillPrice != null && Number.isFinite(result.fillPrice)
         ? { fillPrice: result.fillPrice }
+        : {}),
+      ...(result.remainingShares != null && Number.isFinite(result.remainingShares)
+        ? { remainingShares: result.remainingShares }
         : {}),
     });
   } catch (err) {
@@ -1255,6 +1294,78 @@ app.patch("/api/trading-setups/:id", async (req, res) => {
       res.status(400).json({ error: message });
       return;
     }
+    res.status(500).json({ error: message });
+  }
+});
+
+app.get("/api/triggers/:id/stats", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    const stats = await getTriggerLiveStats(userId, triggerId);
+    res.json(stats);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/triggers/:id/stats/event", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    const result =
+      req.body?.result === "fail"
+        ? "fail"
+        : req.body?.result === "success"
+          ? "success"
+          : req.body?.result === "blue"
+            ? "blue"
+            : null;
+    if (!result) {
+      res.status(400).json({ error: "result must be success, fail, or blue" });
+      return;
+    }
+    const pnlUsd = Number(req.body?.pnlUsd);
+    const exitReasonRaw = String(req.body?.exitReason || "").trim();
+    const exitReason =
+      exitReasonRaw === "tp" || exitReasonRaw === "sl" || exitReasonRaw === "window-end"
+        ? exitReasonRaw
+        : undefined;
+    const stats = await recordTriggerLiveStatsEvent(
+      userId,
+      triggerId,
+      result,
+      Number.isFinite(pnlUsd) ? pnlUsd : 0,
+      exitReason,
+    );
+    res.json(stats);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.delete("/api/triggers/:id/stats", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    await deleteTriggerLiveStats(userId, triggerId);
+    res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });
   }
 });
@@ -1907,6 +2018,7 @@ app.post("/api/schedule-replay", async (req, res) => {
         latencyMs: req.body?.latencyMs,
         fillSuccessPct: req.body?.fillSuccessPct,
         prediction: req.body?.prediction,
+        triggers: req.body?.triggers,
       });
       responseFinished = true;
       abortSocket?.off("close", onSocketClose);
@@ -1938,6 +2050,7 @@ app.post("/api/schedule-replay", async (req, res) => {
         latencyMs: req.body?.latencyMs ?? simulatorService.getSetup().latencyMs,
         fillSuccessPct: req.body?.fillSuccessPct ?? 100,
         prediction: req.body?.prediction,
+        triggers: req.body?.triggers,
       }),
     });
     if (!remoteRes.ok || !remoteRes.body) {
@@ -2012,6 +2125,7 @@ app.post("/api/internal/schedule-replay", async (req, res) => {
       latencyMs: req.body?.latencyMs,
       fillSuccessPct: req.body?.fillSuccessPct,
       prediction: req.body?.prediction,
+      triggers: req.body?.triggers,
     });
     responseFinished = true;
   } catch (err) {

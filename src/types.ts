@@ -329,13 +329,15 @@ export interface SimMarker {
   /** Phase index at buy fill (sell profit source). */
   phaseIndex?: number;
   /** Who placed the fill — used for Replay per-trade dots. */
-  source?: "phase" | "prediction";
+  source?: "phase" | "prediction" | "trigger";
   cost?: number;
   fees?: number;
   proceeds?: number;
   profit?: number;
   /** Total position cost (buy: cost+fees) or total sale (sell: proceeds). */
   total?: number;
+  /** Trigger held-to-window settlement (Replay dots: blue/red by outcome, not P/L). */
+  heldSettlement?: boolean;
   windowKey: string;
 }
 

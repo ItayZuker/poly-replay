@@ -27,6 +27,12 @@ import {
   mergePredictionTradeResult,
   PredictionTradeRaceSession,
 } from "./prediction-trade-sim.js";
+import {
+  mergeTriggerStats,
+  normalizeReplayTriggerDefs,
+  TriggerReplayRaceSession,
+  type TriggerReplayStat,
+} from "./trigger-replay-sim.js";
 import type {
   ChainlinkTickDocument,
   LiveWindowState,
@@ -75,6 +81,16 @@ export function sortPlacementsTopLeft(
   });
 }
 
+export interface PlacementTriggerStat {
+  triggerId: string;
+  name?: string;
+  success: number;
+  fail: number;
+  takeProfit: number;
+  stopLoss: number;
+  pnlUsd: number;
+}
+
 export interface PlacementBacktestStats {
   placementId: string;
   hasData: boolean;
@@ -88,6 +104,8 @@ export interface PlacementBacktestStats {
   predictionRight: number;
   /** Replay Prediction: windows where the detector was wrong. */
   predictionWrong: number;
+  /** Per-trigger Replay stats for this card (summed across its windows). */
+  triggerStats?: PlacementTriggerStat[];
 }
 
 export interface BacktestProgress {
@@ -119,6 +137,8 @@ export interface BacktestScheduleOptions {
   fillSuccessPct?: number;
   /** Replay-only Prediction detector settings (separate from live Market Prediction). */
   prediction?: Partial<PredictionDetectorConfig> | null;
+  /** Replay Trigger cards applied on each simulated window. */
+  triggers?: unknown[] | null;
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
@@ -283,7 +303,7 @@ export type TradeDotBucket = "green" | "red" | "blue";
 
 /** One settled buy→sell (or held-to-settlement) trade for Replay dots/stats. */
 export interface TradeDot {
-  source: "phase" | "prediction";
+  source: "phase" | "prediction" | "trigger";
   bucket: TradeDotBucket;
   /** Prediction trades only — feeds Replay Right/Wrong totals. */
   predictionScore?: "right" | "wrong";
@@ -292,14 +312,19 @@ export interface TradeDot {
   sellT?: number;
 }
 
-function markerTradeSource(m: SimMarker): "phase" | "prediction" {
-  if (m.source === "prediction" || m.source === "phase") return m.source;
-  return String(m.windowKey || "").startsWith("pred:") ? "prediction" : "phase";
+function markerTradeSource(m: SimMarker): "phase" | "prediction" | "trigger" {
+  if (m.source === "prediction" || m.source === "phase" || m.source === "trigger") {
+    return m.source;
+  }
+  const key = String(m.windowKey || "");
+  if (key.startsWith("pred:")) return "prediction";
+  if (key.startsWith("trigger:")) return "trigger";
+  return "phase";
 }
 
 function settleUnsoldTrade(
   buy: SimMarker,
-  source: "phase" | "prediction",
+  source: "phase" | "prediction" | "trigger",
   windowOutcome: WindowOutcome | null | undefined,
 ): TradeDot {
   const won =
@@ -328,24 +353,32 @@ function settleUnsoldTrade(
   return { source, bucket: "red", side: buy.side, buyT: buy.t };
 }
 
-function pairSourceTrades(
+const SHARE_EPS = 1e-9;
+
+/** Pair buy→sell(s) within one windowKey. Multi-leg FAK exits sum P/L into one dot. */
+function pairMarkersRoundTrips(
   markers: SimMarker[],
-  source: "phase" | "prediction",
+  source: "phase" | "prediction" | "trigger",
   windowOutcome: WindowOutcome | null | undefined,
 ): TradeDot[] {
-  const sorted = markers
-    .filter((m) => markerTradeSource(m) === source)
-    .slice()
-    .sort((a, b) => a.t - b.t || (a.type === "buy" ? -1 : 1));
+  const sorted = markers.slice().sort((a, b) => a.t - b.t || (a.type === "buy" ? -1 : 1));
   const dots: TradeDot[] = [];
   let openBuy: SimMarker | null = null;
-  for (const m of sorted) {
-    if (m.type === "buy") {
-      if (openBuy) dots.push(settleUnsoldTrade(openBuy, source, windowOutcome));
-      openBuy = m;
-      continue;
-    }
-    if (m.type !== "sell" || !openBuy) continue;
+  let remaining = 0;
+  let realizedPl = 0;
+  let lastSellT: number | undefined;
+  let heldSettlement = false;
+
+  const resetOpen = () => {
+    openBuy = null;
+    remaining = 0;
+    realizedPl = 0;
+    lastSellT = undefined;
+    heldSettlement = false;
+  };
+
+  const pushSoldDot = () => {
+    if (!openBuy || lastSellT == null) return;
     if (source === "prediction") {
       // Profit-target sell → green + Right (market outcome ignored).
       dots.push({
@@ -354,25 +387,89 @@ function pairSourceTrades(
         predictionScore: "right",
         side: openBuy.side,
         buyT: openBuy.t,
-        sellT: m.t,
+        sellT: lastSellT,
       });
-    } else {
-      const pl = Number.isFinite(m.profit) ? Number(m.profit) : 0;
+    } else if (source === "trigger" && heldSettlement) {
+      // Held remainder / window settlement → blue/red by market outcome.
+      const won =
+        windowOutcome === "up" || windowOutcome === "down"
+          ? windowOutcome === openBuy.side
+          : null;
       dots.push({
         source,
-        bucket: pl > 0 ? "green" : "red",
+        bucket: won === true ? "blue" : "red",
         side: openBuy.side,
         buyT: openBuy.t,
-        sellT: m.t,
+        sellT: lastSellT,
+      });
+    } else {
+      dots.push({
+        source,
+        bucket: realizedPl > 0 ? "green" : "red",
+        side: openBuy.side,
+        buyT: openBuy.t,
+        sellT: lastSellT,
       });
     }
-    openBuy = null;
+    resetOpen();
+  };
+
+  const pushOpenDot = () => {
+    if (!openBuy) return;
+    if (lastSellT != null) {
+      // Partial exits then still open (missing settlement marker): use net realized.
+      pushSoldDot();
+      return;
+    }
+    dots.push(settleUnsoldTrade(openBuy, source, windowOutcome));
+    resetOpen();
+  };
+
+  for (const m of sorted) {
+    if (m.type === "buy") {
+      if (openBuy) pushOpenDot();
+      openBuy = m;
+      remaining = Number(m.shares);
+      if (!Number.isFinite(remaining) || remaining < 0) remaining = 0;
+      realizedPl = 0;
+      lastSellT = undefined;
+      continue;
+    }
+    if (m.type !== "sell" || !openBuy) continue;
+    const sh = Number(m.shares);
+    remaining -= Number.isFinite(sh) ? sh : 0;
+    const legPl = Number.isFinite(m.profit) ? Number(m.profit) : 0;
+    realizedPl += legPl;
+    lastSellT = m.t;
+    if (m.heldSettlement) heldSettlement = true;
+    if (remaining <= SHARE_EPS) pushSoldDot();
   }
-  if (openBuy) dots.push(settleUnsoldTrade(openBuy, source, windowOutcome));
+  if (openBuy) pushOpenDot();
   return dots;
 }
 
-/** Pair phase + prediction fills into per-trade green/red/blue dots. */
+function pairSourceTrades(
+  markers: SimMarker[],
+  source: "phase" | "prediction" | "trigger",
+  windowOutcome: WindowOutcome | null | undefined,
+): TradeDot[] {
+  const list = markers.filter((m) => markerTradeSource(m) === source);
+  // Keep each trigger/phase/pred windowKey separate so concurrent buys do not cross-pair.
+  const groups = new Map<string, SimMarker[]>();
+  for (const m of list) {
+    const key = String(m.windowKey || "__default__");
+    const arr = groups.get(key);
+    if (arr) arr.push(m);
+    else groups.set(key, [m]);
+  }
+  const dots: TradeDot[] = [];
+  for (const group of groups.values()) {
+    dots.push(...pairMarkersRoundTrips(group, source, windowOutcome));
+  }
+  return dots.sort((a, b) => a.buyT - b.buyT);
+}
+
+/** Pair phase + prediction + trigger fills into per-trade green/red/blue dots. */
 export function classifyTradesFromMarkers(
   markers: SimMarker[] | null | undefined,
   windowOutcome?: WindowOutcome | null,
@@ -380,7 +477,8 @@ export function classifyTradesFromMarkers(
   const list = markers ?? [];
   const phase = pairSourceTrades(list, "phase", windowOutcome);
   const pred = pairSourceTrades(list, "prediction", windowOutcome);
-  return [...phase, ...pred].sort((a, b) => a.buyT - b.buyT);
+  const trig = pairSourceTrades(list, "trigger", windowOutcome);
+  return [...phase, ...pred, ...trig].sort((a, b) => a.buyT - b.buyT);
 }
 
 function primaryBucketFromTradeDots(dots: TradeDot[]): OutcomeBucket {
@@ -413,6 +511,8 @@ export interface RecordedWindowSimulation {
   predictionTriggeredAtMs?: number | null;
   /** Duration (sec) used when the Prediction fired (for Open Replay band). */
   predictionSensitivitySec?: number | null;
+  /** Per-trigger stats for this window. */
+  triggerStats?: TriggerReplayStat[];
 }
 
 export async function simulateRecordedWindow(
@@ -423,11 +523,12 @@ export async function simulateRecordedWindow(
   tickCache?: Map<number, ReplayTickDocument[]>,
   simResultCache?: Map<string, WindowSimCacheEntry>,
   predictionConfig?: PredictionDetectorConfig | null,
+  triggerDefs?: ReturnType<typeof normalizeReplayTriggerDefs> | null,
 ): Promise<RecordedWindowSimulation> {
   const simCacheKey = simResultCache ? windowSimCacheKey(window.windowStart, setup) : null;
-  // Phase-only cache: Prediction races with phase on a shared timeline, so never
-  // layer unrestricted Prediction fills onto a cached phase result.
-  if (simCacheKey && simResultCache!.has(simCacheKey) && !predictionConfig) {
+  const hasTriggers = Array.isArray(triggerDefs) && triggerDefs.length > 0;
+  // Phase-only cache: Prediction/Triggers race with phase on a shared timeline.
+  if (simCacheKey && simResultCache!.has(simCacheKey) && !predictionConfig && !hasTriggers) {
     const cached = simResultCache!.get(simCacheKey)!;
     const windowOutcome: WindowOutcome | null =
       window.windowOutcome === "up" || window.windowOutcome === "down"
@@ -448,6 +549,7 @@ export async function simulateRecordedWindow(
       predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
+      triggerStats: [],
     };
   }
 
@@ -473,6 +575,7 @@ export async function simulateRecordedWindow(
       predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
+      triggerStats: [],
     };
   }
 
@@ -492,12 +595,16 @@ export async function simulateRecordedWindow(
       predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
+      triggerStats: [],
     };
   }
 
-  const predictionEvals = predictionConfig
-    ? evaluateWindowPredictions(ticks, windowStart, windowEnd, predictionConfig)
-    : [];
+  // Triggers replace Replay Prediction when present.
+  const useTriggers = hasTriggers;
+  const predictionEvals =
+    !useTriggers && predictionConfig
+      ? evaluateWindowPredictions(ticks, windowStart, windowEnd, predictionConfig)
+      : [];
   const predictionHit = predictionEvals[0]?.hit ?? null;
   const predictionSide = predictionHit?.side ?? null;
   const predictionTriggeredAtMs = predictionHit?.triggeredAtMs ?? null;
@@ -523,8 +630,9 @@ export async function simulateRecordedWindow(
     const engine = new SimulatorEngine();
     const priceHistory: Array<{ t: number; price: number }> = [];
     let bookTickSequence = 0;
+    const fillSuccessPct = setup.fillSuccessPct ?? 100;
     const predSession =
-      predictionConfig && predictionEvals.length > 0
+      !useTriggers && predictionConfig && predictionEvals.length > 0
         ? new PredictionTradeRaceSession({
             ticks,
             evals: predictionEvals,
@@ -532,10 +640,20 @@ export async function simulateRecordedWindow(
             windowStart,
             windowEnd,
             latencyMs: setup.latencyMs,
-            fillSuccessPct: setup.fillSuccessPct ?? 100,
+            fillSuccessPct,
             windowOutcome: window.windowOutcome ?? null,
           })
         : null;
+    const triggerSession = useTriggers
+      ? new TriggerReplayRaceSession({
+          triggers: triggerDefs!,
+          windowStart,
+          windowEnd,
+          latencyMs: setup.latencyMs,
+          fillSuccessPct,
+          windowOutcome: window.windowOutcome ?? null,
+        })
+      : null;
 
     for (const tick of ticks) {
       if (tick.tMs >= windowEnd * 1000) break;
@@ -560,7 +678,13 @@ export async function simulateRecordedWindow(
       // Shared race with live: first buy holds until sell; then both may race again.
       const phaseOpenBefore = engine.hasOpenPosition();
       predSession?.onTickBeforePhase(tick, phaseOpenBefore);
-      engine.setExternalBuyPaused(Boolean(predSession?.isHolding()));
+      triggerSession?.onTickBeforePhase(
+        tick,
+        phaseOpenBefore || Boolean(predSession?.isHolding()),
+      );
+      engine.setExternalBuyPaused(
+        Boolean(predSession?.isHolding()) || Boolean(triggerSession?.isHolding()),
+      );
       engine.tick(state, setup, tick.tMs);
     }
 
@@ -572,12 +696,23 @@ export async function simulateRecordedWindow(
     if (lastInWindow.source === "clob-book") {
       recordAskSamples(endState);
     }
-    engine.setExternalBuyPaused(Boolean(predSession?.isHolding()));
+    engine.setExternalBuyPaused(
+      Boolean(predSession?.isHolding()) || Boolean(triggerSession?.isHolding()),
+    );
     engine.tick({ ...endState, lastTickMs: endMs }, setup, endMs);
 
-    const trade = predSession
+    const predTrade = predSession
       ? predSession.finalize()
       : { pl: 0, markers: [] as SimMarker[], traded: false };
+    const triggerTrade = triggerSession
+      ? triggerSession.finalize()
+      : {
+          pl: 0,
+          markers: [] as SimMarker[],
+          traded: false,
+          stats: [] as TriggerReplayStat[],
+          hits: [],
+        };
 
     // Settle from stored Polymarket outcome in window JSON (backfilled / recorded at finalize).
     const result = engine.finalizeWindow(
@@ -585,15 +720,21 @@ export async function simulateRecordedWindow(
     );
     const markers = engine.getMarkers();
 
-    // Only cache phase-only results (Prediction race must re-run with ticks).
-    if (simCacheKey && !predictionConfig) {
+    // Only cache phase-only results (external races must re-run with ticks).
+    if (simCacheKey && !predictionConfig && !useTriggers) {
       simResultCache!.set(simCacheKey, {
         result: result ?? null,
         markers: markers.map((m) => ({ ...m })),
       });
     }
 
-    const mergedResult = mergePredictionTradeResult(result, trade, windowStart, windowEnd);
+    const mergedWithPred = mergePredictionTradeResult(result, predTrade, windowStart, windowEnd);
+    const mergedResult = mergePredictionTradeResult(
+      mergedWithPred,
+      triggerTrade,
+      windowStart,
+      windowEnd,
+    );
 
     const windowOutcome: WindowOutcome | null =
       window.windowOutcome === "up" || window.windowOutcome === "down"
@@ -602,19 +743,40 @@ export async function simulateRecordedWindow(
           ? mergedResult.outcome
           : null;
 
+    // Map trigger hits into predictionTriggers shape for Open Replay bands/badge.
+    const triggerPlayItems: PredictionTriggerPlayItem[] = triggerTrade.hits
+      .filter((h) => h.side === "up" || h.side === "down")
+      .map((h) => ({
+        side: h.side,
+        triggeredAtMs: h.triggeredAtMs,
+        sensitivitySec: h.sensitivitySec,
+        score: h.score === "right" || h.score === "wrong" ? h.score : "wrong",
+      }));
+
     return {
       result: mergedResult,
-      markers: [...markers, ...trade.markers],
+      markers: [...markers, ...predTrade.markers, ...triggerTrade.markers],
       windowStart,
       windowEnd,
       hadTicks: true,
       windowOutcome,
-      predictionSide,
-      predictionScore,
-      predictionScores,
-      predictionTriggers,
-      predictionTriggeredAtMs,
-      predictionSensitivitySec,
+      predictionSide: useTriggers
+        ? triggerPlayItems[0]?.side ?? null
+        : predictionSide,
+      predictionScore: useTriggers
+        ? triggerPlayItems[triggerPlayItems.length - 1]?.score ?? null
+        : predictionScore,
+      predictionScores: useTriggers
+        ? triggerPlayItems.map((t) => t.score)
+        : predictionScores,
+      predictionTriggers: useTriggers ? triggerPlayItems : predictionTriggers,
+      predictionTriggeredAtMs: useTriggers
+        ? triggerPlayItems[0]?.triggeredAtMs ?? null
+        : predictionTriggeredAtMs,
+      predictionSensitivitySec: useTriggers
+        ? triggerPlayItems[0]?.sensitivitySec ?? null
+        : predictionSensitivitySec,
+      triggerStats: triggerTrade.stats,
     };
   });
 }
@@ -630,6 +792,7 @@ function emptyStats(placementId: string): PlacementBacktestStats {
     pnl: 0,
     predictionRight: 0,
     predictionWrong: 0,
+    triggerStats: [],
   };
 }
 
@@ -644,6 +807,7 @@ function aggregateResult(
   let pnl = 0;
   let predictionRight = 0;
   let predictionWrong = 0;
+  const triggerMap = new Map<string, TriggerReplayStat>();
 
   for (const sim of sims) {
     const outcome = sim.windowOutcome ?? sim.result?.outcome ?? null;
@@ -660,6 +824,9 @@ function aggregateResult(
       }
     }
     if (sim.result) pnl += sim.result.pl ?? 0;
+    if (Array.isArray(sim.triggerStats) && sim.triggerStats.length) {
+      mergeTriggerStats(triggerMap, sim.triggerStats);
+    }
   }
 
   return {
@@ -672,6 +839,7 @@ function aggregateResult(
     pnl: Number.isFinite(pnl) ? pnl : 0,
     predictionRight,
     predictionWrong,
+    triggerStats: [...triggerMap.values()],
   };
 }
 
@@ -785,10 +953,13 @@ export async function backtestSchedulePlacements(
       ? Math.max(0, Math.min(100, rawFillPct))
       : 100;
   // null = Prediction Off (do not evaluate). Object / omitted → normalize defaults.
+  const triggers = normalizeReplayTriggerDefs(options.triggers);
   const prediction =
-    options.prediction === null
+    triggers.length > 0
       ? null
-      : normalizePredictionDetectorConfig(options.prediction);
+      : options.prediction === null
+        ? null
+        : normalizePredictionDetectorConfig(options.prediction);
 
   // Always process Mon/top → Sun/bottom so the board fills left-to-right.
   placements = sortPlacementsTopLeft(placements);
@@ -984,6 +1155,7 @@ export async function backtestSchedulePlacements(
             tickCache,
             simResultCache,
             prediction,
+            triggers,
           );
           releaseWindowTicks(window.windowStart, tickCache, tickUseRemaining);
           completedUnits += 1;
@@ -1011,6 +1183,7 @@ export async function backtestSchedulePlacements(
             predictionTriggers: [],
             predictionTriggeredAtMs: null,
             predictionSensitivitySec: null,
+            triggerStats: [],
           } satisfies RecordedWindowSimulation;
         }
       },
@@ -1359,17 +1532,15 @@ function stripPredictionFromPlayWindows(
   return windows.map((w) => {
     const markers = (w.markers ?? []).filter((m) => markerTradeSource(m) !== "prediction");
     const trade = playTradeFields(markers, w.windowOutcome);
+    // Keep predictionTriggers / sensitivity — Replay Triggers reuse that payload for
+    // Open Replay Duration bands. Only strip Prediction-detector fill markers.
     return {
       ...w,
       markers,
       tradeDots: trade.tradeDots,
       bucket: trade.bucket,
-      predictionSide: null,
-      predictionScore: null,
-      predictionScores: [],
-      predictionTriggers: [],
-      predictionTriggeredAtMs: null,
-      predictionSensitivitySec: null,
+      predictionScore: trade.predictionScore,
+      predictionScores: trade.predictionScores,
     };
   });
 }

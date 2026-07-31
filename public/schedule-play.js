@@ -821,8 +821,13 @@
   }
 
   function markerTradeSource(m) {
-    if (m?.source === "prediction" || m?.source === "phase") return m.source;
-    return String(m?.windowKey || "").startsWith("pred:") ? "prediction" : "phase";
+    if (m?.source === "prediction" || m?.source === "phase" || m?.source === "trigger") {
+      return m.source;
+    }
+    const key = String(m?.windowKey || "");
+    if (key.startsWith("pred:")) return "prediction";
+    if (key.startsWith("trigger:")) return "trigger";
+    return "phase";
   }
 
   /**
@@ -1201,7 +1206,19 @@
     syncPlayPredictionBadge(win);
   }
 
-  /** All Prediction triggers for a window (multi-retrigger) with legacy single-field fallback. */
+  function resolveTriggerDurationSec(raw, win) {
+    let durationSec = Number(raw);
+    if (!Number.isFinite(durationSec) || !(durationSec > 0)) {
+      durationSec = Number(win?.predictionSensitivitySec);
+    }
+    if (!Number.isFinite(durationSec) || !(durationSec > 0)) {
+      durationSec = Number(playPredictionSensitivitySec);
+    }
+    if (!Number.isFinite(durationSec) || !(durationSec > 0)) durationSec = 5;
+    return durationSec;
+  }
+
+  /** Trigger/Prediction Duration hits for a window (multi-retrigger) with marker fallback. */
   function predictionTriggersForWindow(win) {
     if (Array.isArray(win?.predictionTriggers) && win.predictionTriggers.length > 0) {
       return win.predictionTriggers.filter(
@@ -1213,27 +1230,36 @@
     }
     const side = win?.predictionSide;
     const triggeredAtMs = Number(win?.predictionTriggeredAtMs);
-    if ((side !== "up" && side !== "down") || !Number.isFinite(triggeredAtMs)) return [];
-    let durationSec = Number(win?.predictionSensitivitySec);
-    if (!Number.isFinite(durationSec) || durationSec < 1) {
-      durationSec = Number(playPredictionSensitivitySec);
+    if ((side === "up" || side === "down") && Number.isFinite(triggeredAtMs)) {
+      return [
+        {
+          side,
+          triggeredAtMs,
+          sensitivitySec: resolveTriggerDurationSec(null, win),
+          score:
+            win?.predictionScore === "right" || win?.predictionScore === "wrong"
+              ? win.predictionScore
+              : "wrong",
+        },
+      ];
     }
-    if (!Number.isFinite(durationSec) || durationSec < 1) durationSec = 5;
-    return [
-      {
-        side,
-        triggeredAtMs,
-        sensitivitySec: durationSec,
-        score: win?.predictionScore === "right" || win?.predictionScore === "wrong"
-          ? win.predictionScore
-          : "wrong",
-      },
-    ];
+    // Fallback: build Duration bands from Trigger buy dots when band payload was stripped.
+    const buys = (win?.markers || []).filter(
+      (m) => m?.type === "buy" && markerTradeSource(m) === "trigger" && (m.side === "up" || m.side === "down"),
+    );
+    if (!buys.length) return [];
+    const durationSec = resolveTriggerDurationSec(null, win);
+    return buys.map((m) => ({
+      side: m.side,
+      triggeredAtMs: Number(m.t) * 1000,
+      sensitivitySec: durationSec,
+      score: "wrong",
+    }));
   }
 
   /**
-   * Full-height Duration bands ending at each Prediction trigger.
-   * Each appears as soon as the playhead enters that Duration span and grows until its trigger.
+   * Full-height Duration bands ending at each Trigger/Prediction buy.
+   * Each appears as soon as the playhead enters that Duration span and grows until its buy.
    */
   function buildPredictionDurationBands(win, untilSec) {
     const triggers = predictionTriggersForWindow(win);
@@ -1244,15 +1270,7 @@
       const triggeredAtMs = Number(trig.triggeredAtMs);
       if ((side !== "up" && side !== "down") || !Number.isFinite(triggeredAtMs)) continue;
       const triggerSec = triggeredAtMs / 1000;
-
-      let durationSec = Number(trig.sensitivitySec);
-      if (!Number.isFinite(durationSec) || durationSec < 1) {
-        durationSec = Number(win?.predictionSensitivitySec);
-      }
-      if (!Number.isFinite(durationSec) || durationSec < 1) {
-        durationSec = Number(playPredictionSensitivitySec);
-      }
-      if (!Number.isFinite(durationSec) || durationSec < 1) durationSec = 5;
+      const durationSec = resolveTriggerDurationSec(trig.sensitivitySec, win);
 
       const startSec = Math.max(Number(win.windowStart) || 0, triggerSec - durationSec);
       const fullEndSec = Math.min(Number(win.windowEnd) || triggerSec, triggerSec);
@@ -1265,7 +1283,7 @@
     return bands;
   }
 
-  /** Show Prediction UP/DOWN for the latest trigger the playhead has reached. */
+  /** Show Trigger UP/DOWN for the latest buy the playhead has reached. */
   function syncPlayPredictionBadge(win) {
     const badge = $("schedule-play-prediction");
     const label = $("schedule-play-prediction-label");
@@ -1289,7 +1307,7 @@
     }
     badge.hidden = false;
     badge.classList.add(side === "up" ? "is-up" : "is-down");
-    label.textContent = side === "up" ? "Prediction UP" : "Prediction DOWN";
+    label.textContent = side === "up" ? "Trigger UP" : "Trigger DOWN";
   }
 
   function scrubberWidthPx() {

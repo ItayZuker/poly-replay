@@ -1833,14 +1833,24 @@ function updateQuoteBoxes(state) {
 
 let quoteOrderInFlight = false;
 
-async function postTradingOrder(side, leg, { source } = {}) {
+async function postTradingOrder(side, leg, { source, shares, orderType, sellOrderType, takeProfitCents } = {}) {
   const res = await fetch("/api/trading/order", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       side,
       leg,
-      ...(source === "prediction" ? { source: "prediction" } : {}),
+      ...(source === "prediction" || source === "trigger" ? { source } : {}),
+      ...(Number.isFinite(Number(shares)) && Number(shares) > 0
+        ? { shares: Math.floor(Number(shares)) }
+        : {}),
+      ...(orderType === "FAK" || orderType === "FOK" ? { orderType } : {}),
+      ...(sellOrderType === "FAK" || sellOrderType === "FOK" || sellOrderType === "GTD"
+        ? { sellOrderType }
+        : {}),
+      ...(Number.isFinite(Number(takeProfitCents))
+        ? { takeProfitCents: Math.round(Number(takeProfitCents)) }
+        : {}),
     }),
   });
   const body = await res.json().catch(() => ({}));
@@ -2394,10 +2404,13 @@ function initLeftRowSplitter() {
   const tradeHeader = document.querySelector(".trade-panel-header");
   const tradeBody = document.querySelector(".trade-panel-body");
   const prevHeader = document.querySelector(".positions-panel-header");
+  const triggersHeader = document.querySelector(".triggers-panel-header");
   const logHeader = document.querySelector(".log-panel-header");
   const prevBody = document.querySelector(".positions-body");
+  const triggersBody = document.querySelector(".triggers-body");
   const logBody = document.querySelector(".log-output");
   const prevDragHandle = document.querySelector('[data-drag-edge="prev"]');
+  const triggersDragHandle = document.querySelector('[data-drag-edge="triggers"]');
   const logDragHandle = document.querySelector('[data-drag-edge="log"]');
   if (
     !leftColumn ||
@@ -2405,10 +2418,13 @@ function initLeftRowSplitter() {
     !tradeHeader ||
     !tradeBody ||
     !prevHeader ||
+    !triggersHeader ||
     !logHeader ||
     !prevDragHandle ||
+    !triggersDragHandle ||
     !logDragHandle ||
     !prevBody ||
+    !triggersBody ||
     !logBody
   ) {
     return;
@@ -2416,9 +2432,12 @@ function initLeftRowSplitter() {
 
   let dragging = false;
   let dragKind = null;
+  let anchorTriggersHeaderTop = 0;
+  let anchorTriggersContent = 0;
   let anchorLogHeaderTop = 0;
   let anchorLogContent = 0;
   let anchorTradeContent = 0;
+  let anchorPrevContent = 0;
   let activeHandle = null;
 
   const parseHeight = (name, fallback) => {
@@ -2432,14 +2451,16 @@ function initLeftRowSplitter() {
     const walletHeaderH = walletHeader.offsetHeight;
     const tradeHeaderH = tradeHeader.offsetHeight;
     const prevHeaderH = prevHeader.offsetHeight;
+    const triggersHeaderH = triggersHeader.offsetHeight;
     const logHeaderH = logHeader.offsetHeight;
-    const chrome = walletHeaderH + tradeHeaderH + prevHeaderH + logHeaderH;
+    const chrome = walletHeaderH + tradeHeaderH + prevHeaderH + triggersHeaderH + logHeaderH;
     const maxContent = Math.max(0, colRect.height - chrome);
     return {
       colRect,
       walletHeaderH,
       tradeHeaderH,
       prevHeaderH,
+      triggersHeaderH,
       logHeaderH,
       chrome,
       maxContent,
@@ -2449,13 +2470,15 @@ function initLeftRowSplitter() {
   const readHeights = () => ({
     trade: parseHeight("--trade-content-height", 140),
     prev: parseHeight("--prev-content-height", 0),
+    triggers: parseHeight("--triggers-content-height", 0),
     log: parseHeight("--log-content-height", 0),
   });
 
-  const applyHeights = (trade, prev, log) => {
+  const applyHeights = (trade, prev, triggers, log) => {
     const { colRect, chrome, maxContent } = getMetrics();
     let t = Math.max(0, trade);
     let p = Math.max(0, prev);
+    let tr = Math.max(0, triggers);
     let l = Math.max(0, log);
 
     // While the market page is hidden (display:none), geometry is 0 — do not
@@ -2463,11 +2486,12 @@ function initLeftRowSplitter() {
     const layoutReady = colRect.height > chrome;
 
     if (layoutReady) {
-      const total = t + p + l;
+      const total = t + p + tr + l;
       if (total > maxContent && total > 0) {
         const scale = maxContent / total;
         t *= scale;
         p *= scale;
+        tr *= scale;
         l *= scale;
       } else if (total < maxContent) {
         // Fill leftover column space into an open content body (not as a gap
@@ -2475,6 +2499,8 @@ function initLeftRowSplitter() {
         const slack = maxContent - total;
         if (l > 0) {
           l += slack;
+        } else if (tr > 0) {
+          tr += slack;
         } else if (p > 0) {
           p += slack;
         } else if (t > 0) {
@@ -2485,41 +2511,51 @@ function initLeftRowSplitter() {
 
     leftColumn.style.setProperty("--trade-content-height", `${t}px`);
     leftColumn.style.setProperty("--prev-content-height", `${p}px`);
+    leftColumn.style.setProperty("--triggers-content-height", `${tr}px`);
     leftColumn.style.setProperty("--log-content-height", `${l}px`);
 
     if (layoutReady) {
-      const stackHeight = chrome + t + p + l;
+      const stackHeight = chrome + t + p + tr + l;
       // Only pin Log with margin when every content body is collapsed.
       const margin =
-        t <= 0 && p <= 0 && l <= 0 ? Math.max(0, colRect.height - stackHeight) : 0;
+        t <= 0 && p <= 0 && tr <= 0 && l <= 0
+          ? Math.max(0, colRect.height - stackHeight)
+          : 0;
       leftColumn.style.setProperty("--log-margin-top", `${margin}px`);
     }
 
     tradeBody.classList.toggle("is-collapsed", t <= 0);
     prevBody.classList.toggle("is-collapsed", p <= 0);
+    triggersBody.classList.toggle("is-collapsed", tr <= 0);
     logBody.classList.toggle("is-collapsed", l <= 0);
     const hasPositionCards = Boolean(prevBody.querySelector(".position-card"));
+    const hasTriggerCards = Boolean(triggersBody.querySelector(".trigger-card"));
     prevBody.classList.toggle("is-scrollable", p > 0 && hasPositionCards);
+    triggersBody.classList.toggle("is-scrollable", tr > 0 && hasTriggerCards);
     logBody.classList.toggle("is-scrollable", l > 0);
   };
 
   const reflowHeights = () => {
     const heights = readHeights();
-    applyHeights(heights.trade, heights.prev, heights.log);
+    applyHeights(heights.trade, heights.prev, heights.triggers, heights.log);
   };
 
   const maximizeSection = (section) => {
     const { maxContent } = getMetrics();
     if (section === "positions") {
-      applyHeights(0, maxContent, 0);
+      applyHeights(0, maxContent, 0, 0);
+      return;
+    }
+    if (section === "triggers") {
+      applyHeights(0, 0, maxContent, 0);
       return;
     }
     if (section === "log") {
-      applyHeights(0, 0, maxContent);
+      applyHeights(0, 0, 0, maxContent);
       return;
     }
     // trade / wallet / default — expand Trade content
-    applyHeights(maxContent, 0, 0);
+    applyHeights(maxContent, 0, 0, 0);
   };
 
   leftColumnLayout = { applyHeights, maximizeSection, readHeights, getMetrics, reflowHeights };
@@ -2527,52 +2563,104 @@ function initLeftRowSplitter() {
   const initDefaultHeights = () => {
     const { maxContent } = getMetrics();
     if (maxContent < 1) return;
-    applyHeights(0, maxContent, 0);
+    applyHeights(0, maxContent, 0, 0);
   };
 
   const clampPrevDrag = (clientY) => {
-    const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, logHeaderH } = getMetrics();
+    const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, triggersHeaderH, logHeaderH } =
+      getMetrics();
     // Positions can cover Trade content, but not Wallet or Trade headers.
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
     const minPrevTop = tradeHeaderBottom;
-    // Dragging down past the Log header pushes it down, to the column bottom.
-    const maxPrevTop = colRect.bottom - prevHeaderH - logHeaderH;
+    // Dragging down past Triggers/Log headers pushes them down.
+    const maxPrevTop = colRect.bottom - prevHeaderH - triggersHeaderH - logHeaderH;
     const prevTop = Math.max(minPrevTop, Math.min(clientY, maxPrevTop));
     const trade = prevTop - tradeHeaderBottom;
     const prevBottom = prevTop + prevHeaderH;
-    if (prevBottom > anchorLogHeaderTop) {
-      // Touching the Log header — push it down and shrink the log content.
-      anchorLogHeaderTop = prevBottom;
-      anchorLogContent = Math.max(0, colRect.bottom - prevBottom - logHeaderH);
-      applyHeights(trade, 0, anchorLogContent);
+    if (prevBottom > anchorTriggersHeaderTop) {
+      // Touching the Triggers header — push it down and shrink content below.
+      anchorTriggersHeaderTop = prevBottom;
+      const below = Math.max(0, colRect.bottom - prevBottom - triggersHeaderH - logHeaderH);
+      const log = Math.min(anchorLogContent, below);
+      const triggers = Math.max(0, below - log);
+      applyHeights(trade, 0, triggers, log);
       return;
     }
-    const prev = anchorLogHeaderTop - prevTop - prevHeaderH;
-    applyHeights(trade, prev, anchorLogContent);
+    const prev = anchorTriggersHeaderTop - prevTop - prevHeaderH;
+    applyHeights(trade, prev, anchorTriggersContent, anchorLogContent);
+  };
+
+  const clampTriggersDrag = (clientY) => {
+    const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, triggersHeaderH, logHeaderH } =
+      getMetrics();
+    const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
+    const prevBottom = prevHeader.getBoundingClientRect().bottom;
+    const minTriggersTop = tradeHeaderBottom + prevHeaderH;
+    const maxTriggersTop = colRect.bottom - triggersHeaderH - logHeaderH;
+    let triggersTop = Math.max(minTriggersTop, Math.min(clientY, maxTriggersTop));
+    const triggersBottom = () => triggersTop + triggersHeaderH;
+
+    if (triggersTop < prevBottom) {
+      // Touching the Positions header — push it up and shrink Trade content.
+      anchorTradeContent = Math.max(0, triggersTop - prevHeaderH - tradeHeaderBottom);
+      const below = Math.max(0, colRect.bottom - triggersBottom() - logHeaderH);
+      const log = Math.min(anchorLogContent, below);
+      const triggers = Math.max(0, below - log);
+      applyHeights(anchorTradeContent, 0, triggers, log);
+      return;
+    }
+
+    let prev = triggersTop - prevBottom;
+    if (prev < 1) {
+      prev = 0;
+      triggersTop = prevBottom;
+    }
+
+    if (triggersBottom() > anchorLogHeaderTop) {
+      // Touching the Log header — push it down and shrink Log content.
+      anchorLogHeaderTop = triggersBottom();
+      const log = Math.max(0, colRect.bottom - triggersBottom() - logHeaderH);
+      applyHeights(anchorTradeContent, prev, 0, log);
+      return;
+    }
+
+    const triggers = anchorLogHeaderTop - triggersBottom();
+    applyHeights(anchorTradeContent, prev, triggers, anchorLogContent);
   };
 
   const clampLogDrag = (clientY) => {
-    const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, logHeaderH } = getMetrics();
+    const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, triggersHeaderH, logHeaderH } =
+      getMetrics();
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
-    const prevBottom = prevHeader.getBoundingClientRect().bottom;
-    // Dragging up past the Positions header pushes it up, down to the Trade header.
-    const minLogTop = tradeHeaderBottom + prevHeaderH;
+    const triggersBottom = triggersHeader.getBoundingClientRect().bottom;
+    // Dragging up past Triggers/Positions headers pushes them up toward Trade.
+    const minLogTop = tradeHeaderBottom + prevHeaderH + triggersHeaderH;
     const maxLogTop = colRect.bottom - logHeaderH;
     let logTop = Math.max(minLogTop, Math.min(clientY, maxLogTop));
-    if (logTop < prevBottom) {
-      // Touching the Positions header — push it up and shrink the Trade content.
-      anchorTradeContent = Math.max(0, logTop - prevHeaderH - tradeHeaderBottom);
+
+    if (logTop < triggersBottom) {
+      // Triggers content collapses; Triggers header sits directly above Log.
       const log = Math.max(0, colRect.bottom - logTop - logHeaderH);
-      applyHeights(anchorTradeContent, 0, log);
+      const triggersHeaderTop = logTop - triggersHeaderH;
+      const prevHeaderBottom = prevHeader.getBoundingClientRect().bottom;
+      if (triggersHeaderTop < prevHeaderBottom) {
+        // Also push Positions up / collapse it.
+        const trade = Math.max(0, triggersHeaderTop - prevHeaderH - tradeHeaderBottom);
+        applyHeights(trade, 0, 0, log);
+        return;
+      }
+      const prev = Math.max(0, triggersHeaderTop - prevHeaderBottom);
+      applyHeights(anchorTradeContent, prev, 0, log);
       return;
     }
-    let prev = logTop - prevBottom;
-    if (prev < 1) {
-      prev = 0;
-      logTop = prevBottom;
+
+    let triggers = logTop - triggersBottom;
+    if (triggers < 1) {
+      triggers = 0;
+      logTop = triggersBottom;
     }
     const log = Math.max(0, colRect.bottom - logTop - logHeaderH);
-    applyHeights(anchorTradeContent, prev, log);
+    applyHeights(anchorTradeContent, anchorPrevContent, triggers, log);
   };
 
   const stopDragging = () => {
@@ -2589,8 +2677,10 @@ function initLeftRowSplitter() {
     dragging = true;
     dragKind = "prev";
     activeHandle = prevDragHandle;
-    anchorLogHeaderTop = logHeader.getBoundingClientRect().top;
-    anchorLogContent = readHeights().log;
+    const heights = readHeights();
+    anchorTriggersHeaderTop = triggersHeader.getBoundingClientRect().top;
+    anchorTriggersContent = heights.triggers;
+    anchorLogContent = heights.log;
     activeHandle.classList.add("is-dragging");
     document.body.classList.add("is-row-resizing");
     try {
@@ -2602,12 +2692,34 @@ function initLeftRowSplitter() {
     e.preventDefault();
   };
 
+  const startTriggersDrag = (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    dragKind = "triggers";
+    activeHandle = triggersDragHandle;
+    const heights = readHeights();
+    anchorTradeContent = heights.trade;
+    anchorLogHeaderTop = logHeader.getBoundingClientRect().top;
+    anchorLogContent = heights.log;
+    activeHandle.classList.add("is-dragging");
+    document.body.classList.add("is-row-resizing");
+    try {
+      triggersDragHandle.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    clampTriggersDrag(e.clientY);
+    e.preventDefault();
+  };
+
   const startLogDrag = (e) => {
     if (e.button !== 0) return;
     dragging = true;
     dragKind = "log";
     activeHandle = logDragHandle;
-    anchorTradeContent = readHeights().trade;
+    const heights = readHeights();
+    anchorTradeContent = heights.trade;
+    anchorPrevContent = heights.prev;
     activeHandle.classList.add("is-dragging");
     document.body.classList.add("is-row-resizing");
     try {
@@ -2629,19 +2741,21 @@ function initLeftRowSplitter() {
   const onPointerMove = (e) => {
     if (!dragging) return;
     if (dragKind === "prev") clampPrevDrag(e.clientY);
+    else if (dragKind === "triggers") clampTriggersDrag(e.clientY);
     else if (dragKind === "log") clampLogDrag(e.clientY);
   };
 
-  prevDragHandle.addEventListener("pointerdown", startPrevDrag);
-  logDragHandle.addEventListener("pointerdown", startLogDrag);
-  prevDragHandle.addEventListener("pointermove", onPointerMove);
-  logDragHandle.addEventListener("pointermove", onPointerMove);
-  prevDragHandle.addEventListener("pointerup", stopDragging);
-  logDragHandle.addEventListener("pointerup", stopDragging);
-  prevDragHandle.addEventListener("pointercancel", stopDragging);
-  logDragHandle.addEventListener("pointercancel", stopDragging);
-  prevDragHandle.addEventListener("lostpointercapture", stopDragging);
-  logDragHandle.addEventListener("lostpointercapture", stopDragging);
+  const bindHandle = (handle, onDown) => {
+    handle.addEventListener("pointerdown", onDown);
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", stopDragging);
+    handle.addEventListener("pointercancel", stopDragging);
+    handle.addEventListener("lostpointercapture", stopDragging);
+  };
+
+  bindHandle(prevDragHandle, startPrevDrag);
+  bindHandle(triggersDragHandle, startTriggersDrag);
+  bindHandle(logDragHandle, startLogDrag);
   window.addEventListener("blur", stopDragging);
 }
 
@@ -3017,6 +3131,11 @@ function drawPriceChart(state, options = {}) {
 
   if (window.Simulator) {
     window.Simulator.drawOverlay(ctx, layout, state, overlayOpts);
+  }
+
+  // Trigger buy hits: duration band (top strip) + buy dot — above phase/markers.
+  if (options.triggerHits !== false) {
+    drawTriggerChartHits(ctx, layout);
   }
 
   return layout;
@@ -4143,6 +4262,1840 @@ $("log-scroll-bottom").addEventListener("click", () => {
   scrollLogToBottom();
 });
 
+/** Draft fields for the Create Trigger dialog. */
+let triggerCreateDurationMs = 5000;
+let triggerCreateName = "";
+let triggerCreateColor = "#58a6ff";
+let triggerCreatePriceSide = "buy";
+/** End bar mode: "range" | "change-side" (signed ±100¢). */
+let triggerCreateEndMode = "range";
+/** End signed change in ¢ when mode is "change-side" (-100…+100). */
+let triggerCreateEndChangeSideCents = 20;
+let triggerCreatePriceRanges = {
+  start: { lowCents: 40, highCents: 70 },
+  end: { lowCents: 40, highCents: 70 },
+};
+/** Per-edge PTB vs market gap: null | "negative" (below PTB) | "positive" (above PTB). */
+let triggerCreatePtbGap = {
+  start: null,
+  end: null,
+};
+/** Per-edge gap size constraint. value 0 = any size (bound ignored). */
+let triggerCreateGapSize = {
+  start: { bound: "min", value: 0 },
+  end: { bound: "min", value: 0 },
+};
+/** SELL tab: take-profit / stop-loss offsets in ¢ from the buy fill (1–100). */
+let triggerCreateTakeProfitCents = 10;
+let triggerCreateStopLossCents = 10;
+/** Buy size for trigger entries (always FOK). */
+let triggerCreateBuyShares = 10;
+/** Sell order type when the trigger exits: FAK | FOK | GTD. */
+let triggerCreateSellOrderType = "FAK";
+/** Fraction of market window [0–1] when the trigger may apply. */
+let triggerCreateWindowArea = { start: 0, end: 1 };
+/** Active side tab in the create/edit dialog: "buy" | "sell". */
+let triggerCreateActiveTab = "buy";
+let triggerWindowAreaDrag = null;
+
+const USER_TRIGGERS_STORAGE_KEY = "detector-triggers-v1";
+/** @type {Array<Record<string, unknown>>} */
+let userTriggers = [];
+/** Cached Mongo Trade stats by trigger id. */
+const triggerLiveStatsCache = Object.create(null);
+/** When set, the create modal updates this trigger id instead of inserting. */
+let triggerCreateEditingId = null;
+/** "market" | "replay" — where Create/Edit Trigger saves. */
+let triggerCreateHost = "market";
+/** Open ⋮ menu trigger id (reuses schedule-setup-menu floating UI). */
+let openTriggerMenuId = null;
+
+const TRIGGER_DURATION_UNIT_MS = {
+  ms: 1,
+  s: 1000,
+  min: 60_000,
+};
+
+const TRIGGER_PRICE_MIN_CENTS = 0;
+const TRIGGER_PRICE_MAX_CENTS = 100;
+const TRIGGER_PRICE_MIN_GAP = 1;
+
+function clampTriggerDurationValue(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(n, 1_000_000_000);
+}
+
+function readTriggerDurationMsFromInputs() {
+  const valueEl = $("trigger-duration-value");
+  const unitEl = $("trigger-duration-unit");
+  const value = clampTriggerDurationValue(valueEl?.value);
+  const unit = unitEl?.value in TRIGGER_DURATION_UNIT_MS ? unitEl.value : "s";
+  if (valueEl && String(value) !== String(valueEl.value)) valueEl.value = String(value);
+  return value * TRIGGER_DURATION_UNIT_MS[unit];
+}
+
+function syncTriggerDurationDraft() {
+  triggerCreateDurationMs = readTriggerDurationMsFromInputs();
+}
+
+function clampTriggerCents(raw) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return TRIGGER_PRICE_MIN_CENTS;
+  return Math.max(TRIGGER_PRICE_MIN_CENTS, Math.min(TRIGGER_PRICE_MAX_CENTS, n));
+}
+
+const TRIGGER_OFFSET_MIN_CENTS = 1;
+const TRIGGER_OFFSET_MAX_CENTS = 100;
+
+/** Take Profit / Stop Loss: ¢ move from buy fill (not absolute quote). */
+function clampTriggerOffsetCents(raw, fallback = 10) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(TRIGGER_OFFSET_MIN_CENTS, Math.min(TRIGGER_OFFSET_MAX_CENTS, n));
+}
+
+/** Absolute Bid targets from fill price (dollars) + TP/SL offsets (¢). */
+function triggerExitTargetsFromFill(entryPriceDollars, takeProfitOffsetCents, stopLossOffsetCents) {
+  const entryCents = Math.round(Number(entryPriceDollars) * 100);
+  if (!Number.isFinite(entryCents)) return null;
+  const tpOff = clampTriggerOffsetCents(takeProfitOffsetCents, 10);
+  const slOff = clampTriggerOffsetCents(stopLossOffsetCents, 10);
+  return {
+    tpCents: Math.min(TRIGGER_PRICE_MAX_CENTS, entryCents + tpOff),
+    slCents: Math.max(TRIGGER_PRICE_MIN_CENTS, entryCents - slOff),
+  };
+}
+
+function clampTriggerSignedCents(raw) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-TRIGGER_PRICE_MAX_CENTS, Math.min(TRIGGER_PRICE_MAX_CENTS, n));
+}
+
+function normalizeTriggerPriceRange(range) {
+  let low = clampTriggerCents(range?.lowCents);
+  let high = clampTriggerCents(range?.highCents);
+  if (high < low + TRIGGER_PRICE_MIN_GAP) {
+    high = Math.min(TRIGGER_PRICE_MAX_CENTS, low + TRIGGER_PRICE_MIN_GAP);
+    if (high < low + TRIGGER_PRICE_MIN_GAP) {
+      low = Math.max(TRIGGER_PRICE_MIN_CENTS, high - TRIGGER_PRICE_MIN_GAP);
+    }
+  }
+  return { lowCents: low, highCents: high };
+}
+
+function centsToTrackBottomPct(cents) {
+  return (clampTriggerCents(cents) / TRIGGER_PRICE_MAX_CENTS) * 100;
+}
+
+function formatTriggerSignedCentsLabel(signed) {
+  const n = clampTriggerSignedCents(signed);
+  if (n > 0) return `+${n}¢`;
+  return `${n}¢`;
+}
+
+function getTriggerPriceScale(edge) {
+  const track = $(edge === "start" ? "trigger-start-track" : "trigger-end-track");
+  return track?.querySelector(".trigger-price-scale") || null;
+}
+
+/** PTB / zero line Y within a scale (px from scale top), matching the diagram PTB. */
+function getTriggerScaleZeroYFromTop(scale) {
+  const rect = scale.getBoundingClientRect();
+  if (rect.height <= 0) return 0;
+  const startScale = getTriggerPriceScale("start");
+  if (!startScale) return rect.height * 0.5;
+  const startRect = startScale.getBoundingClientRect();
+  const ptbClientY = startRect.top + startRect.height * 0.5;
+  return Math.max(0, Math.min(rect.height, ptbClientY - rect.top));
+}
+
+/** Map signed ¢ (-100…+100) to track bottom%, with 0 locked to the PTB line. */
+function signedCentsToTrackBottomPct(scale, signed) {
+  const rect = scale.getBoundingClientRect();
+  const h = Math.max(1, rect.height);
+  const zeroFromTop = getTriggerScaleZeroYFromTop(scale);
+  const zeroFromBottom = h - zeroFromTop;
+  const s = clampTriggerSignedCents(signed);
+  let fromBottom;
+  if (s >= 0) {
+    fromBottom = zeroFromBottom + (s / TRIGGER_PRICE_MAX_CENTS) * zeroFromTop;
+  } else {
+    fromBottom = zeroFromBottom + (s / TRIGGER_PRICE_MAX_CENTS) * zeroFromBottom;
+  }
+  return (Math.max(0, Math.min(h, fromBottom)) / h) * 100;
+}
+
+function clientYToTriggerCents(scale, clientY) {
+  const rect = scale.getBoundingClientRect();
+  if (rect.height <= 0) return 0;
+  // Top of scale = 100¢, bottom = 0¢
+  const ratio = (rect.bottom - clientY) / rect.height;
+  return clampTriggerCents(ratio * TRIGGER_PRICE_MAX_CENTS);
+}
+
+function clientYToTriggerSignedCents(scale, clientY) {
+  const rect = scale.getBoundingClientRect();
+  if (rect.height <= 0) return 0;
+  const h = rect.height;
+  const zeroFromTop = getTriggerScaleZeroYFromTop(scale);
+  const yFromTop = clientY - rect.top;
+  if (yFromTop <= zeroFromTop) {
+    // Above PTB: 0 → +100 at top
+    if (zeroFromTop <= 0) return TRIGGER_PRICE_MAX_CENTS;
+    const t = (zeroFromTop - yFromTop) / zeroFromTop;
+    return clampTriggerSignedCents(t * TRIGGER_PRICE_MAX_CENTS);
+  }
+  // Below PTB: 0 → -100 at bottom
+  const below = h - zeroFromTop;
+  if (below <= 0) return -TRIGGER_PRICE_MAX_CENTS;
+  const t = (yFromTop - zeroFromTop) / below;
+  return clampTriggerSignedCents(-t * TRIGGER_PRICE_MAX_CENTS);
+}
+
+function normalizeTriggerEndMode(raw) {
+  return raw === "change-side" ? "change-side" : "range";
+}
+
+function renderTriggerPriceRange(edge) {
+  const scale = getTriggerPriceScale(edge);
+  if (!scale) return;
+  const col = scale.closest(".trigger-price-column");
+  const fill = scale.querySelector(".trigger-price-range");
+  const highThumb = scale.querySelector('[data-thumb="high"]');
+  const lowThumb = scale.querySelector('[data-thumb="low"]');
+  const highLabel = scale.querySelector(`[data-label="${edge}-high"]`);
+  const lowLabel = scale.querySelector(`[data-label="${edge}-low"]`);
+  const track = scale.closest(".trigger-price-track");
+  const endMode = edge === "end" ? normalizeTriggerEndMode(triggerCreateEndMode) : "range";
+  const isChangeSide = endMode === "change-side";
+  col?.classList.toggle("is-change-side-mode", isChangeSide);
+
+  if (isChangeSide) {
+    const signed = clampTriggerSignedCents(triggerCreateEndChangeSideCents);
+    triggerCreateEndChangeSideCents = signed;
+    const scaleH = Math.max(1, scale.getBoundingClientRect().height);
+    const zeroFromTop = getTriggerScaleZeroYFromTop(scale);
+    const pct = signedCentsToTrackBottomPct(scale, signed);
+    const midPct = ((scaleH - zeroFromTop) / scaleH) * 100;
+    const zeroEl = scale.querySelector(".trigger-price-zero");
+    if (zeroEl) zeroEl.style.top = `${zeroFromTop}px`;
+    if (fill) {
+      if (signed >= 0) {
+        fill.style.bottom = `${midPct}%`;
+        fill.style.height = `${Math.max(0, pct - midPct)}%`;
+      } else {
+        fill.style.bottom = `${pct}%`;
+        fill.style.height = `${Math.max(0, midPct - pct)}%`;
+      }
+    }
+    if (highThumb) {
+      highThumb.hidden = false;
+      highThumb.style.bottom = `${pct}%`;
+      highThumb.setAttribute("aria-label", "End signed price change in cents");
+    }
+    if (lowThumb) lowThumb.hidden = true;
+    if (highLabel) {
+      highLabel.textContent = formatTriggerSignedCentsLabel(signed);
+      highLabel.classList.toggle("is-positive", signed > 0);
+      highLabel.classList.toggle("is-negative", signed < 0);
+    }
+    if (track) {
+      track.setAttribute(
+        "aria-label",
+        "End signed price change: PTB line 0, top +100¢, bottom -100¢",
+      );
+    }
+    return;
+  }
+
+  const range = normalizeTriggerPriceRange(triggerCreatePriceRanges[edge]);
+  triggerCreatePriceRanges[edge] = range;
+  const lowPct = centsToTrackBottomPct(range.lowCents);
+  const highPct = centsToTrackBottomPct(range.highCents);
+  if (fill) {
+    fill.style.bottom = `${lowPct}%`;
+    fill.style.height = `${Math.max(0, highPct - lowPct)}%`;
+  }
+  if (highThumb) {
+    highThumb.hidden = false;
+    highThumb.style.bottom = `${highPct}%`;
+    highThumb.setAttribute(
+      "aria-label",
+      edge === "end" ? "End max price" : "Start max price",
+    );
+  }
+  if (lowThumb) {
+    lowThumb.hidden = false;
+    lowThumb.style.bottom = `${lowPct}%`;
+  }
+  if (highLabel) {
+    highLabel.textContent = `${range.highCents}¢`;
+    highLabel.classList.remove("is-positive", "is-negative");
+  }
+  if (lowLabel) {
+    lowLabel.textContent = `${range.lowCents}¢`;
+    lowLabel.classList.remove("is-positive", "is-negative");
+  }
+  if (track) {
+    track.setAttribute(
+      "aria-label",
+      edge === "end" ? "End price range in cents" : "Start price range in cents",
+    );
+  }
+}
+
+function triggerMarketNoise(seed) {
+  // Small deterministic PRNG so the placeholder path stays stable across renders.
+  let s = (seed >>> 0) || 1;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+}
+
+function triggerGapBiasOffset(kind, gapOffset) {
+  // Screen y grows downward: positive gap = market above PTB, negative = below.
+  if (kind === "positive") return -gapOffset;
+  if (kind === "negative") return gapOffset;
+  return 0;
+}
+
+function buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, gaps = {}) {
+  const startCol = startScale.closest(".trigger-price-column");
+  const endCol = endScale.closest(".trigger-price-column");
+  const startRect = (startCol || startScale).getBoundingClientRect();
+  const endRect = (endCol || endScale).getBoundingClientRect();
+  const scaleRect = startScale.getBoundingClientRect();
+  // Span fully across both BUY/SELL price columns.
+  const x0 = startRect.left - stageRect.left;
+  const x1 = endRect.right - stageRect.left;
+  const ptbY = scaleRect.top + scaleRect.height / 2 - stageRect.top;
+  const gapOffset = Math.max(40, scaleRect.height * 0.36);
+  const amp = Math.max(14, scaleRect.height * 0.14);
+  const span = Math.max(1, x1 - x0);
+  const steps = Math.max(28, Math.round(span / 14));
+  const rand = triggerMarketNoise(0x70c7a1e);
+  const startKind = gaps.start === "positive" || gaps.start === "negative" ? gaps.start : null;
+  const endKind = gaps.end === "positive" || gaps.end === "negative" ? gaps.end : null;
+  // One side only: hold that bias across the full path so enabling the same
+  // direction on the other half keeps the first half's position unchanged.
+  // Opposite directions: blend across mid so the line crosses PTB.
+  let startBias = 0;
+  let endBias = 0;
+  if (startKind && endKind) {
+    startBias = triggerGapBiasOffset(startKind, gapOffset);
+    endBias = triggerGapBiasOffset(endKind, gapOffset);
+  } else if (startKind) {
+    startBias = endBias = triggerGapBiasOffset(startKind, gapOffset);
+  } else if (endKind) {
+    startBias = endBias = triggerGapBiasOffset(endKind, gapOffset);
+  }
+  const crossesPtb = Boolean(startKind && endKind && startKind !== endKind);
+  const points = [];
+  let noise = 0;
+  let velocity = (rand() - 0.5) * amp * 0.35;
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const blend = crossesPtb ? t * t * (3 - 2 * t) : 0;
+    const centerY = ptbY + startBias * (1 - blend) + endBias * blend;
+
+    velocity += (rand() - 0.5) * amp * 0.55;
+    velocity *= 0.72;
+    if (rand() < 0.18) velocity += (rand() - 0.5) * amp * 0.9;
+    noise += velocity;
+    noise += (0 - noise) * 0.08;
+    if (noise < -amp) {
+      noise = -amp + (-amp - noise) * 0.35;
+      velocity = Math.abs(velocity) * 0.4;
+    } else if (noise > amp) {
+      noise = amp - (noise - amp) * 0.35;
+      velocity = -Math.abs(velocity) * 0.4;
+    }
+
+    let y = centerY + noise;
+    // Keep the path on the required side(s) of mid PTB.
+    const clear = 5;
+    if (crossesPtb) {
+      if (blend < 0.35) {
+        if (startKind === "positive") y = Math.min(y, ptbY - clear);
+        if (startKind === "negative") y = Math.max(y, ptbY + clear);
+      } else if (blend > 0.65) {
+        if (endKind === "positive") y = Math.min(y, ptbY - clear);
+        if (endKind === "negative") y = Math.max(y, ptbY + clear);
+      }
+    } else {
+      const side = startKind || endKind;
+      if (side === "positive") y = Math.min(y, ptbY - clear);
+      if (side === "negative") y = Math.max(y, ptbY + clear);
+    }
+
+    const jitter = i === 0 || i === steps ? 0 : (rand() - 0.5) * (span / steps) * 0.45;
+    const x = Math.max(x0, Math.min(x1, x0 + span * t + jitter));
+    points.push({ x, y });
+  }
+
+  if (points.length) {
+    points[0].x = x0;
+    points[points.length - 1].x = x1;
+  }
+  return { points, ptbY, x0, x1 };
+}
+
+function sampleTriggerMarketPolylineY(points, x) {
+  if (!points.length) return 0;
+  if (x <= points[0].x) return points[0].y;
+  if (x >= points[points.length - 1].x) return points[points.length - 1].y;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (x >= a.x && x <= b.x) {
+      const t = (x - a.x) / Math.max(1e-6, b.x - a.x);
+      return a.y + (b.y - a.y) * t;
+    }
+  }
+  return points[points.length - 1].y;
+}
+
+function sliceTriggerMarketPolyline(points, xLeft, xRight) {
+  const eps = 0.5;
+  const left = Math.min(xLeft, xRight);
+  const right = Math.max(xLeft, xRight);
+  const sliced = [];
+  sliced.push({ x: left, y: sampleTriggerMarketPolylineY(points, left) });
+  for (const p of points) {
+    if (p.x > left + eps && p.x < right - eps) sliced.push(p);
+  }
+  sliced.push({ x: right, y: sampleTriggerMarketPolylineY(points, right) });
+  return sliced;
+}
+
+function buildTriggerGapFillPath(points, xLeft, xRight, ptbY) {
+  const left = Math.min(xLeft, xRight);
+  const right = Math.max(xLeft, xRight);
+  const zig = sliceTriggerMarketPolyline(points, left, right);
+
+  let d = `M ${left.toFixed(1)} ${ptbY.toFixed(1)}`;
+  d += ` L ${right.toFixed(1)} ${ptbY.toFixed(1)}`;
+  for (let i = zig.length - 1; i >= 0; i--) {
+    d += ` L ${zig[i].x.toFixed(1)} ${zig[i].y.toFixed(1)}`;
+  }
+  d += " Z";
+  return d;
+}
+
+function pointsAttrFromTriggerPolyline(points) {
+  return points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+
+function normalizeTriggerGapSize(raw) {
+  const bound = raw?.bound === "max" ? "max" : "min";
+  let value = Number(raw?.value);
+  if (!Number.isFinite(value) || value < 0) value = 0;
+  value = Math.min(100000, Math.round(value * 100) / 100);
+  return { bound, value };
+}
+
+function syncTriggerGapSizeControl(edge) {
+  const control = document.querySelector(`.trigger-gap-size-control[data-edge="${edge}"]`);
+  if (!control) return;
+  const size = normalizeTriggerGapSize(triggerCreateGapSize[edge]);
+  triggerCreateGapSize[edge] = size;
+  const boundEl = control.querySelector("[data-gap-bound]");
+  const valueEl = control.querySelector("[data-gap-value]");
+  if (boundEl) boundEl.value = size.bound;
+  if (valueEl && document.activeElement !== valueEl) {
+    valueEl.value = String(size.value);
+  }
+  control.classList.toggle("is-any-size", size.value <= 0);
+}
+
+function renderTriggerMarketOverlay(stage, stageRect, zigzagPoints, edgeLayouts, ptbY, pathSpan) {
+  const overlay = $("trigger-market-overlay");
+  const marketLine = $("trigger-market-line");
+  if (!overlay || !marketLine || !zigzagPoints.length) return;
+
+  overlay.setAttribute(
+    "viewBox",
+    `0 0 ${Math.max(1, stageRect.width)} ${Math.max(1, stageRect.height)}`,
+  );
+
+  // No gap → no base gray line; active sides draw their own colored halves.
+  marketLine.setAttribute("hidden", "");
+  marketLine.removeAttribute("points");
+  marketLine.classList.remove("is-negative", "is-positive");
+
+  const midX = pathSpan ? (pathSpan.x0 + pathSpan.x1) / 2 : 0;
+
+  for (const edge of ["start", "end"]) {
+    const fill = overlay.querySelector(`.trigger-gap-fill[data-edge="${edge}"]`);
+    const sideLine = overlay.querySelector(`.trigger-market-line-side[data-edge="${edge}"]`);
+    const sizeControl = stage.querySelector(`.trigger-gap-size-control[data-edge="${edge}"]`);
+    if (!fill) continue;
+    const layout = edgeLayouts[edge];
+    const kind = layout?.kind || null;
+
+    if (!layout) {
+      fill.setAttribute("hidden", "");
+      fill.removeAttribute("d");
+      fill.classList.remove("is-negative", "is-positive");
+      if (sizeControl) {
+        sizeControl.hidden = true;
+        sizeControl.classList.remove("is-negative", "is-positive");
+      }
+    } else {
+      // SVG elements don't reliably honor the HTMLElement `hidden` IDL property.
+      fill.removeAttribute("hidden");
+      fill.classList.toggle("is-negative", kind === "negative");
+      fill.classList.toggle("is-positive", kind === "positive");
+      fill.setAttribute(
+        "d",
+        buildTriggerGapFillPath(zigzagPoints, layout.x0, layout.x1, ptbY),
+      );
+
+      if (sizeControl) {
+        const zoneMidX = (layout.x0 + layout.x1) / 2;
+        const ptbPad = 8;
+        sizeControl.style.left = `${zoneMidX}px`;
+        // Keep Min/Max outside the active gap fill — opposite side of PTB.
+        // +Gap fill is above PTB → controls below; -Gap fill is below → controls above.
+        sizeControl.style.top =
+          kind === "positive" ? `${ptbY + ptbPad}px` : `${ptbY - ptbPad}px`;
+        sizeControl.classList.toggle("is-negative", kind === "negative");
+        sizeControl.classList.toggle("is-positive", kind === "positive");
+        sizeControl.hidden = false;
+        syncTriggerGapSizeControl(edge);
+      }
+    }
+
+    if (sideLine) {
+      if (!kind || !pathSpan) {
+        sideLine.setAttribute("hidden", "");
+        sideLine.removeAttribute("points");
+        sideLine.classList.remove("is-negative", "is-positive");
+      } else {
+        // Each active side colors its full half; both sides → full path width.
+        const lineX0 = edge === "start" ? pathSpan.x0 : midX;
+        const lineX1 = edge === "start" ? midX : pathSpan.x1;
+        const sidePoints = sliceTriggerMarketPolyline(zigzagPoints, lineX0, lineX1);
+        sideLine.setAttribute("points", pointsAttrFromTriggerPolyline(sidePoints));
+        sideLine.classList.toggle("is-negative", kind === "negative");
+        sideLine.classList.toggle("is-positive", kind === "positive");
+        sideLine.removeAttribute("hidden");
+      }
+    }
+  }
+}
+
+function renderTriggerPtbGapUi() {
+  const stage = document.querySelector(".trigger-duration-stage");
+  if (!stage) return;
+  const stageRect = stage.getBoundingClientRect();
+  if (stageRect.width < 1 || stageRect.height < 1) return;
+
+  const startScale = getTriggerPriceScale("start");
+  const endScale = getTriggerPriceScale("end");
+  if (!startScale || !endScale) return;
+
+  const built = buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, triggerCreatePtbGap);
+  const zigzagPoints = built.points;
+  const ptbY = built.ptbY;
+  const edgeLayouts = { start: null, end: null };
+  const midX = (built.x0 + built.x1) / 2;
+
+  // Mid PTB line always visible in gold across the price path.
+  const midLine = $("trigger-ptb-mid-line");
+  if (midLine) {
+    midLine.hidden = false;
+    midLine.style.top = `${Math.round(ptbY)}px`;
+    midLine.style.left = `${Math.round(built.x0)}px`;
+    midLine.style.width = `${Math.round(built.x1 - built.x0)}px`;
+    midLine.style.right = "auto";
+    midLine.style.bottom = "auto";
+  }
+
+  for (const edge of ["start", "end"]) {
+    const selected = triggerCreatePtbGap[edge];
+    const scale = getTriggerPriceScale(edge);
+    const col = document.querySelector(`.trigger-price-column[data-edge="${edge}"]`);
+    if (!scale || !col) continue;
+    const scaleRect = scale.getBoundingClientRect();
+
+    // Top = market above mid line (+Gap); bottom = market below (-Gap).
+    const yByKind = {
+      positive: scaleRect.top - stageRect.top,
+      negative: scaleRect.bottom - stageRect.top,
+    };
+
+    // Full half-width of the price path for fill + colored line.
+    const halfX0 = edge === "start" ? built.x0 : midX;
+    const halfX1 = edge === "start" ? midX : built.x1;
+    const btnX = (halfX0 + halfX1) / 2;
+
+    for (const kind of ["negative", "positive"]) {
+      const btn = stage.querySelector(`.trigger-ptb-btn[data-edge="${edge}"][data-ptb="${kind}"]`);
+      const active = selected === kind;
+      if (btn) {
+        btn.classList.toggle("is-active", active);
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+        btn.style.left = `${Math.round(btnX)}px`;
+        btn.style.top = `${Math.round(yByKind[kind])}px`;
+      }
+    }
+
+    if (selected === "negative" || selected === "positive") {
+      edgeLayouts[edge] = {
+        x0: halfX0,
+        x1: halfX1,
+        ptbY,
+        kind: selected,
+      };
+    }
+  }
+
+  renderTriggerMarketOverlay(stage, stageRect, zigzagPoints, edgeLayouts, ptbY, {
+    x0: built.x0,
+    x1: built.x1,
+  });
+}
+
+function renderAllTriggerPriceRanges() {
+  renderTriggerPriceRange("start");
+  renderTriggerPriceRange("end");
+  renderTriggerPtbGapUi();
+}
+
+function toggleTriggerPtbGap(edge, kind) {
+  if (edge !== "start" && edge !== "end") return;
+  if (kind !== "negative" && kind !== "positive") return;
+  triggerCreatePtbGap[edge] = triggerCreatePtbGap[edge] === kind ? null : kind;
+  renderTriggerPtbGapUi();
+}
+
+function setTriggerPriceThumb(edge, thumb, cents) {
+  const endMode = edge === "end" ? normalizeTriggerEndMode(triggerCreateEndMode) : "range";
+  if (endMode === "change-side") {
+    triggerCreateEndChangeSideCents = clampTriggerSignedCents(cents);
+    renderTriggerPriceRange("end");
+    return;
+  }
+  const range = { ...normalizeTriggerPriceRange(triggerCreatePriceRanges[edge]) };
+  let next = clampTriggerCents(cents);
+  if (thumb === "high") {
+    if (next < range.lowCents + TRIGGER_PRICE_MIN_GAP) {
+      range.lowCents = Math.max(TRIGGER_PRICE_MIN_CENTS, next - TRIGGER_PRICE_MIN_GAP);
+      next = Math.max(next, range.lowCents + TRIGGER_PRICE_MIN_GAP);
+    }
+    range.highCents = next;
+  } else {
+    if (next > range.highCents - TRIGGER_PRICE_MIN_GAP) {
+      range.highCents = Math.min(TRIGGER_PRICE_MAX_CENTS, next + TRIGGER_PRICE_MIN_GAP);
+      next = Math.min(next, range.highCents - TRIGGER_PRICE_MIN_GAP);
+    }
+    range.lowCents = next;
+  }
+  triggerCreatePriceRanges[edge] = normalizeTriggerPriceRange(range);
+  renderTriggerPriceRange(edge);
+}
+
+function bindTriggerPriceRangeDrag() {
+  const modal = $("trigger-create-modal");
+  if (!modal || modal.dataset.priceDragBound === "1") return;
+  modal.dataset.priceDragBound = "1";
+
+  let drag = null;
+
+  const onPointerMove = (e) => {
+    if (!drag) return;
+    const cents =
+      drag.endMode === "change-side"
+        ? clientYToTriggerSignedCents(drag.scale, e.clientY)
+        : clientYToTriggerCents(drag.scale, e.clientY);
+    setTriggerPriceThumb(drag.edge, drag.thumb, cents);
+  };
+
+  const stopDrag = (e) => {
+    if (!drag) return;
+    const { thumbEl, pointerId } = drag;
+    drag = null;
+    thumbEl.classList.remove("is-dragging");
+    document.body.classList.remove("is-trigger-price-dragging");
+    try {
+      thumbEl.releasePointerCapture(pointerId);
+    } catch {
+      /* ignore */
+    }
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopDrag);
+    window.removeEventListener("pointercancel", stopDrag);
+  };
+
+  modal.querySelectorAll(".trigger-price-thumb").forEach((thumbEl) => {
+    thumbEl.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const edge = thumbEl.dataset.edge;
+      const thumb = thumbEl.dataset.thumb;
+      const scale = thumbEl.closest(".trigger-price-scale");
+      if ((edge !== "start" && edge !== "end") || (thumb !== "high" && thumb !== "low") || !scale) {
+        return;
+      }
+      const endMode = edge === "end" ? normalizeTriggerEndMode(triggerCreateEndMode) : "range";
+      if (endMode === "change-side" && thumb === "low") return;
+      drag = { edge, thumb, scale, thumbEl, pointerId: e.pointerId, endMode };
+      thumbEl.classList.add("is-dragging");
+      document.body.classList.add("is-trigger-price-dragging");
+      try {
+        thumbEl.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", stopDrag);
+      window.addEventListener("pointercancel", stopDrag);
+      const nextCents =
+        endMode === "change-side"
+          ? clientYToTriggerSignedCents(scale, e.clientY)
+          : clientYToTriggerCents(scale, e.clientY);
+      setTriggerPriceThumb(edge, thumb, nextCents);
+      e.preventDefault();
+    });
+  });
+
+  modal.querySelectorAll(".trigger-ptb-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      toggleTriggerPtbGap(btn.dataset.edge, btn.dataset.ptb);
+    });
+  });
+
+  window.addEventListener("resize", () => {
+    if (!modal.hidden) renderTriggerPtbGapUi();
+  });
+}
+
+function isLightHexColor(color) {
+  const raw = String(color || "").trim();
+  const hex = raw.startsWith("#") ? raw.slice(1) : raw;
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return false;
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+  const toLin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const luminance = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+  return luminance > 0.55;
+}
+
+function syncTriggerCreateColorIconContrast() {
+  const colorInput = $("trigger-create-color");
+  const swatch = colorInput?.closest?.(".setup-edit-color-swatch");
+  if (!swatch) return;
+  const color = colorInput?.value || triggerCreateColor || "#58a6ff";
+  swatch.classList.toggle("is-light-setup", isLightHexColor(color));
+}
+
+function syncTriggerCreateNameDraft() {
+  triggerCreateName = $("trigger-create-name")?.value?.trim() ?? "";
+  syncTriggerCreateSubmitState();
+}
+
+function syncTriggerCreateSubmitState() {
+  const btn = $("trigger-create-submit");
+  if (btn) btn.disabled = !triggerCreateName;
+}
+
+function userTriggersStorageKey() {
+  return userScopedStorageKey(USER_TRIGGERS_STORAGE_KEY);
+}
+
+function normalizeTriggerDemoStats(raw) {
+  const success = Math.max(0, Math.round(Number(raw?.success) || 0));
+  const fail = Math.max(0, Math.round(Number(raw?.fail) || 0));
+  const blue = Math.max(0, Math.round(Number(raw?.blue) || 0));
+  const takeProfit = Math.max(0, Math.round(Number(raw?.takeProfit) || 0));
+  const stopLoss = Math.max(0, Math.round(Number(raw?.stopLoss) || 0));
+  const pnlUsd = Number.isFinite(Number(raw?.pnlUsd)) ? Number(raw.pnlUsd) : 0;
+  return { success, fail, blue, takeProfit, stopLoss, pnlUsd };
+}
+
+/** Offset 100 = that exit path is disabled. */
+function isTriggerExitDisabled(offsetCents) {
+  return clampTriggerOffsetCents(offsetCents, 10) >= 100;
+}
+
+function normalizeTriggerBuyShares(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return 10;
+  return Math.min(100_000, n);
+}
+
+function normalizeTriggerSellOrderType(raw) {
+  if (raw === "FOK" || raw === "GTD") return raw;
+  return "FAK";
+}
+
+function normalizeTriggerExitOffsets(raw) {
+  const tp = Math.round(Number(raw?.takeProfitCents));
+  const sl = Math.round(Number(raw?.stopLossCents));
+  // Legacy absolute quote defaults (pre offset-from-fill) → new offset defaults.
+  if (tp === 80 && (sl === 20 || !Number.isFinite(sl))) {
+    return { takeProfitCents: 10, stopLossCents: 10 };
+  }
+  return {
+    takeProfitCents: clampTriggerOffsetCents(tp, 10),
+    stopLossCents: clampTriggerOffsetCents(sl, 10),
+  };
+}
+
+function normalizeTriggerRecord(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = raw.id != null ? String(raw.id) : "";
+  if (!id) return null;
+  const exits = normalizeTriggerExitOffsets(raw);
+  return {
+    ...raw,
+    id,
+    buyShares: normalizeTriggerBuyShares(raw.buyShares),
+    sellOrderType: normalizeTriggerSellOrderType(raw.sellOrderType),
+    takeProfitCents: exits.takeProfitCents,
+    stopLossCents: exits.stopLossCents,
+    runMode: raw.runMode === "trade" ? "trade" : "demo",
+    paused: raw.paused !== false,
+    demoStats: normalizeTriggerDemoStats(raw.demoStats),
+  };
+}
+
+function loadUserTriggers() {
+  try {
+    const raw = localStorage.getItem(userTriggersStorageKey());
+    if (!raw) {
+      userTriggers = [];
+      return userTriggers;
+    }
+    const parsed = JSON.parse(raw);
+    userTriggers = Array.isArray(parsed)
+      ? parsed.map(normalizeTriggerRecord).filter(Boolean)
+      : [];
+  } catch {
+    userTriggers = [];
+  }
+  return userTriggers;
+}
+
+function saveUserTriggers() {
+  try {
+    localStorage.setItem(userTriggersStorageKey(), JSON.stringify(userTriggers));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function findUserTrigger(id) {
+  const key = String(id || "");
+  return userTriggers.find((t) => String(t?.id) === key) || null;
+}
+
+function patchUserTrigger(id, patch) {
+  const key = String(id || "");
+  const idx = userTriggers.findIndex((t) => String(t?.id) === key);
+  if (idx < 0) return null;
+  userTriggers[idx] = normalizeTriggerRecord({ ...userTriggers[idx], ...patch });
+  saveUserTriggers();
+  return userTriggers[idx];
+}
+
+function setTriggerRunMode(triggerId, mode) {
+  const next = mode === "trade" ? "trade" : "demo";
+  const trigger = patchUserTrigger(triggerId, { runMode: next });
+  if (!trigger) return;
+  renderTriggersList();
+  if (next === "trade") {
+    void fetchTriggerLiveStats(triggerId).then(() => updateTriggerCardStats(triggerId));
+  }
+  if (triggerCreateEditingId && String(triggerCreateEditingId) === String(triggerId)) {
+    syncTriggerStatsPanel();
+  }
+}
+
+/** When Allow trade turns Off, every Trade card falls back to Demo. */
+function forceTradeTriggersToDemo(reason = "Allow trade off") {
+  if (!Array.isArray(userTriggers) || userTriggers.length === 0) return 0;
+  let changed = 0;
+  userTriggers = userTriggers.map((trigger) => {
+    if (trigger?.runMode !== "trade") return trigger;
+    changed += 1;
+    const id = String(trigger.id || "");
+    const rt = typeof triggerRuntimeById !== "undefined" ? triggerRuntimeById.get(id) : null;
+    if (rt && rt.runMode === "trade" && rt.phase !== "open" && rt.phase !== "opening") {
+      rt.runMode = "demo";
+    }
+    return normalizeTriggerRecord({ ...trigger, runMode: "demo" });
+  });
+  if (!changed) return 0;
+  saveUserTriggers();
+  renderTriggersList();
+  appendLogEntry({
+    level: "info",
+    source: "client",
+    message: `${changed} trigger card${changed === 1 ? "" : "s"} moved Trade → Demo (${reason})`,
+  });
+  return changed;
+}
+
+function setTriggerPaused(triggerId, paused) {
+  const patch = { paused: Boolean(paused) };
+  const current = findUserTrigger(triggerId);
+  if (paused && current?.runMode === "trade") patch.runMode = "demo";
+  const trigger = patchUserTrigger(triggerId, patch);
+  if (!trigger) return;
+  if (paused) clearTriggerRuntime(triggerId);
+  renderTriggersList();
+  if (triggerCreateEditingId && String(triggerCreateEditingId) === String(triggerId)) {
+    syncTriggerStatsPanel();
+  }
+}
+
+function closeTriggerMenus() {
+  closeSetupMenus();
+}
+
+function deleteUserTrigger(trigger) {
+  closeTriggerMenus();
+  const id = trigger?.id != null ? String(trigger.id) : "";
+  if (!id) return;
+  const label = String(trigger.name || "Untitled trigger");
+  if (!window.confirm(`Delete "${label}"?\n\nThis cannot be undone.`)) return;
+  userTriggers = userTriggers.filter((t) => String(t?.id) !== id);
+  saveUserTriggers();
+  clearTriggerRuntime(id);
+  void fetch(`/api/triggers/${encodeURIComponent(id)}/stats`, { method: "DELETE" }).catch(
+    () => {},
+  );
+  renderTriggersList();
+  if (triggerCreateEditingId && String(triggerCreateEditingId) === id) {
+    closeTriggerCreateModal();
+  }
+}
+
+function renderTriggersList() {
+  const empty = $("triggers-empty");
+  const cards = $("triggers-cards");
+  const body = $("triggers-list");
+  if (!cards) return;
+  closeTriggerMenus();
+  cards.replaceChildren();
+  const list = Array.isArray(userTriggers) ? userTriggers : [];
+  if (empty) empty.hidden = list.length > 0;
+  for (const trigger of list) {
+    const triggerId = String(trigger.id || "");
+    const paused = trigger.paused !== false;
+    const runMode = trigger.runMode === "trade" ? "trade" : "demo";
+    const card = document.createElement("article");
+    card.className = "trigger-card";
+    if (paused) card.classList.add("is-paused");
+    card.dataset.triggerId = triggerId;
+    const color = typeof trigger.color === "string" ? trigger.color : "#58a6ff";
+    card.style.borderLeftColor = color;
+
+    const header = document.createElement("div");
+    header.className = "trigger-card-header";
+
+    const title = document.createElement("div");
+    title.className = "trigger-card-title";
+    title.textContent = String(trigger.name || "Untitled trigger");
+
+    const menuWrap = document.createElement("div");
+    menuWrap.className = "schedule-setup-menu-wrap";
+    const menuBtn = document.createElement("button");
+    menuBtn.type = "button";
+    menuBtn.className = "schedule-setup-menu-btn";
+    menuBtn.setAttribute("aria-label", "Trigger options");
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.innerHTML = "&#8942;";
+    menuBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    menuBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (openTriggerMenuId === triggerId) {
+        closeTriggerMenus();
+        return;
+      }
+      closeTriggerMenus();
+      openTriggerMenuId = triggerId;
+      const menu = document.createElement("div");
+      menu.className = "schedule-setup-menu schedule-setup-menu-floating";
+      menu.setAttribute("role", "menu");
+
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "schedule-setup-menu-item";
+      editBtn.setAttribute("role", "menuitem");
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        closeTriggerMenus();
+        openTriggerEditModal(trigger);
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "schedule-setup-menu-item schedule-setup-menu-item-danger";
+      deleteBtn.setAttribute("role", "menuitem");
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        deleteUserTrigger(trigger);
+      });
+
+      menu.append(editBtn, deleteBtn);
+      document.body.appendChild(menu);
+      positionSetupMenu(menu, menuBtn);
+    });
+    menuWrap.appendChild(menuBtn);
+    header.append(title, menuWrap);
+
+    const controls = document.createElement("div");
+    controls.className = "trigger-card-controls";
+
+    const modeWrap = document.createElement("div");
+    modeWrap.className = "trigger-run-mode";
+    modeWrap.setAttribute("role", "group");
+    modeWrap.setAttribute("aria-label", "Demo or Trade");
+    for (const mode of ["demo", "trade"]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "trigger-run-mode-btn";
+      btn.dataset.mode = mode;
+      btn.textContent = mode === "demo" ? "Demo" : "Trade";
+      if (runMode === mode) btn.classList.add("is-active");
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setTriggerRunMode(triggerId, mode);
+      });
+      modeWrap.appendChild(btn);
+    }
+
+    const pauseWrap = document.createElement("div");
+    pauseWrap.className = "trigger-run-mode trigger-pause-mode";
+    pauseWrap.setAttribute("role", "group");
+    pauseWrap.setAttribute("aria-label", "Pause or Active");
+    for (const state of ["pause", "active"]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "trigger-run-mode-btn";
+      btn.dataset.pauseState = state;
+      btn.textContent = state === "pause" ? "Pause" : "Active";
+      const isSelected = state === "pause" ? paused : !paused;
+      if (isSelected) btn.classList.add("is-active");
+      btn.title =
+        state === "pause"
+          ? "Pause trigger (forces Demo if Trade was on)"
+          : "Run trigger evaluation";
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setTriggerPaused(triggerId, state === "pause");
+      });
+      pauseWrap.appendChild(btn);
+    }
+
+    controls.append(modeWrap, pauseWrap);
+
+    const statsRow = document.createElement("div");
+    statsRow.className = "trigger-card-stats";
+    statsRow.setAttribute("aria-label", runMode === "trade" ? "Trade stats" : "Demo stats");
+    statsRow.innerHTML =
+      '<div class="trigger-card-stats-exits">' +
+      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Take Profit</span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
+      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
+      "</div>" +
+      '<div class="trigger-card-stats-main">' +
+      '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>' +
+      "</div>";
+
+    card.append(header, controls, statsRow);
+    cards.appendChild(card);
+    fillTriggerCardStatsRow(statsRow, trigger);
+    if (runMode === "trade" && !triggerLiveStatsCache[triggerId]) {
+      void fetchTriggerLiveStats(triggerId).then(() => updateTriggerCardStats(triggerId));
+    }
+  }
+  if (body) {
+    const h = Number.parseFloat(
+      getComputedStyle(body.closest(".left-column") || document.documentElement)
+        .getPropertyValue("--triggers-content-height"),
+    );
+    const open = Number.isFinite(h) ? h > 0 : true;
+    body.classList.toggle("is-scrollable", open && list.length > 0);
+  }
+}
+
+function resolveTriggerCardStats(trigger) {
+  if (!trigger) {
+    return { success: 0, fail: 0, blue: 0, takeProfit: 0, stopLoss: 0, pnlUsd: 0, pending: false };
+  }
+  if (trigger.runMode === "trade") {
+    const cached = triggerLiveStatsCache[String(trigger.id)];
+    if (!cached) {
+      return { success: 0, fail: 0, blue: 0, takeProfit: 0, stopLoss: 0, pnlUsd: 0, pending: true };
+    }
+    return { ...normalizeTriggerDemoStats(cached), pending: false };
+  }
+  return { ...normalizeTriggerDemoStats(trigger.demoStats), pending: false };
+}
+
+function fillTriggerCardStatsRow(statsRow, trigger) {
+  if (!statsRow) return;
+  const stats = resolveTriggerCardStats(trigger);
+  const successEl = statsRow.querySelector('[data-stat="success"]');
+  const blueEl = statsRow.querySelector('[data-stat="blue"]');
+  const failEl = statsRow.querySelector('[data-stat="fail"]');
+  const tpEl = statsRow.querySelector('[data-stat="takeProfit"]');
+  const slEl = statsRow.querySelector('[data-stat="stopLoss"]');
+  const pnlEl = statsRow.querySelector('[data-stat="pnl"]');
+  if (successEl) successEl.textContent = stats.pending ? "…" : String(stats.success);
+  if (blueEl) blueEl.textContent = stats.pending ? "…" : String(stats.blue ?? 0);
+  if (failEl) failEl.textContent = stats.pending ? "…" : String(stats.fail);
+  if (tpEl) tpEl.textContent = stats.pending ? "…" : String(stats.takeProfit);
+  if (slEl) slEl.textContent = stats.pending ? "…" : String(stats.stopLoss);
+  if (pnlEl) {
+    pnlEl.textContent = stats.pending ? "…" : formatTriggerStatsPnl(stats.pnlUsd);
+    pnlEl.classList.toggle("is-pos", !stats.pending && stats.pnlUsd > 0);
+    pnlEl.classList.toggle("is-neg", !stats.pending && stats.pnlUsd < 0);
+  }
+  statsRow.setAttribute(
+    "aria-label",
+    trigger?.runMode === "trade" ? "Trade stats" : "Demo stats",
+  );
+}
+
+function updateTriggerCardStats(triggerId) {
+  const id = String(triggerId || "");
+  const trigger = findUserTrigger(id);
+  const card = document.querySelector(`.trigger-card[data-trigger-id="${CSS.escape(id)}"]`);
+  const statsRow = card?.querySelector(".trigger-card-stats");
+  if (!trigger || !statsRow) return;
+  fillTriggerCardStatsRow(statsRow, trigger);
+}
+
+function applyTriggerDurationToInputs(ms) {
+  const valueEl = $("trigger-duration-value");
+  const unitEl = $("trigger-duration-unit");
+  if (!valueEl || !unitEl) return;
+  const n = Number(ms);
+  if (Number.isFinite(n) && n >= 60_000 && n % 60_000 === 0) {
+    valueEl.value = String(n / 60_000);
+    unitEl.value = "min";
+  } else if (Number.isFinite(n) && n >= 1000 && n % 1000 === 0) {
+    valueEl.value = String(n / 1000);
+    unitEl.value = "s";
+  } else {
+    valueEl.value = String(Math.max(1, Math.round(Number.isFinite(n) ? n : 5000)));
+    unitEl.value = "ms";
+  }
+  syncTriggerDurationDraft();
+}
+
+const TRIGGER_WINDOW_AREA_MIN_SPAN = 0.02;
+const TRIGGER_WINDOW_THUMB_PX = 12;
+
+function normalizeTriggerWindowArea(startRaw, endRaw) {
+  let start = Number(startRaw);
+  let end = Number(endRaw);
+  if (!Number.isFinite(start)) start = 0;
+  if (!Number.isFinite(end)) end = 1;
+  start = Math.max(0, Math.min(1, start));
+  end = Math.max(0, Math.min(1, end));
+  if (end - start < TRIGGER_WINDOW_AREA_MIN_SPAN) {
+    if (start > 1 - TRIGGER_WINDOW_AREA_MIN_SPAN) {
+      start = 1 - TRIGGER_WINDOW_AREA_MIN_SPAN;
+      end = 1;
+    } else {
+      end = Math.min(1, start + TRIGGER_WINDOW_AREA_MIN_SPAN);
+    }
+  }
+  return { start, end };
+}
+
+function triggerWindowThumbLeftCss(frac) {
+  const f = Math.max(0, Math.min(1, Number(frac) || 0));
+  return `calc(${f} * (100% - ${TRIGGER_WINDOW_THUMB_PX}px))`;
+}
+
+function triggerWindowThumbCenterCss(frac) {
+  const f = Math.max(0, Math.min(1, Number(frac) || 0));
+  return `calc(${f} * (100% - ${TRIGGER_WINDOW_THUMB_PX}px) + ${TRIGGER_WINDOW_THUMB_PX / 2}px)`;
+}
+
+function syncTriggerWindowAreaUi() {
+  const area = normalizeTriggerWindowArea(
+    triggerCreateWindowArea.start,
+    triggerCreateWindowArea.end,
+  );
+  triggerCreateWindowArea = area;
+  const durationSec =
+    typeof manipulationWindowDurationSec === "function"
+      ? manipulationWindowDurationSec()
+      : 300;
+  const range = $("trigger-window-area-range");
+  const startThumb = $("trigger-window-area-start");
+  const endThumb = $("trigger-window-area-end");
+  const startLabel = $("trigger-window-area-start-label");
+  const endLabel = $("trigger-window-area-end-label");
+  const span = Math.max(0, area.end - area.start);
+  if (range) {
+    range.style.left = triggerWindowThumbCenterCss(area.start);
+    range.style.width = `calc(${span} * (100% - ${TRIGGER_WINDOW_THUMB_PX}px))`;
+  }
+  if (startThumb) startThumb.style.left = triggerWindowThumbLeftCss(area.start);
+  if (endThumb) endThumb.style.left = triggerWindowThumbLeftCss(area.end);
+  if (startLabel) {
+    startLabel.textContent =
+      typeof fmtManipAreaTime === "function"
+        ? fmtManipAreaTime(area.start, durationSec)
+        : "0:00";
+    startLabel.style.left = triggerWindowThumbCenterCss(area.start);
+  }
+  if (endLabel) {
+    endLabel.textContent =
+      typeof fmtManipAreaTime === "function"
+        ? fmtManipAreaTime(area.end, durationSec)
+        : "5:00";
+    endLabel.style.left = triggerWindowThumbCenterCss(area.end);
+  }
+}
+
+function bindTriggerWindowAreaSlider() {
+  const modal = $("trigger-create-modal");
+  const track = $("trigger-window-area-slider")?.querySelector(".manipulation-area-track");
+  if (!modal || !track || modal.dataset.windowAreaBound === "1") return;
+  modal.dataset.windowAreaBound = "1";
+
+  const fracFromEvent = (event) => {
+    const rect = track.getBoundingClientRect();
+    const travel = rect.width - TRIGGER_WINDOW_THUMB_PX;
+    if (travel <= 0) return 0;
+    return Math.max(
+      0,
+      Math.min(1, (event.clientX - rect.left - TRIGGER_WINDOW_THUMB_PX / 2) / travel),
+    );
+  };
+
+  const onMove = (event) => {
+    if (!triggerWindowAreaDrag) return;
+    const frac = fracFromEvent(event);
+    if (triggerWindowAreaDrag === "start") {
+      triggerCreateWindowArea = normalizeTriggerWindowArea(
+        Math.min(frac, triggerCreateWindowArea.end - TRIGGER_WINDOW_AREA_MIN_SPAN),
+        triggerCreateWindowArea.end,
+      );
+    } else {
+      triggerCreateWindowArea = normalizeTriggerWindowArea(
+        triggerCreateWindowArea.start,
+        Math.max(frac, triggerCreateWindowArea.start + TRIGGER_WINDOW_AREA_MIN_SPAN),
+      );
+    }
+    syncTriggerWindowAreaUi();
+  };
+
+  const onUp = () => {
+    if (!triggerWindowAreaDrag) return;
+    triggerWindowAreaDrag = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+  };
+
+  for (const thumb of track.querySelectorAll("[data-thumb]")) {
+    thumb.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      triggerWindowAreaDrag = thumb.getAttribute("data-thumb") === "end" ? "end" : "start";
+      try {
+        thumb.setPointerCapture(event.pointerId);
+      } catch {
+        /* ignore */
+      }
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+      onMove(event);
+    });
+  }
+}
+
+function syncTriggerCreateModalChrome() {
+  const title = $("trigger-create-modal-title");
+  const submit = $("trigger-create-submit");
+  const editing = Boolean(triggerCreateEditingId);
+  if (title) title.textContent = editing ? "Edit Trigger" : "Create Trigger";
+  if (submit) submit.textContent = editing ? "Save" : "Create";
+}
+
+function syncTriggerCreateBuySharesDraft() {
+  triggerCreateBuyShares = normalizeTriggerBuyShares($("trigger-buy-shares")?.value ?? 10);
+  const el = $("trigger-buy-shares");
+  if (el && String(el.value) !== String(triggerCreateBuyShares)) {
+    el.value = String(triggerCreateBuyShares);
+  }
+}
+
+function applyTriggerBuySharesToInput(shares) {
+  triggerCreateBuyShares = normalizeTriggerBuyShares(shares ?? 10);
+  const el = $("trigger-buy-shares");
+  if (el) el.value = String(triggerCreateBuyShares);
+}
+
+function syncTriggerCreateSellDraft() {
+  triggerCreateTakeProfitCents = clampTriggerOffsetCents($("trigger-take-profit")?.value ?? 10, 10);
+  triggerCreateStopLossCents = clampTriggerOffsetCents($("trigger-stop-loss")?.value ?? 10, 10);
+  triggerCreateSellOrderType = normalizeTriggerSellOrderType(
+    $("trigger-sell-order-type")?.value ?? triggerCreateSellOrderType,
+  );
+  const tpEl = $("trigger-take-profit");
+  const slEl = $("trigger-stop-loss");
+  const typeEl = $("trigger-sell-order-type");
+  if (tpEl && String(tpEl.value) !== String(triggerCreateTakeProfitCents)) {
+    tpEl.value = String(triggerCreateTakeProfitCents);
+  }
+  if (slEl && String(slEl.value) !== String(triggerCreateStopLossCents)) {
+    slEl.value = String(triggerCreateStopLossCents);
+  }
+  if (typeEl) typeEl.value = triggerCreateSellOrderType;
+}
+
+function applyTriggerSellToInputs(takeProfitCents, stopLossCents, sellOrderType) {
+  triggerCreateTakeProfitCents = clampTriggerOffsetCents(takeProfitCents ?? 10, 10);
+  triggerCreateStopLossCents = clampTriggerOffsetCents(stopLossCents ?? 10, 10);
+  triggerCreateSellOrderType = normalizeTriggerSellOrderType(sellOrderType ?? "FAK");
+  const tpEl = $("trigger-take-profit");
+  const slEl = $("trigger-stop-loss");
+  const typeEl = $("trigger-sell-order-type");
+  if (tpEl) tpEl.value = String(triggerCreateTakeProfitCents);
+  if (slEl) slEl.value = String(triggerCreateStopLossCents);
+  if (typeEl) typeEl.value = triggerCreateSellOrderType;
+}
+
+function formatTriggerStatsPnl(pnlUsd) {
+  const n = Number(pnlUsd);
+  if (!Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}$${n.toFixed(2)}`;
+}
+
+function syncTriggerStatsPanel() {
+  const setText = (id, text) => {
+    const el = $(id);
+    if (el) el.textContent = text;
+  };
+  const note = $("trigger-stats-note");
+  if (triggerCreateHost === "replay") {
+    const replay = triggerCreateEditingId
+      ? window.ScheduleReplayTriggers?.find?.(triggerCreateEditingId)
+      : null;
+    const stats = replay?.replayStats || {
+      success: 0,
+      fail: 0,
+      takeProfit: 0,
+      stopLoss: 0,
+      pnlUsd: 0,
+    };
+    setText("trigger-stats-live-success", String(stats.success ?? 0));
+    setText("trigger-stats-live-fail", String(stats.fail ?? 0));
+    setText("trigger-stats-live-take-profit", String(stats.takeProfit ?? 0));
+    setText("trigger-stats-live-stop-loss", String(stats.stopLoss ?? 0));
+    setText("trigger-stats-live-pnl", formatTriggerStatsPnl(stats.pnlUsd));
+    if (note) {
+      note.textContent =
+        "Replay stats from the last completed Run (not live Trade / Mongo).";
+    }
+    return;
+  }
+  if (!triggerCreateEditingId) {
+    setText("trigger-stats-live-success", "—");
+    setText("trigger-stats-live-fail", "—");
+    setText("trigger-stats-live-take-profit", "—");
+    setText("trigger-stats-live-stop-loss", "—");
+    setText("trigger-stats-live-pnl", "—");
+    if (note) {
+      note.textContent = "Save the trigger first to collect Trade stats on the server.";
+    }
+    return;
+  }
+  if (note) {
+    note.textContent =
+      "All-time Trade stats for this trigger across every live session (stored on the server).";
+  }
+  const cached = triggerLiveStatsCache[String(triggerCreateEditingId)];
+  if (cached) {
+    setText("trigger-stats-live-success", String(cached.success));
+    setText("trigger-stats-live-fail", String(cached.fail));
+    setText("trigger-stats-live-take-profit", String(cached.takeProfit));
+    setText("trigger-stats-live-stop-loss", String(cached.stopLoss));
+    setText("trigger-stats-live-pnl", formatTriggerStatsPnl(cached.pnlUsd));
+  } else {
+    setText("trigger-stats-live-success", "…");
+    setText("trigger-stats-live-fail", "…");
+    setText("trigger-stats-live-take-profit", "…");
+    setText("trigger-stats-live-stop-loss", "…");
+    setText("trigger-stats-live-pnl", "…");
+  }
+}
+
+async function fetchTriggerLiveStats(triggerId) {
+  const id = String(triggerId || "");
+  if (!id) return null;
+  try {
+    const res = await fetch(`/api/triggers/${encodeURIComponent(id)}/stats`);
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (!body || typeof body !== "object") return null;
+    const stats = normalizeTriggerDemoStats(body);
+    triggerLiveStatsCache[id] = stats;
+    return stats;
+  } catch {
+    return null;
+  }
+}
+
+function setTriggerCreateActiveTab(tabId) {
+  const id = tabId === "sell" ? "sell" : tabId === "stats" ? "stats" : "buy";
+  triggerCreateActiveTab = id;
+  const modal = $("trigger-create-modal");
+  if (!modal) return;
+  const tabs = [...modal.querySelectorAll("[data-trigger-tab]")];
+  const panels = [...modal.querySelectorAll("[data-trigger-tab-panel]")];
+  for (const tab of tabs) {
+    const active = tab.getAttribute("data-trigger-tab") === id;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+    tab.tabIndex = active ? 0 : -1;
+  }
+  for (const panel of panels) {
+    const active = panel.getAttribute("data-trigger-tab-panel") === id;
+    panel.hidden = !active;
+  }
+  if (id === "buy") {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        renderAllTriggerPriceRanges();
+        syncTriggerWindowAreaUi();
+      });
+    });
+  }
+  if (id === "stats") {
+    syncTriggerStatsPanel();
+    if (triggerCreateEditingId) {
+      void fetchTriggerLiveStats(triggerCreateEditingId).then(() => syncTriggerStatsPanel());
+    }
+  }
+}
+
+function fillTriggerCreateFormFromTrigger(trigger) {
+  const nameEl = $("trigger-create-name");
+  const colorEl = $("trigger-create-color");
+  if (nameEl) nameEl.value = String(trigger?.name || "");
+  if (colorEl) colorEl.value = typeof trigger?.color === "string" ? trigger.color : "#58a6ff";
+  triggerCreateName = String(trigger?.name || "").trim();
+  triggerCreateColor = typeof trigger?.color === "string" ? trigger.color : "#58a6ff";
+  triggerCreatePriceSide = trigger?.priceSide === "sell" ? "sell" : "buy";
+  triggerCreateEndMode = normalizeTriggerEndMode(trigger?.endMode);
+  triggerCreateEndChangeSideCents = clampTriggerSignedCents(trigger?.endChangeSideCents ?? 20);
+  triggerCreatePriceRanges = {
+    start: normalizeTriggerPriceRange(trigger?.priceRanges?.start),
+    end: normalizeTriggerPriceRange(trigger?.priceRanges?.end),
+  };
+  triggerCreatePtbGap = {
+    start:
+      trigger?.ptbGap?.start === "positive" || trigger?.ptbGap?.start === "negative"
+        ? trigger.ptbGap.start
+        : null,
+    end:
+      trigger?.ptbGap?.end === "positive" || trigger?.ptbGap?.end === "negative"
+        ? trigger.ptbGap.end
+        : null,
+  };
+  triggerCreateGapSize = {
+    start: normalizeTriggerGapSize(trigger?.gapSize?.start),
+    end: normalizeTriggerGapSize(trigger?.gapSize?.end),
+  };
+  applyTriggerDurationToInputs(trigger?.durationMs ?? 5000);
+  applyTriggerBuySharesToInput(trigger?.buyShares);
+  applyTriggerSellToInputs(
+    trigger?.takeProfitCents,
+    trigger?.stopLossCents,
+    trigger?.sellOrderType,
+  );
+  triggerCreateWindowArea = normalizeTriggerWindowArea(
+    trigger?.windowArea?.start ?? trigger?.windowAreaStart,
+    trigger?.windowArea?.end ?? trigger?.windowAreaEnd,
+  );
+  setTriggerCreateActiveTab("buy");
+  syncTriggerCreateColorIconContrast();
+  syncTriggerCreateSideUi();
+  syncTriggerCreateSubmitState();
+  for (const edge of ["start", "end"]) syncTriggerGapSizeControl(edge);
+  renderAllTriggerPriceRanges();
+  syncTriggerWindowAreaUi();
+  syncTriggerStatsPanel();
+  // Replay host has no Mongo Trade stats — skip fetch.
+  if (triggerCreateHost !== "replay" && trigger?.id) {
+    void fetchTriggerLiveStats(trigger.id).then(() => syncTriggerStatsPanel());
+  }
+}
+
+function buildTriggerFromCreateDraft() {
+  syncTriggerCreateNameDraft();
+  syncTriggerCreateColorDraft();
+  syncTriggerDurationDraft();
+  syncTriggerCreateBuySharesDraft();
+  syncTriggerCreateSellDraft();
+  const name = triggerCreateName;
+  if (!name) return null;
+  const endMode = normalizeTriggerEndMode(triggerCreateEndMode);
+  const existing =
+    triggerCreateEditingId != null
+      ? triggerCreateHost === "replay"
+        ? window.ScheduleReplayTriggers?.find?.(triggerCreateEditingId)
+        : userTriggers.find((t) => String(t?.id) === String(triggerCreateEditingId))
+      : null;
+  const id =
+    existing?.id != null
+      ? existing.id
+      : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `trg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  return normalizeTriggerRecord({
+    id,
+    name,
+    color: triggerCreateColor || "#58a6ff",
+    durationMs: triggerCreateDurationMs,
+    buyShares: normalizeTriggerBuyShares(triggerCreateBuyShares),
+    priceSide: triggerCreatePriceSide === "sell" ? "sell" : "buy",
+    endMode,
+    endChangeSideCents: clampTriggerSignedCents(triggerCreateEndChangeSideCents),
+    priceRanges: {
+      start: normalizeTriggerPriceRange(triggerCreatePriceRanges.start),
+      end: normalizeTriggerPriceRange(triggerCreatePriceRanges.end),
+    },
+    ptbGap: {
+      start: triggerCreatePtbGap.start === "positive" || triggerCreatePtbGap.start === "negative"
+        ? triggerCreatePtbGap.start
+        : null,
+      end: triggerCreatePtbGap.end === "positive" || triggerCreatePtbGap.end === "negative"
+        ? triggerCreatePtbGap.end
+        : null,
+    },
+    gapSize: {
+      start: normalizeTriggerGapSize(triggerCreateGapSize.start),
+      end: normalizeTriggerGapSize(triggerCreateGapSize.end),
+    },
+    takeProfitCents: clampTriggerOffsetCents(triggerCreateTakeProfitCents, 10),
+    stopLossCents: clampTriggerOffsetCents(triggerCreateStopLossCents, 10),
+    sellOrderType: normalizeTriggerSellOrderType(triggerCreateSellOrderType),
+    windowArea: normalizeTriggerWindowArea(
+      triggerCreateWindowArea.start,
+      triggerCreateWindowArea.end,
+    ),
+    runMode: existing?.runMode === "trade" ? "trade" : "demo",
+    paused: existing ? existing.paused !== false : true,
+    demoStats: normalizeTriggerDemoStats(existing?.demoStats),
+    createdAt:
+      typeof existing?.createdAt === "string" ? existing.createdAt : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function submitTriggerCreate() {
+  const trigger = buildTriggerFromCreateDraft();
+  if (!trigger) {
+    syncTriggerCreateSubmitState();
+    $("trigger-create-name")?.focus();
+    return;
+  }
+  if (triggerCreateHost === "replay") {
+    window.ScheduleReplayTriggers?.upsert?.(trigger);
+    closeTriggerCreateModal();
+    return;
+  }
+  if (triggerCreateEditingId) {
+    const idx = userTriggers.findIndex(
+      (t) => String(t?.id) === String(triggerCreateEditingId),
+    );
+    if (idx >= 0) userTriggers[idx] = trigger;
+    else userTriggers = [trigger, ...userTriggers];
+  } else {
+    userTriggers = [trigger, ...userTriggers];
+  }
+  saveUserTriggers();
+  renderTriggersList();
+  closeTriggerCreateModal();
+}
+
+function syncTriggerCreateColorDraft() {
+  const colorInput = $("trigger-create-color");
+  triggerCreateColor = colorInput?.value || "#58a6ff";
+  syncTriggerCreateColorIconContrast();
+}
+
+function syncTriggerCreateSideUi() {
+  const side = triggerCreatePriceSide === "sell" ? "sell" : "buy";
+  const mode = normalizeTriggerEndMode(triggerCreateEndMode);
+  const startEl = $("trigger-price-side-start");
+  const modeEl = $("trigger-end-mode");
+
+  if (startEl) {
+    startEl.value = side;
+    startEl.classList.toggle("is-buy", side === "buy");
+    startEl.classList.toggle("is-sell", side === "sell");
+  }
+
+  if (modeEl) {
+    const sideLabel = side === "sell" ? "SELL" : "BUY";
+    const rangeOpt = modeEl.querySelector('option[value="range"]');
+    const changeOpt = modeEl.querySelector('option[value="change-side"]');
+    if (rangeOpt) rangeOpt.textContent = `${sideLabel} Price Range`;
+    if (changeOpt) changeOpt.textContent = `${sideLabel} Price Change`;
+    modeEl.value = mode;
+    modeEl.classList.toggle("is-buy", side === "buy");
+    modeEl.classList.toggle("is-sell", side === "sell");
+  }
+
+  document.querySelectorAll(".trigger-price-column").forEach((col) => {
+    col.classList.toggle("is-buy", side === "buy");
+    col.classList.toggle("is-sell", side === "sell");
+  });
+}
+
+function syncTriggerCreateSideDraft(fromEl) {
+  const side = fromEl?.value === "sell" ? "sell" : "buy";
+  triggerCreatePriceSide = side;
+  syncTriggerCreateSideUi();
+}
+
+function syncTriggerCreateEndModeDraft() {
+  triggerCreateEndMode = normalizeTriggerEndMode($("trigger-end-mode")?.value);
+  syncTriggerCreateSideUi();
+  renderAllTriggerPriceRanges();
+}
+
+function resetTriggerCreateForm() {
+  const nameEl = $("trigger-create-name");
+  const colorEl = $("trigger-create-color");
+  const valueEl = $("trigger-duration-value");
+  const unitEl = $("trigger-duration-unit");
+  if (nameEl) nameEl.value = "";
+  if (colorEl) colorEl.value = "#58a6ff";
+  if (valueEl) valueEl.value = "5";
+  if (unitEl) unitEl.value = "s";
+  triggerCreateName = "";
+  triggerCreateColor = "#58a6ff";
+  triggerCreateDurationMs = 5000;
+  triggerCreatePriceSide = "buy";
+  triggerCreateEndMode = "range";
+  triggerCreateEndChangeSideCents = 20;
+  triggerCreatePriceRanges = {
+    start: { lowCents: 40, highCents: 70 },
+    end: { lowCents: 40, highCents: 70 },
+  };
+  triggerCreatePtbGap = { start: null, end: null };
+  triggerCreateGapSize = {
+    start: { bound: "min", value: 0 },
+    end: { bound: "min", value: 0 },
+  };
+  applyTriggerBuySharesToInput(10);
+  applyTriggerSellToInputs(10, 10, "FAK");
+  triggerCreateWindowArea = { start: 0, end: 1 };
+  setTriggerCreateActiveTab("buy");
+  syncTriggerCreateColorIconContrast();
+  syncTriggerCreateSideUi();
+  syncTriggerCreateSubmitState();
+  for (const edge of ["start", "end"]) syncTriggerGapSizeControl(edge);
+  renderAllTriggerPriceRanges();
+  syncTriggerWindowAreaUi();
+}
+
+function openTriggerCreateModal() {
+  openTriggerCreateModalForHost("market");
+}
+
+function openTriggerCreateModalForHost(host) {
+  const modal = $("trigger-create-modal");
+  if (!modal) return;
+  triggerCreateHost = host === "replay" ? "replay" : "market";
+  triggerCreateEditingId = null;
+  resetTriggerCreateForm();
+  syncTriggerCreateModalChrome();
+  modal.hidden = false;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      renderAllTriggerPriceRanges();
+      syncTriggerWindowAreaUi();
+      $("trigger-create-name")?.focus();
+    });
+  });
+}
+
+function openTriggerEditModal(trigger) {
+  openTriggerEditModalForHost("market", trigger);
+}
+
+function openTriggerEditModalForHost(host, trigger) {
+  const modal = $("trigger-create-modal");
+  if (!modal || !trigger?.id) return;
+  closeTriggerMenus();
+  triggerCreateHost = host === "replay" ? "replay" : "market";
+  triggerCreateEditingId = String(trigger.id);
+  fillTriggerCreateFormFromTrigger(trigger);
+  syncTriggerCreateModalChrome();
+  modal.hidden = false;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      renderAllTriggerPriceRanges();
+      syncTriggerWindowAreaUi();
+      $("trigger-create-name")?.focus();
+    });
+  });
+}
+
+function closeTriggerCreateModal() {
+  const modal = $("trigger-create-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  triggerCreateEditingId = null;
+  triggerCreateHost = "market";
+  syncTriggerCreateModalChrome();
+}
+
+window.openTriggerCreateModalForHost = openTriggerCreateModalForHost;
+window.openTriggerEditModalForHost = openTriggerEditModalForHost;
+
+function bindTriggerCreateModal() {
+  loadUserTriggers();
+  renderTriggersList();
+  $("triggers-create-btn")?.addEventListener("click", () => {
+    openTriggerCreateModal();
+  });
+  $("trigger-create-modal-close")?.addEventListener("click", () => {
+    closeTriggerCreateModal();
+  });
+  $("trigger-create-cancel")?.addEventListener("click", () => {
+    closeTriggerCreateModal();
+  });
+  $("trigger-create-submit")?.addEventListener("click", () => {
+    submitTriggerCreate();
+  });
+  $("trigger-create-modal")?.addEventListener("click", (e) => {
+    if (e.target.id === "trigger-create-modal") closeTriggerCreateModal();
+  });
+  const tablist = $("trigger-create-modal")?.querySelector(".trigger-create-tabs");
+  tablist?.addEventListener("click", (e) => {
+    const tab = e.target.closest?.("[data-trigger-tab]");
+    if (!tab || !tablist.contains(tab)) return;
+    setTriggerCreateActiveTab(tab.getAttribute("data-trigger-tab"));
+  });
+  tablist?.addEventListener("keydown", (e) => {
+    const current = e.target.closest?.("[data-trigger-tab]");
+    if (!current || !tablist.contains(current)) return;
+    const tabs = [...tablist.querySelectorAll("[data-trigger-tab]")];
+    const idx = tabs.indexOf(current);
+    if (idx < 0) return;
+    let nextIdx = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") nextIdx = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    } else if (e.key === "Home") nextIdx = 0;
+    else if (e.key === "End") nextIdx = tabs.length - 1;
+    if (nextIdx < 0) return;
+    e.preventDefault();
+    const next = tabs[nextIdx];
+    setTriggerCreateActiveTab(next.getAttribute("data-trigger-tab"));
+    next.focus();
+  });
+  $("trigger-create-name")?.addEventListener("input", () => {
+    syncTriggerCreateNameDraft();
+  });
+  $("trigger-create-color")?.addEventListener("input", () => {
+    syncTriggerCreateColorDraft();
+  });
+  $("trigger-buy-shares")?.addEventListener("input", () => {
+    syncTriggerCreateBuySharesDraft();
+  });
+  $("trigger-buy-shares")?.addEventListener("change", () => {
+    syncTriggerCreateBuySharesDraft();
+  });
+  $("trigger-sell-order-type")?.addEventListener("change", () => {
+    syncTriggerCreateSellDraft();
+  });
+  $("trigger-take-profit")?.addEventListener("input", () => {
+    syncTriggerCreateSellDraft();
+  });
+  $("trigger-take-profit")?.addEventListener("change", () => {
+    syncTriggerCreateSellDraft();
+  });
+  $("trigger-stop-loss")?.addEventListener("input", () => {
+    syncTriggerCreateSellDraft();
+  });
+  $("trigger-stop-loss")?.addEventListener("change", () => {
+    syncTriggerCreateSellDraft();
+  });
+  $("trigger-price-side-start")?.addEventListener("change", (e) => {
+    syncTriggerCreateSideDraft(e.currentTarget);
+  });
+  $("trigger-end-mode")?.addEventListener("change", () => {
+    syncTriggerCreateEndModeDraft();
+  });
+  document.querySelectorAll(".trigger-gap-size-control").forEach((control) => {
+    const edge = control.dataset.edge;
+    if (edge !== "start" && edge !== "end") return;
+    control.querySelector("[data-gap-bound]")?.addEventListener("change", (e) => {
+      const bound = e.currentTarget.value === "max" ? "max" : "min";
+      triggerCreateGapSize[edge] = normalizeTriggerGapSize({
+        ...triggerCreateGapSize[edge],
+        bound,
+      });
+      syncTriggerGapSizeControl(edge);
+    });
+    control.querySelector("[data-gap-value]")?.addEventListener("input", (e) => {
+      const value = Number(e.currentTarget.value);
+      triggerCreateGapSize[edge] = normalizeTriggerGapSize({
+        ...triggerCreateGapSize[edge],
+        value: Number.isFinite(value) ? value : 0,
+      });
+      control.classList.toggle("is-any-size", triggerCreateGapSize[edge].value <= 0);
+    });
+    control.querySelector("[data-gap-value]")?.addEventListener("change", (e) => {
+      const value = Number(e.currentTarget.value);
+      triggerCreateGapSize[edge] = normalizeTriggerGapSize({
+        ...triggerCreateGapSize[edge],
+        value: Number.isFinite(value) ? value : 0,
+      });
+      syncTriggerGapSizeControl(edge);
+    });
+  });
+  $("trigger-duration-value")?.addEventListener("input", () => {
+    syncTriggerDurationDraft();
+  });
+  $("trigger-duration-value")?.addEventListener("change", () => {
+    syncTriggerDurationDraft();
+  });
+  $("trigger-duration-unit")?.addEventListener("change", () => {
+    syncTriggerDurationDraft();
+  });
+  bindTriggerPriceRangeDrag();
+  bindTriggerWindowAreaSlider();
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const modal = $("trigger-create-modal");
+    if (!modal || modal.hidden) return;
+    closeTriggerCreateModal();
+  });
+}
+
 function syncSetupSaveSubmitState() {
   const title = $("setup-save-title")?.value?.trim() ?? "";
   const btn = $("setup-save-submit");
@@ -4289,6 +6242,7 @@ window.getLiveFillSuccessPct = () => {
 
 function closeSetupMenus() {
   openSetupMenuId = null;
+  openTriggerMenuId = null;
   document.querySelectorAll(".schedule-setup-menu").forEach((m) => m.remove());
 }
 
@@ -7323,10 +9277,573 @@ function isInManipulationArea(state, areaStart, areaEnd) {
   return frac >= areaStart && frac <= areaEnd;
 }
 
+/** Per-trigger runtime: watching start→end pattern, or open TP/SL position. */
+const triggerRuntimeById = new Map();
+/**
+ * Chart overlays for fired trigger buys in the current market window.
+ * Each hit: duration band (watch→buy) + buy dot.
+ * @type {Array<{
+ *   triggerId: string,
+ *   windowStart: number,
+ *   side: "up" | "down",
+ *   watchStartSec: number,
+ *   buySec: number,
+ *   y: number | null,
+ * }>}
+ */
+let triggerChartHits = [];
+
+function clearTriggerRuntime(triggerId) {
+  const id = String(triggerId || "");
+  if (!id) {
+    triggerRuntimeById.clear();
+    return;
+  }
+  triggerRuntimeById.delete(id);
+}
+
+function getOrCreateTriggerRuntime(triggerId) {
+  const id = String(triggerId || "");
+  let rt = triggerRuntimeById.get(id);
+  if (!rt) {
+    rt = {
+      phase: "idle",
+      side: null,
+      watchStartedAtMs: null,
+      startPriceCents: null,
+      entryPrice: null,
+      entryShares: 10,
+      takeProfitCents: 10,
+      stopLossCents: 10,
+      sellOrderType: "FAK",
+      runMode: "demo",
+      orderInFlight: false,
+      windowStart: null,
+    };
+    triggerRuntimeById.set(id, rt);
+  }
+  return rt;
+}
+
+function triggerStillHolding(state, side) {
+  if (!side) return false;
+  const pos = tradingState(state)?.positions?.[side];
+  return Boolean(pos && Number(pos.shares) > 0);
+}
+
+function clearTriggerChartHits() {
+  triggerChartHits = [];
+}
+
+function syncTriggerChartHitsWindow(windowStart) {
+  if (windowStart == null || !Number.isFinite(windowStart)) {
+    if (triggerChartHits.length) clearTriggerChartHits();
+    return;
+  }
+  if (triggerChartHits.some((h) => h.windowStart !== windowStart)) {
+    triggerChartHits = triggerChartHits.filter((h) => h.windowStart === windowStart);
+  }
+}
+
+function recordTriggerChartHit(trigger, rt, state, side) {
+  // Demo still collects stats, but while Allow trade is On keep the chart clean
+  // (no duration bands / buy dots for demo hits).
+  if (rt?.runMode !== "trade" && isTriggerTradeArmed()) return;
+  const windowStart = Number(state?.windowStart);
+  if (!Number.isFinite(windowStart)) return;
+  syncTriggerChartHitsWindow(windowStart);
+  const buySec = Date.now() / 1000;
+  const durationSec = Math.max(0.001, (Number(trigger.durationMs) || 5000) / 1000);
+  const watchFromRt =
+    Number.isFinite(rt.watchStartedAtMs) && rt.watchStartedAtMs > 0
+      ? rt.watchStartedAtMs / 1000
+      : buySec - durationSec;
+  const watchStartSec = Math.max(windowStart, Math.min(buySec, watchFromRt));
+  const y = Number(state?.assetPrice);
+  triggerChartHits.push({
+    triggerId: String(trigger.id || ""),
+    windowStart,
+    side: side === "down" ? "down" : "up",
+    watchStartSec,
+    buySec,
+    y: Number.isFinite(y) ? y : null,
+  });
+}
+
+function drawTriggerChartHits(ctx, layout) {
+  if (!ctx || !layout?.windowStart || !layout.windowEnd || !layout.xAt) return;
+  syncTriggerChartHitsWindow(layout.windowStart);
+  if (!triggerChartHits.length) return;
+  const { padding, plotH, xAt, yAt } = layout;
+  const bandH = Math.max(14, Math.min(28, plotH * 0.12));
+  for (const hit of triggerChartHits) {
+    if (hit.windowStart !== layout.windowStart) continue;
+    const bandStart = Math.max(layout.windowStart, Number(hit.watchStartSec));
+    const bandEnd = Math.min(layout.windowEnd, Number(hit.buySec));
+    if (!(bandEnd > bandStart)) continue;
+    const x0 = xAt(bandStart);
+    const x1 = xAt(bandEnd);
+    const w = Math.max(2, x1 - x0);
+    const isUp = hit.side === "up";
+    ctx.fillStyle = isUp ? "rgba(46, 160, 67, 0.22)" : "rgba(248, 81, 73, 0.22)";
+    ctx.fillRect(x0, padding.top, w, bandH);
+    ctx.strokeStyle = isUp ? "rgba(46, 160, 67, 0.55)" : "rgba(248, 81, 73, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + 0.5, padding.top + 0.5, w - 1, bandH - 1);
+
+    const buyX = xAt(Math.min(layout.windowEnd, Math.max(layout.windowStart, Number(hit.buySec))));
+    let buyY = padding.top + plotH / 2;
+    if (hit.y != null && Number.isFinite(hit.y) && typeof yAt === "function") {
+      buyY = yAt(hit.y);
+    }
+    ctx.beginPath();
+    ctx.arc(buyX, buyY, 5, 0, Math.PI * 2);
+    ctx.fillStyle = isUp ? "#2ea043" : "#f85149";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(13, 17, 23, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+function isTriggerTradeArmed() {
+  return Boolean($("start-trading")?.checked);
+}
+
+function triggerQuoteCents(state, marketSide, priceSide) {
+  const useBid = priceSide === "sell";
+  if (marketSide === "up") {
+    const v = useBid ? Number(state.yesBid) : Number(state.yesAsk);
+    return Number.isFinite(v) ? v * 100 : NaN;
+  }
+  const v = useBid ? Number(state.noBid) : Number(state.noAsk);
+  return Number.isFinite(v) ? v * 100 : NaN;
+}
+
+function triggerBidCents(state, marketSide) {
+  const v = marketSide === "up" ? Number(state.yesBid) : Number(state.noBid);
+  return Number.isFinite(v) ? v * 100 : NaN;
+}
+
+function triggerAskPrice(state, marketSide) {
+  const v = marketSide === "up" ? Number(state.yesAsk) : Number(state.noAsk);
+  return Number.isFinite(v) ? v : NaN;
+}
+
+function triggerGapMatches(state, kind, gapSizeRaw) {
+  if (kind !== "positive" && kind !== "negative") return true;
+  const gap = Number(state.assetGap);
+  if (!Number.isFinite(gap)) return false;
+  if (kind === "positive" && !(gap > 0)) return false;
+  if (kind === "negative" && !(gap < 0)) return false;
+  const size = normalizeTriggerGapSize(gapSizeRaw);
+  if (!(size.value > 0)) return true;
+  const abs = Math.abs(gap);
+  return size.bound === "max" ? abs <= size.value : abs >= size.value;
+}
+
+function triggerPriceInRange(cents, range) {
+  const band = normalizeTriggerPriceRange(range);
+  return Number.isFinite(cents) && cents >= band.lowCents && cents <= band.highCents;
+}
+
+function triggerEndConditionMet(trigger, startPriceCents, endPriceCents) {
+  const mode = trigger.endMode === "change-side" ? "change-side" : "range";
+  if (mode === "change-side") {
+    if (!Number.isFinite(startPriceCents) || !Number.isFinite(endPriceCents)) return false;
+    const need = clampTriggerSignedCents(trigger.endChangeSideCents);
+    const delta = endPriceCents - startPriceCents;
+    if (need >= 0) return delta >= need;
+    return delta <= need;
+  }
+  return triggerPriceInRange(endPriceCents, trigger.priceRanges?.end);
+}
+
+/** Max Ask (¢) for the FOK buy — must not walk the book above the diagram band high. */
+function triggerBuyMaxAskCents(trigger) {
+  if (trigger?.endMode === "change-side") {
+    return normalizeTriggerPriceRange(trigger?.priceRanges?.start).highCents;
+  }
+  return normalizeTriggerPriceRange(trigger?.priceRanges?.end).highCents;
+}
+
+async function placeTriggerTradeOrder(side, leg, extras = {}) {
+  if (!isTriggerTradeArmed()) return { ok: false, skipped: true };
+  if (side !== "up" && side !== "down") return { ok: false, error: "bad side" };
+  if (leg !== "buy" && leg !== "sell") return { ok: false, error: "bad leg" };
+  const result = await postTradingOrder(side, leg, { source: "trigger", ...extras });
+  if (!result.ok) {
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Trigger Trade ${leg.toUpperCase()} ${side.toUpperCase()} failed: ${
+        result.body?.error || result.status || "order failed"
+      }`,
+    });
+  } else {
+    appendLogEntry({
+      level: "info",
+      source: "client",
+      message: `Trigger Trade ${leg.toUpperCase()} ${side.toUpperCase()} placed`,
+    });
+  }
+  return result;
+}
+
+async function postTriggerLiveStatsEvent(triggerId, result, pnlUsd, exitReason) {
+  const id = String(triggerId || "");
+  if (!id) return;
+  try {
+    const res = await fetch(`/api/triggers/${encodeURIComponent(id)}/stats/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result, pnlUsd, exitReason }),
+    });
+    if (!res.ok) return;
+    const body = await res.json().catch(() => null);
+    if (body && typeof body === "object") {
+      triggerLiveStatsCache[id] = normalizeTriggerDemoStats(body);
+      updateTriggerCardStats(id);
+      if (triggerCreateEditingId && String(triggerCreateEditingId) === id) {
+        syncTriggerStatsPanel();
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function recordTriggerDemoStats(triggerId, result, pnlUsd, exitReason) {
+  const trigger = findUserTrigger(triggerId);
+  if (!trigger || trigger.paused !== false || trigger.runMode === "trade") return;
+  const demo = normalizeTriggerDemoStats(trigger.demoStats);
+  if (result === "success") demo.success += 1;
+  else if (result === "blue") demo.blue += 1;
+  else demo.fail += 1;
+  if (exitReason === "tp") demo.takeProfit += 1;
+  else if (exitReason === "sl") demo.stopLoss += 1;
+  demo.pnlUsd += Number.isFinite(pnlUsd) ? pnlUsd : 0;
+  patchUserTrigger(triggerId, { demoStats: demo });
+  updateTriggerCardStats(triggerId);
+}
+
+function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
+  const entry = Number(rt.entryPrice);
+  const shares = Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares);
+  const exit = Number(exitPrice);
+  const pnlUsd =
+    Number.isFinite(entry) && Number.isFinite(exit) ? (exit - entry) * shares : 0;
+  let result;
+  if (reason === "window-end" && opts.heldWon === true) result = "blue";
+  else if (reason === "window-end" && opts.heldWon === false) result = "fail";
+  else if (reason === "window-end" && opts.heldWon == null) {
+    result = pnlUsd > 0 ? "blue" : "fail";
+  } else {
+    result = pnlUsd > 0 ? "success" : "fail";
+  }
+
+  const label = String(trigger.name || "Untitled trigger");
+  appendLogEntry({
+    level: "info",
+    source: "client",
+    message: `Trigger "${label}" ${rt.runMode} ${result} (${reason}) P/L ${formatTriggerStatsPnl(pnlUsd)}`,
+  });
+
+  if (rt.runMode === "trade") {
+    void postTriggerLiveStatsEvent(trigger.id, result, pnlUsd, reason);
+  } else {
+    recordTriggerDemoStats(trigger.id, result, pnlUsd, reason);
+  }
+
+  // Flat → idle so the same card can fire again when conditions rematch.
+  rt.phase = "idle";
+  rt.side = null;
+  rt.watchStartedAtMs = null;
+  rt.startPriceCents = null;
+  rt.entryPrice = null;
+  rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
+  rt.orderInFlight = false;
+}
+
+function settleTriggerHeldToWindowEnd(trigger, rt, state) {
+  const outcome =
+    state?.outcome === "up" || state?.outcome === "down" ? state.outcome : null;
+  const won = outcome && rt.side ? outcome === rt.side : null;
+  const exitPrice =
+    won === true ? 1 : won === false ? 0 : Number(rt.entryPrice);
+  settleTriggerOpenPosition(trigger, rt, exitPrice, "window-end", { heldWon: won });
+}
+
+async function openTriggerPosition(trigger, rt, state, side) {
+  if (rt.orderInFlight || rt.phase === "open" || rt.phase === "opening") return;
+  const runMode = trigger.runMode === "trade" ? "trade" : "demo";
+  const buyShares = normalizeTriggerBuyShares(trigger.buyShares);
+  const sellOrderType = normalizeTriggerSellOrderType(trigger.sellOrderType);
+  const watchStartedAtMs = Number(rt.watchStartedAtMs);
+  rt.runMode = runMode;
+  rt.phase = "opening";
+  rt.side = side;
+  rt.takeProfitCents = clampTriggerOffsetCents(trigger.takeProfitCents ?? 10, 10);
+  rt.stopLossCents = clampTriggerOffsetCents(trigger.stopLossCents ?? 10, 10);
+  rt.sellOrderType = sellOrderType;
+
+  if (runMode === "trade") {
+    if (!isTriggerTradeArmed()) {
+      appendLogEntry({
+        level: "warn",
+        source: "client",
+        message: `Trigger "${trigger.name || "Untitled"}" Trade idle — Allow trade is off`,
+      });
+      rt.phase = "idle";
+      rt.side = null;
+      rt.watchStartedAtMs = null;
+      return;
+    }
+    rt.orderInFlight = true;
+    const result = await placeTriggerTradeOrder(side, "buy", {
+      shares: buyShares,
+      orderType: "FOK",
+      // TP offset 100 = disabled — do not rest a GTD take-profit sell.
+      sellOrderType:
+        isTriggerExitDisabled(rt.takeProfitCents) && sellOrderType === "GTD"
+          ? "FAK"
+          : sellOrderType,
+      takeProfitCents: rt.takeProfitCents,
+    });
+    rt.orderInFlight = false;
+    if (!result.ok) {
+      rt.phase = "idle";
+      rt.side = null;
+      rt.watchStartedAtMs = null;
+      return;
+    }
+    const fillPrice = Number(result.body?.fillPrice);
+    const fillShares = Number(result.body?.fillShares);
+    rt.entryPrice = Number.isFinite(fillPrice) ? fillPrice : triggerAskPrice(state, side);
+    rt.entryShares = Number.isFinite(fillShares) && fillShares > 0 ? fillShares : buyShares;
+  } else {
+    const ask = triggerAskPrice(state, side);
+    const maxAskCents = triggerBuyMaxAskCents(trigger);
+    if (!Number.isFinite(ask) || ask * 100 > maxAskCents + 1e-6) {
+      rt.phase = "idle";
+      rt.side = null;
+      rt.watchStartedAtMs = null;
+      return;
+    }
+    rt.entryPrice = ask;
+    rt.entryShares = buyShares;
+    appendLogEntry({
+      level: "info",
+      source: "client",
+      message: `Trigger "${trigger.name || "Untitled"}" Demo buy ${side.toUpperCase()} ${buyShares} sh @ ${(ask * 100).toFixed(1)}¢ (${sellOrderType} sell)`,
+    });
+  }
+
+  // Preserve watch start for the chart duration band, then clear watch state.
+  rt.watchStartedAtMs = Number.isFinite(watchStartedAtMs) ? watchStartedAtMs : rt.watchStartedAtMs;
+  recordTriggerChartHit(trigger, rt, state, side);
+  rt.phase = "open";
+  rt.side = side;
+  rt.watchStartedAtMs = null;
+  rt.startPriceCents = null;
+  if (windowState) drawPriceChart(windowState);
+}
+
+async function forceTriggerMarketSell(trigger, rt, state, reason) {
+  if (!rt.side || rt.orderInFlight) return;
+  const bidCents = triggerBidCents(state, rt.side);
+  const exitPrice = Number.isFinite(bidCents) ? bidCents / 100 : Number(rt.entryPrice);
+  // Aggressive exits (TP/SL/window) are FAK by default; FOK only when Sell type is FOK.
+  // GTD SL / window-end also use FAK after cancelling the resting TP.
+  const sellType = rt.sellOrderType === "FOK" ? "FOK" : "FAK";
+
+  if (rt.runMode === "trade") {
+    if (!isTriggerTradeArmed()) return;
+    rt.orderInFlight = true;
+    const result = await placeTriggerTradeOrder(rt.side, "sell", { orderType: sellType });
+    rt.orderInFlight = false;
+    if (result.skipped) return;
+    if (!result.ok) {
+      // Keep retrying on later ticks until flat.
+      return;
+    }
+    const remaining = Number(result.body?.remainingShares);
+    if (Number.isFinite(remaining) && remaining > 0) {
+      // Partial FAK — stay open and retry next tick.
+      return;
+    }
+    const fillPrice = Number(result.body?.fillPrice);
+    settleTriggerOpenPosition(
+      trigger,
+      rt,
+      Number.isFinite(fillPrice) ? fillPrice : exitPrice,
+      reason,
+    );
+    return;
+  }
+
+  settleTriggerOpenPosition(trigger, rt, exitPrice, reason);
+}
+
+async function maybeExitTriggerPosition(trigger, rt, state) {
+  if (rt.phase !== "open" || !rt.side || rt.orderInFlight) return;
+  const sellOrderType = normalizeTriggerSellOrderType(rt.sellOrderType || trigger.sellOrderType);
+  rt.sellOrderType = sellOrderType;
+
+  const tpEnabled = !isTriggerExitDisabled(rt.takeProfitCents);
+  const slEnabled = !isTriggerExitDisabled(rt.stopLossCents);
+
+  // GTD: resting TP was placed on buy fill — settle when flat (filled) or SL market-sell.
+  if (sellOrderType === "GTD" && rt.runMode === "trade") {
+    if (tpEnabled && !triggerStillHolding(state, rt.side)) {
+      const bidCents = triggerBidCents(state, rt.side);
+      const exitPrice = Number.isFinite(bidCents) ? bidCents / 100 : Number(rt.entryPrice);
+      settleTriggerOpenPosition(trigger, rt, exitPrice, "tp");
+      return;
+    }
+    if (!slEnabled) return;
+    const bidCents = triggerBidCents(state, rt.side);
+    if (!Number.isFinite(bidCents)) return;
+    const targets = triggerExitTargetsFromFill(
+      rt.entryPrice,
+      rt.takeProfitCents,
+      rt.stopLossCents,
+    );
+    if (targets && bidCents <= targets.slCents) {
+      await forceTriggerMarketSell(trigger, rt, state, "sl");
+    }
+    return;
+  }
+
+  if (!tpEnabled && !slEnabled) return;
+  const bidCents = triggerBidCents(state, rt.side);
+  if (!Number.isFinite(bidCents)) return;
+  const targets = triggerExitTargetsFromFill(
+    rt.entryPrice,
+    rt.takeProfitCents,
+    rt.stopLossCents,
+  );
+  if (!targets) return;
+  const hitTp = tpEnabled && bidCents >= targets.tpCents;
+  const hitSl = slEnabled && bidCents <= targets.slCents;
+  if (!hitTp && !hitSl) return;
+
+  const reason = hitTp ? "tp" : "sl";
+  await forceTriggerMarketSell(trigger, rt, state, reason);
+}
+
+function tickUserTriggers(state) {
+  if (!state || !isPredictionTriggerHost()) return;
+  if (!Array.isArray(userTriggers) || userTriggers.length === 0) return;
+
+  const nowMs = Date.now();
+  const windowEnded =
+    state.windowEnd != null &&
+    Number.isFinite(state.windowEnd) &&
+    nowMs >= state.windowEnd * 1000;
+
+  for (const trigger of userTriggers) {
+    const id = String(trigger?.id || "");
+    if (!id) continue;
+    const rt = getOrCreateTriggerRuntime(id);
+
+    if (rt.windowStart != null && state.windowStart !== rt.windowStart) {
+      if (rt.phase === "open") {
+        settleTriggerHeldToWindowEnd(trigger, rt, state);
+      }
+      rt.phase = "idle";
+      rt.side = null;
+      rt.watchStartedAtMs = null;
+      rt.startPriceCents = null;
+      clearTriggerChartHits();
+    }
+    rt.windowStart = state.windowStart ?? null;
+    syncTriggerChartHitsWindow(state.windowStart);
+
+    if (trigger.paused !== false) {
+      if (rt.phase !== "idle") {
+        rt.phase = "idle";
+        rt.side = null;
+        rt.watchStartedAtMs = null;
+        rt.startPriceCents = null;
+      }
+      continue;
+    }
+
+    if (rt.phase === "open") {
+      if (windowEnded) {
+        settleTriggerHeldToWindowEnd(trigger, rt, state);
+        continue;
+      }
+      void maybeExitTriggerPosition(trigger, rt, state);
+      continue;
+    }
+
+    if (windowEnded) {
+      rt.phase = "idle";
+      rt.watchStartedAtMs = null;
+      continue;
+    }
+
+    const area = normalizeTriggerWindowArea(
+      trigger.windowArea?.start,
+      trigger.windowArea?.end,
+    );
+    if (!isInManipulationArea(state, area.start, area.end)) {
+      if (rt.phase === "watching") {
+        rt.phase = "idle";
+        rt.side = null;
+        rt.watchStartedAtMs = null;
+        rt.startPriceCents = null;
+      }
+      continue;
+    }
+
+    if (trigger.runMode === "trade" && !isTriggerTradeArmed()) {
+      continue;
+    }
+
+    const priceSide = trigger.priceSide === "sell" ? "sell" : "buy";
+    const durationMs = Math.max(1, Number(trigger.durationMs) || 5000);
+    const startGapOk = triggerGapMatches(state, trigger.ptbGap?.start, trigger.gapSize?.start);
+    const endGapOk = triggerGapMatches(state, trigger.ptbGap?.end, trigger.gapSize?.end);
+
+    if (rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
+      if (nowMs - rt.watchStartedAtMs < durationMs) continue;
+      const endCents = triggerQuoteCents(state, rt.side, priceSide);
+      if (
+        endGapOk &&
+        triggerEndConditionMet(trigger, rt.startPriceCents, endCents)
+      ) {
+        void openTriggerPosition(trigger, rt, state, rt.side);
+      } else {
+        rt.phase = "idle";
+        rt.side = null;
+        rt.watchStartedAtMs = null;
+        rt.startPriceCents = null;
+      }
+      continue;
+    }
+
+    if (!startGapOk) continue;
+
+    for (const side of ["up", "down"]) {
+      const startCents = triggerQuoteCents(state, side, priceSide);
+      if (!triggerPriceInRange(startCents, trigger.priceRanges?.start)) continue;
+      rt.phase = "watching";
+      rt.side = side;
+      rt.watchStartedAtMs = nowMs;
+      rt.startPriceCents = startCents;
+      break;
+    }
+  }
+}
+
 function tickManipulationDetector(state) {
   if (!state) return;
   // Settings sync everywhere; detection/scoring only on the deployed host.
   if (!isPredictionTriggerHost()) return;
+  tickUserTriggers(state);
 
   // Capture Chainlink close/PTB only for the Prediction's own window while Active.
   // Once Pending, freeze those values — never overwrite with the next window's ticks
@@ -7549,6 +10066,9 @@ function applyTradingConfigToUi(config) {
   if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
   if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
   if (startTradingInput) startTradingInput.checked = Boolean(config.startTrading);
+  if (!config.startTrading) {
+    forceTradeTriggersToDemo("Allow trade off");
+  }
   if (buyTypeSelect) buyTypeSelect.value = normalizeManualOrderType(config.manualBuyOrderType);
   if (sellTypeSelect) sellTypeSelect.value = normalizeManualOrderType(config.manualSellOrderType);
   if (manipInput) manipInput.checked = Boolean(config.manipulationDetector);
@@ -7711,8 +10231,11 @@ function bindTradeToggles() {
 
   startTradingInput.addEventListener("change", async () => {
     // Allow trade only switches real vs demo — leave Auto Trade / Use Schedule alone.
-    // Turning Allow trade off forces Prediction Trade off.
+    // Turning Allow trade off forces Prediction Trade off and Trigger cards off Trade.
     syncPredictionTradeEnabled();
+    if (!startTradingInput.checked) {
+      forceTradeTriggersToDemo("Allow trade off");
+    }
     const patch = buildTradingConfigPatch();
     writeLocalTradingConfig(patch);
     const config = await pushTradingConfig(patch);
@@ -7926,7 +10449,7 @@ function bindPageToggle() {
           const needsInit = !inlineTrade;
           if (needsInit) {
             const { maxContent } = leftColumnLayout.getMetrics();
-            leftColumnLayout.applyHeights(0, maxContent, 0);
+            leftColumnLayout.applyHeights(0, maxContent, 0, 0);
           } else {
             leftColumnLayout.reflowHeights();
           }
@@ -7985,6 +10508,7 @@ async function init() {
   initLeftRowSplitter();
   bindLeftColumnRail();
   bindMarketColumnRail();
+  bindTriggerCreateModal();
   // Keep collapsed rails hidden until layout + split % are known (avoids flash on refresh).
   syncLeftColumnRail();
   syncMarketColumnRail();
@@ -8043,6 +10567,8 @@ async function enterApp(user, options = {}) {
   }
   if (appInitialized) {
     demoPositionCards = loadDemoPositionCards();
+    loadUserTriggers();
+    renderTriggersList();
     void loadWalletAccount();
     void loadSettingsUser();
     return;
