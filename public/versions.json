@@ -1,6 +1,11 @@
 {
-  "current": "1.27.0",
+  "current": "1.28.0",
   "releases": [
+    {
+      "version": "1.28.0",
+      "releasedAt": "2026-07-31T15:35:34.592Z",
+      "notes": "Market + Replay Triggers: create/edit cards, TP/SL as ¢ offsets from fill (100=off), FOK buys capped to band high, held wins as blue dots, Replay Duration bands and trigger stats. Docs updated."
+    },
     {
       "version": "1.27.0",
       "releasedAt": "2026-07-30T14:42:39.177Z",
