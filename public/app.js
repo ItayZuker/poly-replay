@@ -4299,10 +4299,13 @@ let triggerCreateActiveTab = "buy";
 let triggerWindowAreaDrag = null;
 
 const USER_TRIGGERS_STORAGE_KEY = "detector-triggers-v1";
+const USER_TRIGGERS_MIGRATED_KEY = "detector-triggers-migrated-v1";
 /** @type {Array<Record<string, unknown>>} */
 let userTriggers = [];
 /** Cached Mongo Trade stats by trigger id. */
 const triggerLiveStatsCache = Object.create(null);
+/** In-flight persist tokens so stale responses do not overwrite newer edits. */
+const triggerPersistGenById = Object.create(null);
 /** When set, the create modal updates this trigger id instead of inserting. */
 let triggerCreateEditingId = null;
 /** "market" | "replay" — where Create/Edit Trigger saves. */
@@ -5008,6 +5011,32 @@ function userTriggersStorageKey() {
   return userScopedStorageKey(USER_TRIGGERS_STORAGE_KEY);
 }
 
+function userTriggersMigratedKey() {
+  return userScopedStorageKey(USER_TRIGGERS_MIGRATED_KEY);
+}
+
+function readLocalUserTriggers() {
+  try {
+    const raw = localStorage.getItem(userTriggersStorageKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map(normalizeTriggerRecord).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function clearLocalUserTriggers() {
+  try {
+    localStorage.removeItem(userTriggersStorageKey());
+    localStorage.setItem(userTriggersMigratedKey(), "1");
+  } catch {
+    /* ignore */
+  }
+}
+
 function normalizeTriggerDemoStats(raw) {
   const success = Math.max(0, Math.round(Number(raw?.success) || 0));
   const fail = Math.max(0, Math.round(Number(raw?.fail) || 0));
@@ -5065,28 +5094,94 @@ function normalizeTriggerRecord(raw) {
   };
 }
 
-function loadUserTriggers() {
+/**
+ * Load Market Triggers from Mongo (per user). One-time migrate from browser localStorage
+ * when the server list is empty. Replay Triggers stay in localStorage via ScheduleReplayTriggers.
+ */
+async function loadUserTriggers() {
   try {
-    const raw = localStorage.getItem(userTriggersStorageKey());
-    if (!raw) {
-      userTriggers = [];
-      return userTriggers;
-    }
-    const parsed = JSON.parse(raw);
-    userTriggers = Array.isArray(parsed)
-      ? parsed.map(normalizeTriggerRecord).filter(Boolean)
+    const res = await fetch("/api/triggers", { credentials: "same-origin" });
+    if (!res.ok) throw new Error(`triggers ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    let list = Array.isArray(body?.triggers)
+      ? body.triggers.map(normalizeTriggerRecord).filter(Boolean)
       : [];
+    const local = readLocalUserTriggers();
+    const migrated = localStorage.getItem(userTriggersMigratedKey()) === "1";
+    if (list.length === 0 && local.length > 0 && !migrated) {
+      const mig = await fetch("/api/triggers/migrate", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ triggers: local }),
+      });
+      if (mig.ok) {
+        const migBody = await mig.json().catch(() => ({}));
+        list = Array.isArray(migBody?.triggers)
+          ? migBody.triggers.map(normalizeTriggerRecord).filter(Boolean)
+          : local;
+        clearLocalUserTriggers();
+      } else {
+        list = local;
+      }
+    } else if (list.length > 0 && local.length > 0) {
+      clearLocalUserTriggers();
+    }
+    userTriggers = list;
   } catch {
-    userTriggers = [];
+    const local = readLocalUserTriggers();
+    if (local.length > 0) userTriggers = local;
   }
   return userTriggers;
 }
 
-function saveUserTriggers() {
+async function persistUserTrigger(trigger) {
+  const record = normalizeTriggerRecord(trigger);
+  if (!record) return null;
+  const id = String(record.id);
+  const gen = (triggerPersistGenById[id] = (triggerPersistGenById[id] || 0) + 1);
   try {
-    localStorage.setItem(userTriggersStorageKey(), JSON.stringify(userTriggers));
+    const res = await fetch(`/api/triggers/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+    if (!res.ok) return null;
+    const saved = normalizeTriggerRecord(await res.json().catch(() => null));
+    if (!saved || gen !== triggerPersistGenById[id]) return saved;
+    const idx = userTriggers.findIndex((t) => String(t?.id) === id);
+    if (idx >= 0) userTriggers[idx] = saved;
+    else userTriggers = [saved, ...userTriggers];
+    return saved;
   } catch {
-    /* ignore quota / private mode */
+    return null;
+  }
+}
+
+async function persistUserTriggerPatch(id, patch) {
+  const key = String(id || "");
+  if (!key) return null;
+  const gen = (triggerPersistGenById[key] = (triggerPersistGenById[key] || 0) + 1);
+  try {
+    const res = await fetch(`/api/triggers/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.status === 404) {
+      const local = findUserTrigger(key);
+      return local ? persistUserTrigger(local) : null;
+    }
+    if (!res.ok) return null;
+    const saved = normalizeTriggerRecord(await res.json().catch(() => null));
+    if (!saved || gen !== triggerPersistGenById[key]) return saved;
+    const idx = userTriggers.findIndex((t) => String(t?.id) === key);
+    if (idx >= 0) userTriggers[idx] = saved;
+    return saved;
+  } catch {
+    return null;
   }
 }
 
@@ -5100,7 +5195,7 @@ function patchUserTrigger(id, patch) {
   const idx = userTriggers.findIndex((t) => String(t?.id) === key);
   if (idx < 0) return null;
   userTriggers[idx] = normalizeTriggerRecord({ ...userTriggers[idx], ...patch });
-  saveUserTriggers();
+  void persistUserTriggerPatch(key, patch);
   return userTriggers[idx];
 }
 
@@ -5120,26 +5215,26 @@ function setTriggerRunMode(triggerId, mode) {
 /** When Allow trade turns Off, every Trade card falls back to Demo. */
 function forceTradeTriggersToDemo(reason = "Allow trade off") {
   if (!Array.isArray(userTriggers) || userTriggers.length === 0) return 0;
-  let changed = 0;
+  const ids = [];
   userTriggers = userTriggers.map((trigger) => {
     if (trigger?.runMode !== "trade") return trigger;
-    changed += 1;
     const id = String(trigger.id || "");
+    ids.push(id);
     const rt = typeof triggerRuntimeById !== "undefined" ? triggerRuntimeById.get(id) : null;
     if (rt && rt.runMode === "trade" && rt.phase !== "open" && rt.phase !== "opening") {
       rt.runMode = "demo";
     }
     return normalizeTriggerRecord({ ...trigger, runMode: "demo" });
   });
-  if (!changed) return 0;
-  saveUserTriggers();
+  if (!ids.length) return 0;
+  for (const id of ids) void persistUserTriggerPatch(id, { runMode: "demo" });
   renderTriggersList();
   appendLogEntry({
     level: "info",
     source: "client",
-    message: `${changed} trigger card${changed === 1 ? "" : "s"} moved Trade → Demo (${reason})`,
+    message: `${ids.length} trigger card${ids.length === 1 ? "" : "s"} moved Trade → Demo (${reason})`,
   });
-  return changed;
+  return ids.length;
 }
 
 function setTriggerPaused(triggerId, paused) {
@@ -5166,11 +5261,11 @@ function deleteUserTrigger(trigger) {
   const label = String(trigger.name || "Untitled trigger");
   if (!window.confirm(`Delete "${label}"?\n\nThis cannot be undone.`)) return;
   userTriggers = userTriggers.filter((t) => String(t?.id) !== id);
-  saveUserTriggers();
   clearTriggerRuntime(id);
-  void fetch(`/api/triggers/${encodeURIComponent(id)}/stats`, { method: "DELETE" }).catch(
-    () => {},
-  );
+  void fetch(`/api/triggers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+  }).catch(() => {});
   renderTriggersList();
   if (triggerCreateEditingId && String(triggerCreateEditingId) === id) {
     closeTriggerCreateModal();
@@ -5817,6 +5912,7 @@ function submitTriggerCreate() {
     $("trigger-create-name")?.focus();
     return;
   }
+  // Replay Triggers stay browser-local (ScheduleReplayTriggers / localStorage).
   if (triggerCreateHost === "replay") {
     window.ScheduleReplayTriggers?.upsert?.(trigger);
     closeTriggerCreateModal();
@@ -5831,9 +5927,9 @@ function submitTriggerCreate() {
   } else {
     userTriggers = [trigger, ...userTriggers];
   }
-  saveUserTriggers();
   renderTriggersList();
   closeTriggerCreateModal();
+  void persistUserTrigger(trigger);
 }
 
 function syncTriggerCreateColorDraft() {
@@ -5975,8 +6071,7 @@ window.openTriggerCreateModalForHost = openTriggerCreateModalForHost;
 window.openTriggerEditModalForHost = openTriggerEditModalForHost;
 
 function bindTriggerCreateModal() {
-  loadUserTriggers();
-  renderTriggersList();
+  void loadUserTriggers().then(() => renderTriggersList());
   $("triggers-create-btn")?.addEventListener("click", () => {
     openTriggerCreateModal();
   });
@@ -9407,7 +9502,11 @@ function drawTriggerChartHits(ctx, layout) {
 }
 
 function isTriggerTradeArmed() {
-  return Boolean($("start-trading")?.checked);
+  // Real Trigger Trade only when Allow trade is on and this host is the trading executor
+  // (quotesEnabled is false on local/non-executor processes even if Allow trade is checked).
+  return Boolean(
+    $("start-trading")?.checked && windowState?.trading?.quotesEnabled === true,
+  );
 }
 
 function triggerQuoteCents(state, marketSide, priceSide) {
@@ -10567,8 +10666,7 @@ async function enterApp(user, options = {}) {
   }
   if (appInitialized) {
     demoPositionCards = loadDemoPositionCards();
-    loadUserTriggers();
-    renderTriggersList();
+    void loadUserTriggers().then(() => renderTriggersList());
     void loadWalletAccount();
     void loadSettingsUser();
     return;

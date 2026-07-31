@@ -66,6 +66,13 @@ import {
   getTriggerLiveStats,
   recordTriggerLiveStatsEvent,
 } from "./db/trigger-live-stats-repository.js";
+import {
+  deleteUserTrigger,
+  listUserTriggers,
+  patchUserTrigger,
+  upsertUserTrigger,
+  upsertUserTriggersBulk,
+} from "./db/user-trigger-repository.js";
 import { closeMongoClient } from "./db/mongo-client.js";
 import {
   getHeatmapState,
@@ -1294,6 +1301,107 @@ app.patch("/api/trading-setups/:id", async (req, res) => {
       res.status(400).json({ error: message });
       return;
     }
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Market Trigger card definitions (Mongo, per user). Replay Triggers stay browser-local. */
+app.get("/api/triggers", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggers = await listUserTriggers(userId);
+    res.json({ triggers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/triggers", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const saved = await upsertUserTrigger(userId, req.body);
+    if (!saved) {
+      res.status(400).json({ error: "invalid trigger" });
+      return;
+    }
+    res.json(saved);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/triggers/migrate", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const items = Array.isArray(req.body?.triggers) ? req.body.triggers : [];
+    const saved = await upsertUserTriggersBulk(userId, items);
+    const triggers = await listUserTriggers(userId);
+    res.json({ migrated: saved.length, triggers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.put("/api/triggers/:id", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    const saved = await upsertUserTrigger(userId, { ...req.body, id: triggerId });
+    if (!saved) {
+      res.status(400).json({ error: "invalid trigger" });
+      return;
+    }
+    res.json(saved);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.patch("/api/triggers/:id", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    const patch =
+      req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+    const saved = await patchUserTrigger(userId, triggerId, patch);
+    if (!saved) {
+      res.status(404).json({ error: "trigger not found" });
+      return;
+    }
+    res.json(saved);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.delete("/api/triggers/:id", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    const ok = await deleteUserTrigger(userId, triggerId);
+    if (ok) {
+      await deleteTriggerLiveStats(userId, triggerId).catch(() => undefined);
+    }
+    res.json({ ok });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });
   }
 });
