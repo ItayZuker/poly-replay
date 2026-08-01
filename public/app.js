@@ -3129,13 +3129,18 @@ function drawPriceChart(state, options = {}) {
     ctx.stroke();
   }
 
+  // Duration bands behind phase/trade markers (full height, fill only).
+  if (options.triggerHits !== false) {
+    drawTriggerChartHits(ctx, layout, state, "bands");
+  }
+
   if (window.Simulator) {
     window.Simulator.drawOverlay(ctx, layout, state, overlayOpts);
   }
 
-  // Trigger buy hits: duration band (top strip) + buy dot — above phase/markers.
+  // Demo-only trigger buy dots when no trading/phase marker already covers the hit.
   if (options.triggerHits !== false) {
-    drawTriggerChartHits(ctx, layout);
+    drawTriggerChartHits(ctx, layout, state, "dots");
   }
 
   return layout;
@@ -9942,27 +9947,55 @@ function recordTriggerChartHit(trigger, rt, state, side) {
   });
 }
 
-function drawTriggerChartHits(ctx, layout) {
+function chartBuySellMarkers(state) {
+  const trading = tradingState(state)?.markers;
+  if (Array.isArray(trading) && trading.length) return trading;
+  const sim = state?.sim?.markers;
+  return Array.isArray(sim) ? sim : [];
+}
+
+/** True when phase/trade overlay already draws this trigger buy (avoid a second dot). */
+function tradeMarkerCoversTriggerHit(state, hit) {
+  const markers = chartBuySellMarkers(state);
+  if (!markers.length) return false;
+  const buySec = Number(hit.buySec);
+  const side = hit.side === "down" ? "down" : "up";
+  if (!Number.isFinite(buySec)) return false;
+  return markers.some((m) => {
+    if (!m || m.type !== "buy") return false;
+    if ((m.side === "down" ? "down" : "up") !== side) return false;
+    return Math.abs(Number(m.t) - buySec) <= 2.5;
+  });
+}
+
+/**
+ * Duration bands (full plot height, fill only) and Demo-only buy dots.
+ * Trade/phase fills use Simulator markers so each buy/sell is a single dot.
+ */
+function drawTriggerChartHits(ctx, layout, state, mode = "all") {
   if (!ctx || !layout?.windowStart || !layout.windowEnd || !layout.xAt) return;
   syncTriggerChartHitsWindow(layout.windowStart);
   if (!triggerChartHits.length) return;
   const { padding, plotH, xAt, yAt } = layout;
-  const bandH = Math.max(14, Math.min(28, plotH * 0.12));
+  const drawBands = mode === "all" || mode === "bands";
+  const drawDots = mode === "all" || mode === "dots";
   for (const hit of triggerChartHits) {
     if (hit.windowStart !== layout.windowStart) continue;
-    const bandStart = Math.max(layout.windowStart, Number(hit.watchStartSec));
-    const bandEnd = Math.min(layout.windowEnd, Number(hit.buySec));
-    if (!(bandEnd > bandStart)) continue;
-    const x0 = xAt(bandStart);
-    const x1 = xAt(bandEnd);
-    const w = Math.max(2, x1 - x0);
     const isUp = hit.side === "up";
-    ctx.fillStyle = isUp ? "rgba(46, 160, 67, 0.22)" : "rgba(248, 81, 73, 0.22)";
-    ctx.fillRect(x0, padding.top, w, bandH);
-    ctx.strokeStyle = isUp ? "rgba(46, 160, 67, 0.55)" : "rgba(248, 81, 73, 0.55)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x0 + 0.5, padding.top + 0.5, w - 1, bandH - 1);
-
+    if (drawBands) {
+      const bandStart = Math.max(layout.windowStart, Number(hit.watchStartSec));
+      const bandEnd = Math.min(layout.windowEnd, Number(hit.buySec));
+      if (bandEnd > bandStart) {
+        const x0 = xAt(bandStart);
+        const x1 = xAt(bandEnd);
+        const w = Math.max(2, x1 - x0);
+        ctx.fillStyle = isUp ? "rgba(46, 160, 67, 0.18)" : "rgba(248, 81, 73, 0.18)";
+        ctx.fillRect(x0, padding.top, w, plotH);
+      }
+    }
+    if (!drawDots) continue;
+    // Skip when trading/phase markers already show this buy.
+    if (tradeMarkerCoversTriggerHit(state, hit)) continue;
     const buyX = xAt(Math.min(layout.windowEnd, Math.max(layout.windowStart, Number(hit.buySec))));
     let buyY = padding.top + plotH / 2;
     if (hit.y != null && Number.isFinite(hit.y) && typeof yAt === "function") {
@@ -9972,9 +10005,6 @@ function drawTriggerChartHits(ctx, layout) {
     ctx.arc(buyX, buyY, 5, 0, Math.PI * 2);
     ctx.fillStyle = isUp ? "#2ea043" : "#f85149";
     ctx.fill();
-    ctx.strokeStyle = "rgba(13, 17, 23, 0.85)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
   }
 }
 
