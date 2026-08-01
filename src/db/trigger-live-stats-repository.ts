@@ -105,10 +105,12 @@ export async function recordTriggerLiveStatsEvent(
     stopLoss: exitReason === "sl" ? 1 : 0,
     pnlUsd: pnl,
   };
+  // Do not put `blue` (or any $inc field) in $setOnInsert — Mongo rejects path conflicts
+  // and the first Trade stats event 500s, so totals never get created.
   await c.updateOne(
     { _id: id, userId },
     {
-      $setOnInsert: { userId, triggerId, blue: 0 },
+      $setOnInsert: { userId, triggerId },
       $inc: {
         success: inc.success,
         fail: inc.fail,
