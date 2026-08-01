@@ -1186,9 +1186,10 @@ export class LiveTradingService {
   }
 
   /**
-   * Map settled *auto* trades that never got a placementId (late GTD fills, wiped upserts)
+   * Map settled auto/trigger trades that never got a placementId (late GTD fills, wiped upserts)
    * onto the schedule slot that was live at buy time so card stats match.
    * Manual trades are never attributed to Schedule cards.
+   * Trigger Trade backfill does not require Use Schedule (same as live attribution).
    */
   private async backfillOrphanPlacementIds(): Promise<number> {
     let placements: Awaited<ReturnType<typeof listSchedulePlacements>>;
@@ -1252,9 +1253,10 @@ export class LiveTradingService {
       }
 
       if (eventPlacementId(event)) continue;
-      // Only backfill known auto trades — never invent a schedule link for unlabeled orphans
+      // Only backfill known auto/trigger trades — never invent a schedule link for unlabeled orphans
       // (those are often manuals from before source was persisted).
-      if (event.card?.source !== "auto") continue;
+      const src = event.card?.source;
+      if (src !== "auto" && src !== "trigger") continue;
 
       const placementId = findPlacementAt(eventAttributionMs(event));
       if (!placementId) continue;
@@ -2661,6 +2663,22 @@ export class LiveTradingService {
     }
   }
 
+  /**
+   * Live placement covering the current UTC slot for Trigger Trade attribution.
+   * Independent of Use Schedule (phase Auto Trade still requires that switch).
+   */
+  private async resolveLivePlacementIdForTriggers(): Promise<string | undefined> {
+    if (this.config.useSchedule && this.scheduleContext?.placementId) {
+      return this.scheduleContext.placementId;
+    }
+    try {
+      const next = await findActiveScheduleContext(this.userId, this.boundSeries);
+      return next?.placementId;
+    } catch {
+      return undefined;
+    }
+  }
+
   async refreshScheduleContext(force = false): Promise<void> {
     const now = Date.now();
     if (!force && now - this.scheduleContextFetchedAt < 5000) return;
@@ -4053,10 +4071,16 @@ export class LiveTradingService {
     opts?: { holdToSettlement?: boolean; placementId?: string },
   ): Promise<void> {
     const holdToSettlement = Boolean(opts?.holdToSettlement);
-    const resolvedPlacementId =
-      (source === "auto" || source === "trigger") && this.config.useSchedule
-        ? opts?.placementId ?? this.scheduleContext?.placementId
-        : undefined;
+    // Phase Auto Trade: placement only when Use Schedule is on.
+    // Trigger Trade: always attribute to the Live placement covering this UTC slot
+    // (even when Use Schedule is off — triggers do not depend on that switch).
+    let resolvedPlacementId: string | undefined;
+    if (source === "trigger") {
+      resolvedPlacementId =
+        opts?.placementId ?? (await this.resolveLivePlacementIdForTriggers());
+    } else if (source === "auto" && this.config.useSchedule) {
+      resolvedPlacementId = opts?.placementId ?? this.scheduleContext?.placementId;
+    }
     const nowSec = Math.floor(Date.now() / 1000);
     const cost = usdcAmount ?? fillShares * fillPrice;
     const buyFees = await estimateLiveTakerFee(this.userId, tokenId, fillShares, fillPrice);
