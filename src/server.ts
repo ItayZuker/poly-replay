@@ -865,6 +865,7 @@ app.post("/api/trading/order", async (req, res) => {
     await assertSeriesAvailable(state.series);
     const sharesRaw = Number(req.body?.shares);
     const takeProfitCentsRaw = Number(req.body?.takeProfitCents);
+    const maxPriceRaw = Number(req.body?.maxPrice);
     const orderType =
       req.body?.orderType === "FAK" || req.body?.orderType === "FOK"
         ? req.body.orderType
@@ -885,6 +886,9 @@ app.post("/api/trading/order", async (req, res) => {
       ...(Number.isFinite(takeProfitCentsRaw)
         ? { takeProfitCents: Math.round(takeProfitCentsRaw) }
         : {}),
+      ...(Number.isFinite(maxPriceRaw) && maxPriceRaw > 0 && maxPriceRaw < 1
+        ? { maxPrice: maxPriceRaw }
+        : {}),
     });
     pushWindowStateImmediate();
     if (!result.ok) {
@@ -903,6 +907,55 @@ app.post("/api/trading/order", async (req, res) => {
         ? { remainingShares: result.remainingShares }
         : {}),
     });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("Market unavailable:") || message.startsWith("Unknown series:")) {
+      res.status(marketUnavailableStatus(message)).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Reconcile Trigger Trade GTD resting buys (Duration 0 + Price). */
+app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    if (!isTradingConfigured(userId)) {
+      res.status(400).json({ error: "Trading account not configured" });
+      return;
+    }
+    const state = displayService.getState();
+    await assertSeriesAvailable(state.series);
+    const rawDesires = Array.isArray(req.body?.desires) ? req.body.desires : [];
+    const desires = rawDesires
+      .map((d: Record<string, unknown>) => {
+        const triggerId = d?.triggerId != null ? String(d.triggerId).trim() : "";
+        if (!triggerId) return null;
+        const sides = Array.isArray(d?.sides)
+          ? (d.sides as unknown[]).filter((s) => s === "up" || s === "down")
+          : [];
+        const priceCents = Math.round(Number(d?.priceCents));
+        const shares = Math.floor(Number(d?.shares));
+        if (!Number.isFinite(priceCents) || !Number.isFinite(shares)) return null;
+        const sellOrderType =
+          d?.sellOrderType === "FAK" || d?.sellOrderType === "FOK" || d?.sellOrderType === "GTD"
+            ? d.sellOrderType
+            : undefined;
+        const takeProfitCents = Math.round(Number(d?.takeProfitCents));
+        return {
+          triggerId,
+          sides: sides as Array<"up" | "down">,
+          priceCents,
+          shares,
+          ...(sellOrderType ? { sellOrderType } : {}),
+          ...(Number.isFinite(takeProfitCents) ? { takeProfitCents } : {}),
+        };
+      })
+      .filter(Boolean);
+    const result = await tradingFor(req).syncTriggerGtdBuys(state, desires as never);
+    pushWindowStateImmediate();
+    res.json({ ok: true, fills: result.fills ?? [] });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.startsWith("Market unavailable:") || message.startsWith("Unknown series:")) {

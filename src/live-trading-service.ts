@@ -119,6 +119,38 @@ interface RestingBuyOrder {
   levelTouched?: boolean;
 }
 
+/** Resting GTD buy owned by a Market Trigger (zero-duration Price mode). */
+interface TriggerRestingBuyOrder {
+  orderId: string;
+  triggerId: string;
+  side: "up" | "down";
+  sessionKey: string;
+  shares: number;
+  limitPrice: number;
+  sizeMatched: number;
+  sellOrderType: "FAK" | "FOK" | "GTD";
+  takeProfitCents: number;
+  tokenId?: string;
+  conditionId?: string;
+  slug?: string;
+}
+
+export type TriggerGtdDesire = {
+  triggerId: string;
+  sides: Array<"up" | "down">;
+  priceCents: number;
+  shares: number;
+  sellOrderType?: "FAK" | "FOK" | "GTD";
+  takeProfitCents?: number;
+};
+
+export type TriggerGtdFill = {
+  triggerId: string;
+  side: "up" | "down";
+  fillPrice: number;
+  fillShares: number;
+};
+
 /** Live optimize (FAK) arm/hunt state — independent of SimulatorEngine. */
 interface LiveFakBuyWatch {
   side: "up" | "down";
@@ -162,7 +194,7 @@ interface PendingBuyCancel {
 interface PendingBuyConfirm {
   sessionKey: string;
   side: "up" | "down";
-  source: "manual" | "auto";
+  source: "manual" | "auto" | "trigger";
   reason: string;
   startedAtMs: number;
   nextCheckAtMs: number;
@@ -522,7 +554,9 @@ function cardSnapshotFromPosition(card: TradingPositionCard): TradingStatEvent["
   if (card.asset) snap.asset = card.asset;
   if (card.conditionId) snap.conditionId = card.conditionId;
   if (card.slug) snap.slug = card.slug;
-  if (card.source === "manual" || card.source === "auto") snap.source = card.source;
+  if (card.source === "manual" || card.source === "auto" || card.source === "trigger") {
+    snap.source = card.source;
+  }
   // Manual wins/losses must not carry a schedule placement id into stats.
   if (card.source !== "manual" && card.placementId) snap.placementId = card.placementId;
   if (card.buyFees != null) snap.buyFees = card.buyFees;
@@ -556,7 +590,9 @@ function positionCardFromEvent(event: TradingStatEvent): TradingPositionCard | n
   if (snap.conditionId) card.conditionId = snap.conditionId;
   if (snap.slug) card.slug = snap.slug;
   if (snap.buyFees != null) card.buyFees = snap.buyFees;
-  if (snap.source === "manual" || snap.source === "auto") card.source = snap.source;
+  if (snap.source === "manual" || snap.source === "auto" || snap.source === "trigger") {
+    card.source = snap.source;
+  }
   if (!isManualTradeCard(card) && (snap.placementId || event.placementId)) {
     card.placementId = snap.placementId ?? event.placementId;
   }
@@ -849,6 +885,11 @@ export class LiveTradingService {
   /** Resting GTD limit buy for the active non-optimize phase. */
   /** Resting GTD buys by side (First/Both may have both). */
   private restingBuys = new Map<"up" | "down", RestingBuyOrder>();
+  /**
+   * Trigger Trade GTD buys (Duration 0 + Price). Keyed by `${triggerId}:${side}`.
+   * Separate from phase restingBuys so First dual-rest does not collide.
+   */
+  private triggerRestingBuys = new Map<string, TriggerRestingBuyOrder>();
   /** After gap-filter cancel, delay before placing another resting GTD buy. */
   private gtdBuyRepressUntilMs = 0;
   /** Last phase index for clearing buy repress across phase boundaries. */
@@ -2372,7 +2413,7 @@ export class LiveTradingService {
     state: LiveWindowState,
     opts: {
       side: "up" | "down";
-      source: "manual" | "auto";
+      source: "manual" | "auto" | "trigger";
       reason: string;
       orderId?: string;
       tokenId?: string;
@@ -2699,6 +2740,9 @@ export class LiveTradingService {
     if (series === this.boundSeries) return;
 
     if (this.restingBuys.size > 0) await this.cancelAllRestingBuys("market switch");
+    if (this.triggerRestingBuys.size > 0) {
+      await this.cancelAllTriggerRestingBuys("market switch");
+    }
     if (this.restingSell) await this.cancelRestingSell("market switch");
 
     this.boundSeries = series;
@@ -2785,6 +2829,9 @@ export class LiveTradingService {
       .filter((m) => m.windowKey === sessionKey(state)).length;
     if (this.restingBuys.size > 0 && !this.config.startTrading) {
       await this.cancelAllRestingBuys("startTrading off");
+    }
+    if (this.triggerRestingBuys.size > 0 && !this.config.startTrading) {
+      await this.cancelAllTriggerRestingBuys("startTrading off");
     }
     if (this.restingSell && !this.config.startTrading) {
       await this.cancelRestingSell("startTrading off", state);
@@ -4000,14 +4047,14 @@ export class LiveTradingService {
     tokenId: string | undefined,
     conditionId: string | undefined,
     slug: string | undefined,
-    source: "manual" | "auto",
+    source: "manual" | "auto" | "trigger",
     existingCardId?: string,
     buyPhaseIdx?: number,
     opts?: { holdToSettlement?: boolean; placementId?: string },
   ): Promise<void> {
     const holdToSettlement = Boolean(opts?.holdToSettlement);
     const resolvedPlacementId =
-      source === "auto" && this.config.useSchedule
+      (source === "auto" || source === "trigger") && this.config.useSchedule
         ? opts?.placementId ?? this.scheduleContext?.placementId
         : undefined;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -4030,8 +4077,10 @@ export class LiveTradingService {
       if (source === "manual") {
         existing.source = "manual";
         stripManualScheduleAttribution(existing);
-      } else if (source === "auto") {
-        existing.source = existing.source === "manual" ? "manual" : "auto";
+      } else if (source === "auto" || source === "trigger") {
+        if (existing.source !== "manual") {
+          existing.source = source;
+        }
         if (existing.source !== "manual" && !existing.placementId && resolvedPlacementId) {
           existing.placementId = resolvedPlacementId;
         }
@@ -4150,6 +4199,7 @@ export class LiveTradingService {
       if (holdToSettlement) {
         this.liveFakWatch = null;
       } else {
+        // Phase Auto Trade only — Trigger/Prediction own their exit path.
         if (source === "auto" && this.isLiveArmed() && setup) {
           await this.ensureRestingGtdSell(state, setup, side);
         }
@@ -4167,6 +4217,280 @@ export class LiveTradingService {
     return Boolean(this.positions[side]);
   }
 
+  private triggerRestKey(triggerId: string, side: "up" | "down"): string {
+    return `${triggerId}:${side}`;
+  }
+
+  private async cancelAllTriggerRestingBuys(reason: string): Promise<void> {
+    const keys = [...this.triggerRestingBuys.keys()];
+    for (const key of keys) {
+      await this.cancelTriggerRestingBuy(key, reason);
+    }
+  }
+
+  private async cancelTriggerRestingBuy(key: string, reason: string): Promise<void> {
+    const resting = this.triggerRestingBuys.get(key);
+    if (!resting) return;
+    this.triggerRestingBuys.delete(key);
+    const result = await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
+    logService.info(
+      "trading",
+      `Trigger GTD cancel ${resting.side.toUpperCase()} (${reason})${
+        result.ok ? "" : `: ${result.error ?? "failed"}`
+      }`,
+    );
+    this.notify();
+  }
+
+  private async cancelTriggerSiblingRests(
+    triggerId: string,
+    filledSide: "up" | "down",
+  ): Promise<void> {
+    for (const side of SIDES_ORDER) {
+      if (side === filledSide) continue;
+      const key = this.triggerRestKey(triggerId, side);
+      if (this.triggerRestingBuys.has(key)) {
+        await this.cancelTriggerRestingBuy(key, "first fill — cancel other");
+      }
+    }
+  }
+
+  /**
+   * Reconcile Trigger Trade GTD buys (Duration 0 + Price).
+   * Client sends desired rests each tick; server places/cancels/polls and returns fills.
+   */
+  async syncTriggerGtdBuys(
+    state: LiveWindowState,
+    desires: TriggerGtdDesire[],
+  ): Promise<{ ok: boolean; fills: TriggerGtdFill[]; error?: string }> {
+    this.ensureWindow(state);
+    const fills: TriggerGtdFill[] = [];
+    if (!this.canExecuteOrders() || !this.config.startTrading) {
+      if (this.triggerRestingBuys.size > 0) {
+        await this.cancelAllTriggerRestingBuys("Allow trade off");
+      }
+      return { ok: true, fills };
+    }
+
+    const key = sessionKey(state);
+    const nowSec = Math.floor((state.lastTickMs ?? Date.now()) / 1000);
+    const windowEnd = state.windowEnd ?? nowSec + 300;
+
+    const desiredKeys = new Set<string>();
+    const desireByKey = new Map<string, TriggerGtdDesire & { side: "up" | "down" }>();
+    for (const d of desires) {
+      const triggerId = String(d.triggerId || "").trim();
+      if (!triggerId) continue;
+      const priceCents = Math.max(0, Math.min(100, Math.round(Number(d.priceCents))));
+      if (!Number.isFinite(priceCents)) continue;
+      const shares = Math.max(1, Math.floor(Number(d.shares) || 1));
+      const sellOrderType =
+        d.sellOrderType === "FOK" || d.sellOrderType === "GTD" || d.sellOrderType === "FAK"
+          ? d.sellOrderType
+          : "FAK";
+      const takeProfitCents = Math.max(
+        1,
+        Math.min(100, Math.round(Number(d.takeProfitCents) || 10)),
+      );
+      for (const side of d.sides) {
+        if (side !== "up" && side !== "down") continue;
+        const rk = this.triggerRestKey(triggerId, side);
+        desiredKeys.add(rk);
+        desireByKey.set(rk, {
+          triggerId,
+          sides: d.sides,
+          side,
+          priceCents,
+          shares,
+          sellOrderType,
+          takeProfitCents,
+        });
+      }
+    }
+
+    // Cancel rests that are no longer desired or at a different price/size.
+    for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      const want = desireByKey.get(rk);
+      const limitPrice = want ? centsToPrice(want.priceCents) : NaN;
+      const stale =
+        !want ||
+        resting.sessionKey !== key ||
+        Math.abs(resting.limitPrice - limitPrice) > 1e-9 ||
+        resting.shares !== want.shares;
+      if (stale) {
+        await this.cancelTriggerRestingBuy(
+          rk,
+          !want ? "gap/window — not desired" : "price/size change",
+        );
+      }
+    }
+
+    // Poll remaining rests for fills.
+    for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      if (resting.sessionKey !== key) {
+        await this.cancelTriggerRestingBuy(rk, "window roll");
+        continue;
+      }
+      const snap = await fetchOpenOrder(this.userId, resting.orderId);
+      if (!snap) continue;
+      const matched = Math.max(0, snap.sizeMatched);
+      if (matched > resting.sizeMatched + 1e-9) {
+        const delta = matched - resting.sizeMatched;
+        const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
+        await this.recordBuyFill(
+          state,
+          resting.side,
+          delta,
+          fillPrice,
+          delta * fillPrice,
+          resting.tokenId ?? snap.assetId,
+          resting.conditionId ?? snap.market,
+          resting.slug,
+          "trigger",
+        );
+        this.predictionTradeHoldWindowKey = key;
+        if (resting.sellOrderType === "GTD") {
+          await this.ensureTriggerGtdSell(
+            state,
+            resting.side,
+            resting.takeProfitCents,
+            delta,
+            fillPrice,
+          );
+        }
+        fills.push({
+          triggerId: resting.triggerId,
+          side: resting.side,
+          fillPrice,
+          fillShares: delta,
+        });
+        await this.cancelTriggerSiblingRests(resting.triggerId, resting.side);
+        this.triggerRestingBuys.delete(rk);
+        // Cancel this side's remainder if still live.
+        const status = snap.status.toLowerCase();
+        if (status === "live" || status === "delayed") {
+          await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
+        }
+        this.notify();
+        continue;
+      }
+      const status = snap.status.toLowerCase();
+      if (status === "live" || status === "delayed") continue;
+      this.triggerRestingBuys.delete(rk);
+      if (matched <= 1e-9) await this.noteFillClose(resting.orderId);
+      this.notify();
+    }
+
+    // Do not place new rests while a trigger/prediction position is open or buy is blocked.
+    if (
+      this.positions.up ||
+      this.positions.down ||
+      this.manualBuyPending ||
+      this.pendingBuyConfirm ||
+      this.buyBlockedWindowKey === key ||
+      this.predictionTradeHoldWindowKey === key
+    ) {
+      if (this.triggerRestingBuys.size > 0 && (this.positions.up || this.positions.down)) {
+        await this.cancelAllTriggerRestingBuys("position open");
+      }
+      return { ok: true, fills };
+    }
+
+    if (this.orderInFlight) return { ok: true, fills };
+
+    for (const [rk, want] of desireByKey.entries()) {
+      if (this.triggerRestingBuys.has(rk)) continue;
+      if (this.positions.up || this.positions.down) break;
+
+      // Trigger GTD takes the slot — drop phase rests first.
+      if (this.restingBuys.size > 0) {
+        await this.cancelAllRestingBuys("trigger GTD buy");
+      }
+
+      const limitPrice = centsToPrice(want.priceCents);
+      this.orderInFlight = true;
+      try {
+        this.autoEngine.setExternalBuyPaused(true);
+        const result = await placeLimitGtdBuy(this.userId, {
+          series: state.series,
+          side: want.side,
+          size: want.shares,
+          price: limitPrice,
+          expirationSec: gtdExpirationUnix(windowEnd, nowSec),
+          state,
+          logTag: `trigger ${want.triggerId.slice(0, 8)}`,
+        });
+        if (!result.success || !result.orderId) {
+          if (this.triggerRestingBuys.size === 0 && this.restingBuys.size === 0) {
+            this.autoEngine.setExternalBuyPaused(false);
+          }
+          const err = result.error ?? "";
+          if (err) logService.warn("trading", `Trigger GTD place failed (${want.side}): ${err}`);
+          continue;
+        }
+
+        const immediateFill =
+          result.fillShares != null && result.fillPrice != null && result.fillShares > 0;
+        if (immediateFill) {
+          await this.recordBuyFill(
+            state,
+            want.side,
+            result.fillShares!,
+            result.fillPrice!,
+            result.usdcAmount,
+            result.tokenId,
+            result.conditionId,
+            result.slug,
+            "trigger",
+          );
+          this.predictionTradeHoldWindowKey = key;
+          if (want.sellOrderType === "GTD") {
+            await this.ensureTriggerGtdSell(
+              state,
+              want.side,
+              want.takeProfitCents ?? 10,
+              result.fillShares!,
+              result.fillPrice!,
+            );
+          }
+          fills.push({
+            triggerId: want.triggerId,
+            side: want.side,
+            fillPrice: result.fillPrice!,
+            fillShares: result.fillShares!,
+          });
+          await this.cancelTriggerSiblingRests(want.triggerId, want.side);
+          // Remove sibling desires so we don't place the other side this tick.
+          for (const side of SIDES_ORDER) {
+            if (side === want.side) continue;
+            desireByKey.delete(this.triggerRestKey(want.triggerId, side));
+          }
+          continue;
+        }
+
+        this.triggerRestingBuys.set(rk, {
+          orderId: result.orderId,
+          triggerId: want.triggerId,
+          side: want.side,
+          sessionKey: key,
+          shares: want.shares,
+          limitPrice,
+          sizeMatched: 0,
+          sellOrderType: want.sellOrderType ?? "FAK",
+          takeProfitCents: want.takeProfitCents ?? 10,
+          tokenId: result.tokenId,
+          conditionId: result.conditionId,
+          slug: result.slug,
+        });
+        this.notify();
+      } finally {
+        this.orderInFlight = false;
+      }
+    }
+
+    return { ok: true, fills };
+  }
+
   async manualOrder(
     state: LiveWindowState,
     side: "up" | "down",
@@ -4177,6 +4501,8 @@ export class LiveTradingService {
       orderType?: "FAK" | "FOK";
       sellOrderType?: "FAK" | "FOK" | "GTD";
       takeProfitCents?: number;
+      /** Buy max Ask (dollars) — trigger FAK/FOK must not walk above the diagram band. */
+      maxPrice?: number;
     },
   ): Promise<{
     ok: boolean;
@@ -4267,6 +4593,9 @@ export class LiveTradingService {
       await this.cancelAllRestingBuys(
         fromPrediction ? "prediction buy" : fromTrigger ? "trigger buy" : "manual buy",
       );
+      if (fromTrigger && this.triggerRestingBuys.size > 0) {
+        await this.cancelAllTriggerRestingBuys("trigger FAK/FOK buy");
+      }
     } else if (
       !(fromPrediction && this.config.predictionSellOrderType === "GTD") &&
       !(fromTrigger && this.restingSell?.source === "trigger" && options?.orderType == null)
@@ -4298,7 +4627,9 @@ export class LiveTradingService {
       }
       const orderType: "FAK" | "FOK" = fromTrigger
         ? leg === "buy"
-          ? "FOK"
+          ? options?.orderType === "FAK"
+            ? "FAK"
+            : "FOK"
           : options?.orderType === "FOK"
             ? "FOK"
             : "FAK"
@@ -4311,14 +4642,23 @@ export class LiveTradingService {
           : leg === "buy"
             ? this.config.manualBuyOrderType
             : this.config.manualSellOrderType;
+      const maxPrice =
+        fromTrigger &&
+        leg === "buy" &&
+        options?.maxPrice != null &&
+        Number.isFinite(options.maxPrice) &&
+        options.maxPrice > 0
+          ? options.maxPrice
+          : undefined;
       const result = await this.executeOrder(
         state,
         side,
         leg,
         size,
-        "manual",
+        fromTrigger ? "trigger" : "manual",
         sizeUnit,
         orderType,
+        maxPrice,
       );
       if (result.ok) {
         if (leg === "buy") {
@@ -4777,7 +5117,7 @@ export class LiveTradingService {
     side: "up" | "down",
     leg: "buy" | "sell",
     size: number,
-    source: "manual" | "auto",
+    source: "manual" | "auto" | "trigger",
     sizeUnit: "shares" | "usdc" = "shares",
     orderType: MarketOrderType = "FOK",
     maxPrice?: number,

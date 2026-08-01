@@ -17,7 +17,11 @@ export interface UserTriggerRecord {
   color?: string;
   durationMs: number;
   buyShares: number;
+  /** Always buy (Ask); sell-side quote mode removed from the editor. */
   priceSide: "buy" | "sell";
+  startMode: "range" | "price";
+  /** Single Ask ¢ when startMode is price (0–100). */
+  startPriceCents: number;
   endMode: "range" | "change-side";
   endChangeSideCents: number;
   priceRanges: {
@@ -36,6 +40,8 @@ export interface UserTriggerRecord {
   priceTrend: { dollars: number; bound: "min" | "max" };
   takeProfitCents: number;
   stopLossCents: number;
+  /** Buy placement: FOK default; GTD only when durationMs is 0 and startMode is price. */
+  buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: "FAK" | "FOK" | "GTD";
   windowArea: { start: number; end: number };
   runMode: "demo" | "trade";
@@ -172,16 +178,40 @@ export function normalizeUserTriggerInput(
     typeof o.createdAt === "string"
       ? o.createdAt
       : existing?.createdAt || now;
+  const durationMs = (() => {
+    const n = Math.floor(Number(o.durationMs));
+    if (Number.isFinite(n) && n >= 0) return n;
+    const prev = Math.floor(Number(existing?.durationMs));
+    return Number.isFinite(prev) && prev >= 0 ? prev : 5000;
+  })();
+  const startMode: "range" | "price" =
+    o.startMode === "price" || o.startMode === "change-side" ? "price" : "range";
+  const buyOrderTypeRaw =
+    o.buyOrderType === "FAK" || o.buyOrderType === "FOK" || o.buyOrderType === "GTD"
+      ? o.buyOrderType
+      : existing?.buyOrderType || "FOK";
+  const buyOrderType: "FAK" | "FOK" | "GTD" =
+    buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price")
+      ? "FOK"
+      : buyOrderTypeRaw;
   return {
     id,
     name,
     color: typeof o.color === "string" ? o.color : existing?.color || "#58a6ff",
-    durationMs: Math.max(1, Math.floor(Number(o.durationMs) || existing?.durationMs || 5000)),
+    durationMs,
     buyShares: Math.max(
       1,
       Math.min(100_000, Math.floor(Number(o.buyShares) || existing?.buyShares || 10)),
     ),
-    priceSide: o.priceSide === "sell" ? "sell" : "buy",
+    priceSide: "buy",
+    startMode,
+    startPriceCents: clampCents(
+      o.startPriceCents ??
+        (o.startMode === "change-side" || o.startMode === "price"
+          ? Math.abs(Number(o.startChangeSideCents))
+          : existing?.startPriceCents),
+      existing?.startPriceCents ?? 50,
+    ),
     endMode: o.endMode === "change-side" ? "change-side" : "range",
     endChangeSideCents: clampSigned(o.endChangeSideCents, existing?.endChangeSideCents ?? 20),
     priceRanges: {
@@ -200,6 +230,7 @@ export function normalizeUserTriggerInput(
       o.priceTrend !== undefined ? o.priceTrend : existing?.priceTrend,
     ),
     ...exits,
+    buyOrderType,
     sellOrderType:
       o.sellOrderType === "FOK" || o.sellOrderType === "GTD"
         ? o.sellOrderType

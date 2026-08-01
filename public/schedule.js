@@ -4145,6 +4145,7 @@
       /* prediction DOM may be absent */
     }
     window.ScheduleReplayTriggers?.init?.();
+    window.ScheduleLiveTriggers?.init?.();
 
     // Prefer live feed latency / 7-day fill success when available.
     syncReplayInputsFromLive();

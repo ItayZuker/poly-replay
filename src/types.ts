@@ -473,7 +473,8 @@ export interface TradingPositionCard {
    * How the buy was initiated. Manual trades count in Market/Live only —
    * never on Schedule cards or Schedule totals.
    */
-  source?: "manual" | "auto";
+  /** manual = quote-box; auto = phase; trigger = Market Trigger Trade (schedule-attributable). */
+  source?: "manual" | "auto" | "trigger";
 }
 
 /** Live real-trade aggregates for a schedule placement card. */

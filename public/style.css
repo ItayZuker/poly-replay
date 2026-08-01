@@ -1406,9 +1406,10 @@ body {
   transition: gap 0.22s ease;
 }
 
-.app-page-schedule.is-replay-workspace .schedule-workspace-footer {
+.app-page-schedule.is-replay-workspace .schedule-workspace-footer,
+.app-page-schedule:not(.is-replay-workspace) .schedule-workspace-footer {
   gap: 8px;
-  /* Leave room for the setups list (min 200px); Prediction settings scroll inside. */
+  /* Leave room for the setups list (min 200px); Live Triggers / Replay panel scroll inside. */
   flex: 0 1 auto;
   min-height: 0;
   max-height: calc(100% - var(--schedule-toolbar-height) - 52px - 200px);
@@ -1441,6 +1442,65 @@ body {
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
+}
+
+/* Live workspace: Trade+Active Market Triggers under the setups list. */
+.schedule-live-triggers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-top: 1px solid transparent;
+  transition: max-height 0.22s ease, opacity 0.18s ease, border-color 0.18s ease;
+}
+
+.app-page-schedule:not(.is-replay-workspace):not(.is-heatmap-view) .schedule-live-triggers {
+  max-height: min(40vh, 420px);
+  opacity: 1;
+  pointer-events: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-top-color: var(--border);
+  padding-top: 8px;
+}
+
+.schedule-live-triggers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.schedule-live-triggers-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.schedule-live-triggers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.schedule-live-triggers-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
 .schedule-replay-controls {
@@ -1532,6 +1592,18 @@ body {
   border-radius: 6px;
   background: color-mix(in srgb, var(--bg) 88%, #000);
   min-width: 0;
+}
+
+.schedule-replay-trigger-card.is-paused {
+  opacity: 0.72;
+}
+
+.schedule-replay-trigger-card .trigger-card-controls {
+  width: 100%;
+}
+
+.schedule-replay-trigger-card .trigger-pause-mode {
+  flex: 1 1 auto;
 }
 
 .schedule-replay-trigger-card-header {
@@ -6068,6 +6140,17 @@ body.is-row-resizing .panel-header-drag-handle {
   padding-right: 4px;
 }
 
+.trigger-buy-order-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.trigger-buy-order-note.is-gtd-locked {
+  opacity: 0.85;
+}
+
 .trigger-duration-diagram {
   display: flex;
   flex-direction: column;
@@ -6109,12 +6192,34 @@ body.is-row-resizing .panel-header-drag-handle {
   flex-basis: 118px;
 }
 
+/* Duration 0: end price column + right half of the center diagram are inactive. */
+.trigger-duration-diagram.is-zero-duration .trigger-price-column[data-edge="end"] {
+  opacity: 0.35;
+  pointer-events: none;
+  filter: grayscale(0.35);
+}
+
+.trigger-duration-diagram.is-zero-duration .trigger-ptb-btn[data-edge="end"],
+.trigger-duration-diagram.is-zero-duration .trigger-gap-size-control[data-edge="end"],
+.trigger-duration-diagram.is-zero-duration .trigger-gap-fill[data-edge="end"],
+.trigger-duration-diagram.is-zero-duration .trigger-market-line-side[data-edge="end"],
+.trigger-duration-diagram.is-zero-duration .trigger-price-trend {
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+.trigger-duration-diagram.is-zero-duration .trigger-price-column[data-edge="end"] .trigger-price-side,
+.trigger-duration-diagram.is-zero-duration .trigger-price-column[data-edge="end"] .trigger-price-thumb {
+  pointer-events: none;
+}
+
 /* Keep end header spacing equal to start so scale mids share the PTB line. */
 .trigger-price-column[data-edge="end"] > .trigger-price-side-wrap:first-child {
   margin-bottom: 18px;
 }
 
-.trigger-price-column.is-change-side-mode .trigger-price-thumb[data-thumb="low"] {
+.trigger-price-column.is-change-side-mode .trigger-price-thumb[data-thumb="low"],
+.trigger-price-column.is-start-price-mode .trigger-price-thumb[data-thumb="low"] {
   display: none;
 }
 

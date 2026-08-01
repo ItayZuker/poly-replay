@@ -1044,6 +1044,23 @@
               </div>
             </div>
             <div
+              id="schedule-live-triggers"
+              class="schedule-live-triggers"
+              aria-label="Live Trade Triggers"
+            >
+              <div class="schedule-live-triggers-head">
+                <span class="schedule-live-triggers-title">Triggers</span>
+              </div>
+              <div
+                id="schedule-live-triggers-list"
+                class="schedule-live-triggers-list"
+                aria-label="Trade-active Market Triggers"
+              ></div>
+              <p class="schedule-live-triggers-note" id="schedule-live-triggers-note">
+                Market Triggers on <strong>Trade</strong> + <strong>Active</strong>. Stats match the Market card (all-time Trade). Fills count on Schedule cards and totals when Use Schedule is on.
+              </p>
+            </div>
+            <div
               id="schedule-workspace-switcher"
               class="schedule-workspace-switcher"
               role="switch"
@@ -1281,19 +1298,32 @@
           aria-labelledby="trigger-tab-buy"
           data-trigger-tab-panel="buy"
         >
+          <label class="modal-field" for="trigger-buy-order-type">
+            <span>Buy order type</span>
+            <select id="trigger-buy-order-type" class="modal-select" aria-label="Trigger buy order type">
+              <option value="FAK">FAK</option>
+              <option value="FOK" selected>FOK</option>
+              <option value="GTD">GTD</option>
+            </select>
+          </label>
+          <p class="trigger-buy-order-note" id="trigger-buy-order-note">
+            Default <strong>FOK</strong> (full size or no fill). <strong>GTD</strong> is available only when
+            Duration is <strong>0</strong> and the left bar is <strong>Price</strong> — rests at that ¢ from
+            Apply-window start (+ Gap → UP, − Gap → DOWN; no gap → both, first fill cancels the other).
+          </p>
         <section class="modal-section trigger-duration-section" aria-label="Duration">
           <div class="trigger-duration-diagram" aria-label="Trigger duration period">
             <div class="trigger-duration-stage">
               <div class="trigger-price-column" data-edge="start">
                 <label class="trigger-price-side-wrap">
-                  <span class="visually-hidden">Price side</span>
+                  <span class="visually-hidden">Start condition type</span>
                   <select
-                    id="trigger-price-side-start"
+                    id="trigger-start-mode"
                     class="trigger-price-side is-buy"
-                    aria-label="Price side: Buy or Sell"
+                    aria-label="Start condition: range or price"
                   >
-                    <option value="buy" selected>BUY Price</option>
-                    <option value="sell">SELL Price</option>
+                    <option value="range" selected>Range</option>
+                    <option value="price">Price</option>
                   </select>
                 </label>
                 <div
@@ -1304,6 +1334,7 @@
                 >
                   <div class="trigger-price-scale">
                     <div class="trigger-price-rail" aria-hidden="true"></div>
+                    <div class="trigger-price-zero" aria-hidden="true"></div>
                     <div class="trigger-price-range" data-range="start" aria-hidden="true"></div>
                     <button
                       type="button"
@@ -1558,8 +1589,8 @@
                     step="1"
                     value="10"
                     inputmode="numeric"
-                    aria-label="Buy shares (FAK)"
-                    title="Buy size (FAK only)"
+                    aria-label="Buy shares"
+                    title="Buy size"
                   />
                 </label>
               </div>
@@ -1570,11 +1601,12 @@
                     type="number"
                     id="trigger-duration-value"
                     class="trigger-duration-value"
-                    min="1"
+                    min="0"
                     step="1"
                     value="5"
                     inputmode="numeric"
-                    aria-label="Duration value"
+                    aria-label="Duration value (0 = fire immediately on start)"
+                    title="0 = no wait; start condition fires immediately"
                   />
                 </label>
                 <select id="trigger-duration-unit" class="trigger-duration-unit" aria-label="Duration unit">
@@ -1635,7 +1667,7 @@
             </select>
           </label>
           <p class="trigger-sell-order-note" id="trigger-sell-order-note">
-            Buy is always FOK (full size or no fill). FAK sell retries until flat. Take Profit / Stop Loss are ¢ offsets from the buy fill (1–100; <strong>100 = disabled</strong> for that exit). Held to window end without TP/SL counts blue (win) or red (loss). GTD rests at fill + Take Profit as soon as the buy fills (skipped when TP is 100).
+            Buy order type is set on the BUY tab. FAK sell retries until flat. Take Profit / Stop Loss are ¢ offsets from the buy fill (1–100; <strong>100 = disabled</strong> for that exit). Held to window end without TP/SL counts blue (win) or red (loss). GTD rests at fill + Take Profit as soon as the buy fills (skipped when TP is 100).
           </p>
           <label class="modal-field" for="trigger-take-profit">
             <span>Take Profit (¢ from fill)</span>
@@ -2016,6 +2048,7 @@
   <script src="/simulator.js?v=1.5.5"></script>
   <script src="/setup-editor.js?v=1.5.2"></script>
   <script src="/schedule-replay-triggers.js?v=1"></script>
+  <script src="/schedule-live-triggers.js?v=1"></script>
   <script src="/schedule.js?v=1.5.3"></script>
   <script src="/schedule-play.js?v=1.5.5"></script>
   <script src="/app.js?v=1.5.5"></script>

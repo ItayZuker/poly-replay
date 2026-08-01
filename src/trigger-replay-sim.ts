@@ -24,6 +24,8 @@ export interface ReplayTriggerDef {
   durationMs: number;
   buyShares: number;
   priceSide: "buy" | "sell";
+  startMode: "range" | "price";
+  startPriceCents: number;
   endMode: "range" | "change-side";
   endChangeSideCents: number;
   priceRanges: {
@@ -44,6 +46,7 @@ export interface ReplayTriggerDef {
   takeProfitCents: number;
   /** ¢ below buy fill to stop out (1–100). */
   stopLossCents: number;
+  buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: TriggerSellOrderType;
   windowArea: { start: number; end: number };
 }
@@ -167,10 +170,23 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
   const o = raw as Record<string, unknown>;
   const id = o.id != null ? String(o.id).trim() : "";
   if (!id) return null;
-  const durationMs = Math.max(1, Math.floor(Number(o.durationMs) || 5000));
+  const durationMs = (() => {
+    const n = Math.floor(Number(o.durationMs));
+    return Number.isFinite(n) && n >= 0 ? n : 5000;
+  })();
   const buyShares = Math.max(1, Math.min(100000, Math.floor(Number(o.buyShares) || 10)));
   const sellOrderType: TriggerSellOrderType =
     o.sellOrderType === "FOK" || o.sellOrderType === "GTD" ? o.sellOrderType : "FAK";
+  const startMode: "range" | "price" =
+    o.startMode === "price" || o.startMode === "change-side" ? "price" : "range";
+  const buyOrderTypeRaw =
+    o.buyOrderType === "FAK" || o.buyOrderType === "FOK" || o.buyOrderType === "GTD"
+      ? o.buyOrderType
+      : "FOK";
+  const buyOrderType: "FAK" | "FOK" | "GTD" =
+    buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price")
+      ? "FOK"
+      : buyOrderTypeRaw;
   const wa = o.windowArea && typeof o.windowArea === "object" ? (o.windowArea as Record<string, unknown>) : {};
   let areaStart = Number(wa.start);
   let areaEnd = Number(wa.end);
@@ -191,7 +207,15 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     name: typeof o.name === "string" ? o.name : undefined,
     durationMs,
     buyShares,
-    priceSide: o.priceSide === "sell" ? "sell" : "buy",
+    priceSide: "buy",
+    startMode,
+    startPriceCents: clampCents(
+      o.startPriceCents ??
+        (o.startMode === "change-side" || o.startMode === "price"
+          ? Math.abs(Number(o.startChangeSideCents))
+          : 50),
+      50,
+    ),
     endMode: o.endMode === "change-side" ? "change-side" : "range",
     endChangeSideCents: clampSignedCents(o.endChangeSideCents, 20),
     priceRanges: {
@@ -208,6 +232,7 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     },
     priceTrend: normalizePriceTrend(o.priceTrend),
     ...normalizeExitOffsets(o),
+    buyOrderType,
     sellOrderType,
     windowArea: { start: areaStart, end: areaEnd },
   };
@@ -369,23 +394,47 @@ function inPriceRange(cents: number, range: ReplayTriggerPriceRange): boolean {
   return Number.isFinite(cents) && cents >= range.lowCents && cents <= range.highCents;
 }
 
+/** Signed ¢ change: 0 = unchanged; +N = rose ≥ N¢; −N = fell ≥ |N|¢. */
+function signedChangeMet(needRaw: number, fromCents: number, toCents: number): boolean {
+  if (!Number.isFinite(fromCents) || !Number.isFinite(toCents)) return false;
+  const need = clampSignedCents(needRaw, 0);
+  const delta = Math.round(toCents) - Math.round(fromCents);
+  if (need === 0) return delta === 0;
+  if (need > 0) return delta >= need;
+  return delta <= need;
+}
+
+function startConditionMet(def: ReplayTriggerDef, currentCents: number): boolean {
+  if (def.startMode === "price") {
+    const need = clampCents(def.startPriceCents, 50);
+    return Number.isFinite(currentCents) && Math.round(currentCents) === need;
+  }
+  return inPriceRange(currentCents, def.priceRanges.start);
+}
+
+/** Buy GTD sides from start gap: none → both; + → UP; − → DOWN (only while gap matches). */
+function gtdDesiredSides(
+  def: ReplayTriggerDef,
+  tick: ReplayTickDocument,
+): Array<"up" | "down"> {
+  const kind = def.ptbGap.start;
+  if (kind !== "positive" && kind !== "negative") return ["up", "down"];
+  if (!gapMatches(tick, kind, def.gapSize.start)) return [];
+  return kind === "positive" ? ["up"] : ["down"];
+}
+
 function endConditionMet(def: ReplayTriggerDef, startCents: number, endCents: number): boolean {
   if (def.endMode === "change-side") {
-    if (!Number.isFinite(startCents) || !Number.isFinite(endCents)) return false;
-    const need = def.endChangeSideCents;
-    // Round to whole ¢ so quote float noise does not count as a change.
-    const delta = Math.round(endCents) - Math.round(startCents);
-    // 0 = price must be unchanged (not “any rise”). +N = rose ≥ N¢; −N = fell ≥ |N|¢.
-    if (need === 0) return delta === 0;
-    if (need > 0) return delta >= need;
-    return delta <= need;
+    return signedChangeMet(def.endChangeSideCents, startCents, endCents);
   }
   return inPriceRange(endCents, def.priceRanges.end);
 }
 
 /** Max Ask (¢) allowed for the FOK buy — band high so fills cannot walk above the setup. */
 function buyMaxAskCents(def: ReplayTriggerDef): number {
-  if (def.endMode === "change-side") {
+  const useStart = def.durationMs === 0 || def.endMode === "change-side";
+  if (useStart) {
+    if (def.startMode === "price") return clampCents(def.startPriceCents, 50);
     return def.priceRanges.start.highCents;
   }
   return def.priceRanges.end.highCents;
@@ -501,10 +550,34 @@ export class TriggerReplayRaceSession {
       return;
     }
 
-    const durationMs = def.durationMs;
-    if (rt.phase === "watching" && rt.side && rt.watchStartedAtMs != null) {
+    const durationRaw = Number(def.durationMs);
+    const durationMs = Number.isFinite(durationRaw) && durationRaw >= 0 ? durationRaw : 5000;
+    const priceSide = "buy" as const;
+    const buyGtd =
+      def.buyOrderType === "GTD" && durationMs === 0 && def.startMode === "price";
+
+    // Buy GTD: rest at Price from Apply-window start; fill when Ask ≤ Price.
+    if (buyGtd) {
+      const sides = gtdDesiredSides(def, tick);
+      const priceCents = clampCents(def.startPriceCents, 50);
+      for (const side of sides) {
+        const ask = quoteCents(tick, side, "buy");
+        if (!Number.isFinite(ask) || ask > priceCents + 1e-9) continue;
+        rt.side = side;
+        rt.watchStartedAtMs = tick.tMs;
+        rt.startPriceCents = priceCents;
+        rt.buyReadyAtMs = tick.tMs + this.latency;
+        if (tick.tMs >= rt.buyReadyAtMs) {
+          this.tryBuy(rt, tick, slotBusy);
+        }
+        break;
+      }
+      return;
+    }
+
+    if (durationMs > 0 && rt.phase === "watching" && rt.side && rt.watchStartedAtMs != null) {
       if (tick.tMs - rt.watchStartedAtMs < durationMs) return;
-      const endCents = quoteCents(tick, rt.side, def.priceSide);
+      const endCents = quoteCents(tick, rt.side, priceSide);
       const endGapOk = gapMatches(tick, def.ptbGap.end, def.gapSize.end);
       const trendOk = priceTrendMatches(def, rt.startAssetPrice, tick.assetPrice);
       if (
@@ -528,15 +601,23 @@ export class TriggerReplayRaceSession {
 
     if (!gapMatches(tick, def.ptbGap.start, def.gapSize.start)) return;
     for (const side of ["up", "down"] as const) {
-      const startCents = quoteCents(tick, side, def.priceSide);
-      if (!inPriceRange(startCents, def.priceRanges.start)) continue;
-      rt.phase = "watching";
+      const startCents = quoteCents(tick, side, priceSide);
+      if (!startConditionMet(def, startCents)) continue;
       rt.side = side;
       rt.watchStartedAtMs = tick.tMs;
       rt.startPriceCents = startCents;
       rt.startAssetPrice = Number.isFinite(Number(tick.assetPrice))
         ? Number(tick.assetPrice)
         : null;
+      if (durationMs === 0) {
+        // Immediate fire: start Range/Price + start gap only (no end wait).
+        rt.buyReadyAtMs = tick.tMs + this.latency;
+        if (tick.tMs >= rt.buyReadyAtMs) {
+          this.tryBuy(rt, tick, slotBusy);
+        }
+      } else {
+        rt.phase = "watching";
+      }
       break;
     }
   }
@@ -560,8 +641,8 @@ export class TriggerReplayRaceSession {
     }
     const maxAsk = buyMaxAskCents(rt.def) / 100;
     const asks = asksForSide(tick, rt.side).filter((l) => l.price <= maxAsk + 1e-9);
-    // Trigger buys are always FOK — full size at/below the band high, or no fill.
-    const buyFill = walkAsks(asks, rt.def.buyShares, true);
+    const fok = rt.def.buyOrderType !== "FAK";
+    const buyFill = walkAsks(asks, rt.def.buyShares, fok);
     rt.buyReadyAtMs = null;
     if (!buyFill || buyFill.shares <= 0) {
       rt.phase = "idle";

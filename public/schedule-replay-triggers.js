@@ -8,6 +8,8 @@
   let replayTriggers = [];
   /** Aggregated stats from the active/last Run, keyed by triggerId. */
   let runStatsById = Object.create(null);
+  /** True while a Schedule Replay Run is in progress (freeze edits / pause toggles). */
+  let listLocked = false;
 
   function storageKey() {
     return typeof window.userScopedStorageKey === "function"
@@ -58,6 +60,36 @@
       name: typeof raw.name === "string" ? raw.name : "Untitled trigger",
       takeProfitCents: exits.takeProfitCents,
       stopLossCents: exits.stopLossCents,
+      // Explicit true only — older cards without the field stay Active on Run.
+      paused: raw.paused === true,
+      priceSide: "buy",
+      startMode: raw.startMode === "price" || raw.startMode === "change-side" ? "price" : "range",
+      startPriceCents: (() => {
+        const n = Math.round(
+          Number(
+            raw.startPriceCents ??
+              (raw.startMode === "change-side" || raw.startMode === "price"
+                ? Math.abs(Number(raw.startChangeSideCents))
+                : 50),
+          ),
+        );
+        if (!Number.isFinite(n)) return 50;
+        return Math.max(0, Math.min(100, n));
+      })(),
+      buyOrderType: (() => {
+        const durationMs = (() => {
+          const n = Math.floor(Number(raw.durationMs));
+          return Number.isFinite(n) && n >= 0 ? n : 5000;
+        })();
+        const startMode =
+          raw.startMode === "price" || raw.startMode === "change-side" ? "price" : "range";
+        const rawType =
+          raw.buyOrderType === "FAK" || raw.buyOrderType === "FOK" || raw.buyOrderType === "GTD"
+            ? raw.buyOrderType
+            : "FOK";
+        if (rawType === "GTD" && !(durationMs === 0 && startMode === "price")) return "FOK";
+        return rawType;
+      })(),
       replayStats: normalizeStats(raw.replayStats),
     };
   }
@@ -94,10 +126,26 @@
   }
 
   function listForRun() {
-    return replayTriggers.map((t) => {
-      const { replayStats, runMode, paused, demoStats, ...def } = t;
-      return def;
+    return replayTriggers
+      .filter((t) => t?.paused !== true)
+      .map((t) => {
+        const { replayStats, runMode, paused, demoStats, ...def } = t;
+        return def;
+      });
+  }
+
+  function setPaused(triggerId, paused) {
+    if (listLocked) return;
+    const id = String(triggerId || "");
+    const idx = replayTriggers.findIndex((t) => String(t?.id) === id);
+    if (idx < 0) return;
+    replayTriggers[idx] = normalizeTrigger({
+      ...replayTriggers[idx],
+      paused: Boolean(paused),
     });
+    save();
+    render();
+    stopReplayForTriggerChange();
   }
 
   function stopReplayForTriggerChange() {
@@ -185,9 +233,11 @@
     }
     for (const trigger of replayTriggers) {
       const id = String(trigger.id);
+      const paused = trigger.paused === true;
       const stats = normalizeStats(runStatsById[id] || trigger.replayStats);
       const card = document.createElement("div");
       card.className = "schedule-replay-trigger-card";
+      if (paused) card.classList.add("is-paused");
       card.dataset.triggerId = id;
 
       const header = document.createElement("div");
@@ -207,9 +257,11 @@
       menuBtn.className = "schedule-setup-menu-btn";
       menuBtn.setAttribute("aria-label", "Trigger menu");
       menuBtn.textContent = "⋮";
+      menuBtn.disabled = listLocked;
       menuBtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (listLocked) return;
         closeMenus();
         const menu = document.createElement("div");
         menu.className = "schedule-setup-menu schedule-replay-trigger-menu";
@@ -245,6 +297,34 @@
       menuWrap.appendChild(menuBtn);
       header.append(title, menuWrap);
 
+      const controls = document.createElement("div");
+      controls.className = "trigger-card-controls";
+      const pauseWrap = document.createElement("div");
+      pauseWrap.className = "trigger-run-mode trigger-pause-mode";
+      pauseWrap.setAttribute("role", "group");
+      pauseWrap.setAttribute("aria-label", "Pause or Active");
+      for (const state of ["pause", "active"]) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "trigger-run-mode-btn";
+        btn.dataset.pauseState = state;
+        btn.textContent = state === "pause" ? "Pause" : "Active";
+        const isSelected = state === "pause" ? paused : !paused;
+        if (isSelected) btn.classList.add("is-active");
+        btn.disabled = listLocked;
+        btn.title =
+          state === "pause"
+            ? "Skip this trigger on Replay Run"
+            : "Include this trigger on Replay Run";
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setPaused(id, state === "pause");
+        });
+        pauseWrap.appendChild(btn);
+      }
+      controls.appendChild(pauseWrap);
+
       const statsRow = document.createElement("div");
       statsRow.className = "trigger-card-stats";
       statsRow.innerHTML =
@@ -272,17 +352,19 @@
         pnlEl.classList.toggle("is-neg", stats.pnlUsd < 0);
       }
 
-      card.append(header, statsRow);
+      card.append(header, controls, statsRow);
       list.appendChild(card);
     }
   }
 
   function setLocked(locked) {
+    listLocked = Boolean(locked);
     const addBtn = document.getElementById("schedule-replay-triggers-add");
     if (addBtn) {
-      addBtn.disabled = Boolean(locked);
-      addBtn.setAttribute("aria-disabled", locked ? "true" : "false");
+      addBtn.disabled = listLocked;
+      addBtn.setAttribute("aria-disabled", listLocked ? "true" : "false");
     }
+    render();
   }
 
   function init() {
@@ -309,6 +391,7 @@
     upsert,
     remove,
     find,
+    setPaused,
     resetRunStats,
     accumulatePlacementTriggerStats,
     commitRunStatsToCards,

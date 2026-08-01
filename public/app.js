@@ -51,6 +51,10 @@ function syncScheduleWorkspaceUi() {
   if (replayPanel) {
     replayPanel.setAttribute("aria-hidden", replayOpen ? "false" : "true");
   }
+  const liveTriggers = $("schedule-live-triggers");
+  if (liveTriggers) {
+    liveTriggers.setAttribute("aria-hidden", replayOpen ? "true" : "false");
+  }
   const replayBtn = $("schedule-replay-run-btn");
   if (replayBtn) {
     replayBtn.tabIndex = replayOpen ? 0 : -1;
@@ -61,6 +65,8 @@ function syncScheduleWorkspaceUi() {
   if (fillInput) fillInput.tabIndex = replayOpen ? 0 : -1;
   if (replayOpen) {
     window.SchedulePlacements?.syncReplayInputsFromLive?.();
+  } else {
+    window.ScheduleLiveTriggers?.render?.();
   }
 }
 
@@ -1833,7 +1839,11 @@ function updateQuoteBoxes(state) {
 
 let quoteOrderInFlight = false;
 
-async function postTradingOrder(side, leg, { source, shares, orderType, sellOrderType, takeProfitCents } = {}) {
+async function postTradingOrder(
+  side,
+  leg,
+  { source, shares, orderType, sellOrderType, takeProfitCents, maxPrice } = {},
+) {
   const res = await fetch("/api/trading/order", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1851,7 +1861,20 @@ async function postTradingOrder(side, leg, { source, shares, orderType, sellOrde
       ...(Number.isFinite(Number(takeProfitCents))
         ? { takeProfitCents: Math.round(Number(takeProfitCents)) }
         : {}),
+      ...(Number.isFinite(Number(maxPrice)) && Number(maxPrice) > 0 && Number(maxPrice) < 1
+        ? { maxPrice: Number(maxPrice) }
+        : {}),
     }),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body };
+}
+
+async function postTriggerGtdSync(desires) {
+  const res = await fetch("/api/trading/trigger-gtd-sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ desires: Array.isArray(desires) ? desires : [] }),
   });
   const body = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, body };
@@ -4271,7 +4294,12 @@ $("log-scroll-bottom").addEventListener("click", () => {
 let triggerCreateDurationMs = 5000;
 let triggerCreateName = "";
 let triggerCreateColor = "#58a6ff";
+/** Quotes always use Buy (Ask); Sell-side quote mode removed from the editor. */
 let triggerCreatePriceSide = "buy";
+/** Start bar mode: "range" | "price" (single Ask ¢ on 0–100 scale). */
+let triggerCreateStartMode = "range";
+/** Start single price in ¢ when start mode is "price" (0–100; bottom=0, top=100). */
+let triggerCreateStartPriceCents = 50;
 /** End bar mode: "range" | "change-side" (signed ±100¢). */
 let triggerCreateEndMode = "range";
 /** End signed change in ¢ when mode is "change-side" (-100…+100). */
@@ -4299,10 +4327,12 @@ let triggerPriceTrendSpin = null;
 /** SELL tab: take-profit / stop-loss offsets in ¢ from the buy fill (1–100). */
 let triggerCreateTakeProfitCents = 10;
 let triggerCreateStopLossCents = 10;
-/** Buy size for trigger entries (always FOK). */
+/** Buy size for trigger entries. */
 let triggerCreateBuyShares = 10;
 /** Sell order type when the trigger exits: FAK | FOK | GTD. */
 let triggerCreateSellOrderType = "FAK";
+/** Buy placement: FOK default; GTD only when Duration 0 + left Price. */
+let triggerCreateBuyOrderType = "FOK";
 /** Fraction of market window [0–1] when the trigger may apply. */
 let triggerCreateWindowArea = { start: 0, end: 1 };
 /** Active side tab in the create/edit dialog: "buy" | "sell". */
@@ -4336,8 +4366,23 @@ const TRIGGER_PRICE_MIN_GAP = 1;
 
 function clampTriggerDurationValue(raw) {
   const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n < 1) return 1;
+  if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(n, 1_000_000_000);
+}
+
+/** Stored/runtime duration; 0 = fire immediately on start (no end wait). */
+function normalizeTriggerDurationMs(raw, fallback = 5000) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 0) {
+    const fb = Math.floor(Number(fallback));
+    return Number.isFinite(fb) && fb >= 0 ? fb : 5000;
+  }
+  return n;
+}
+
+function isTriggerZeroDuration(ms = triggerCreateDurationMs) {
+  const n = Math.floor(Number(ms));
+  return Number.isFinite(n) && n === 0;
 }
 
 function readTriggerDurationMsFromInputs() {
@@ -4349,8 +4394,28 @@ function readTriggerDurationMsFromInputs() {
   return value * TRIGGER_DURATION_UNIT_MS[unit];
 }
 
+function syncTriggerZeroDurationUi() {
+  const diagram = document.querySelector(".trigger-duration-diagram");
+  const zero = isTriggerZeroDuration(triggerCreateDurationMs);
+  diagram?.classList.toggle("is-zero-duration", zero);
+  const endMode = $("trigger-end-mode");
+  if (endMode) endMode.disabled = zero;
+  document.querySelectorAll('.trigger-ptb-btn[data-edge="end"]').forEach((btn) => {
+    btn.disabled = zero;
+    btn.setAttribute("aria-disabled", zero ? "true" : "false");
+  });
+  document
+    .querySelectorAll('.trigger-gap-size-control[data-edge="end"] select, .trigger-gap-size-control[data-edge="end"] input')
+    .forEach((el) => {
+      el.disabled = zero;
+    });
+}
+
 function syncTriggerDurationDraft() {
   triggerCreateDurationMs = readTriggerDurationMsFromInputs();
+  syncTriggerZeroDurationUi();
+  syncTriggerCreateBuyOrderTypeUi();
+  renderTriggerPtbGapUi();
 }
 
 function clampTriggerCents(raw) {
@@ -4472,6 +4537,12 @@ function normalizeTriggerEndMode(raw) {
   return raw === "change-side" ? "change-side" : "range";
 }
 
+/** Start bar: range (band) or price (single 0–100¢). Legacy "change-side" → price. */
+function normalizeTriggerStartMode(raw) {
+  if (raw === "price" || raw === "change-side") return "price";
+  return "range";
+}
+
 function renderTriggerPriceRange(edge) {
   const scale = getTriggerPriceScale(edge);
   if (!scale) return;
@@ -4482,11 +4553,42 @@ function renderTriggerPriceRange(edge) {
   const highLabel = scale.querySelector(`[data-label="${edge}-high"]`);
   const lowLabel = scale.querySelector(`[data-label="${edge}-low"]`);
   const track = scale.closest(".trigger-price-track");
-  const endMode = edge === "end" ? normalizeTriggerEndMode(triggerCreateEndMode) : "range";
-  const isChangeSide = endMode === "change-side";
-  col?.classList.toggle("is-change-side-mode", isChangeSide);
+  const isStartPrice =
+    edge === "start" && normalizeTriggerStartMode(triggerCreateStartMode) === "price";
+  const isEndChange =
+    edge === "end" && normalizeTriggerEndMode(triggerCreateEndMode) === "change-side";
+  // Signed ± scale is end Price Change only; start Price stays on absolute 0–100¢.
+  col?.classList.toggle("is-change-side-mode", isEndChange);
+  col?.classList.toggle("is-start-price-mode", isStartPrice);
 
-  if (isChangeSide) {
+  if (isStartPrice) {
+    const price = clampTriggerCents(triggerCreateStartPriceCents);
+    triggerCreateStartPriceCents = price;
+    const pct = centsToTrackBottomPct(price);
+    const zeroEl = scale.querySelector(".trigger-price-zero");
+    if (zeroEl) zeroEl.style.top = "";
+    if (fill) {
+      fill.style.bottom = "0%";
+      fill.style.height = `${pct}%`;
+    }
+    if (highThumb) {
+      highThumb.hidden = false;
+      highThumb.style.bottom = `${pct}%`;
+      highThumb.setAttribute("aria-label", "Start buy price in cents");
+    }
+    if (lowThumb) lowThumb.hidden = true;
+    if (highLabel) {
+      highLabel.textContent = `${price}¢`;
+      highLabel.classList.remove("is-positive", "is-negative");
+    }
+    if (lowLabel) lowLabel.textContent = "";
+    if (track) {
+      track.setAttribute("aria-label", "Start buy price: bottom 0¢, top 100¢");
+    }
+    return;
+  }
+
+  if (isEndChange) {
     const signed = clampTriggerSignedCents(triggerCreateEndChangeSideCents);
     triggerCreateEndChangeSideCents = signed;
     const scaleH = Math.max(1, scale.getBoundingClientRect().height);
@@ -4922,10 +5024,12 @@ function renderTriggerPtbGapUi() {
     midLine.style.bottom = "auto";
   }
 
-  // Trend wheel: only when both gap areas are on the same side.
+  const zeroDuration = isTriggerZeroDuration(triggerCreateDurationMs);
+
+  // Trend wheel: only when both gap areas are on the same side (needs Duration > 0).
   const trendWrap = $("trigger-price-trend");
   if (trendWrap) {
-    const sameSide = triggerSameSideGaps(triggerCreatePtbGap);
+    const sameSide = !zeroDuration && triggerSameSideGaps(triggerCreatePtbGap);
     trendWrap.hidden = !sameSide;
     if (sameSide) {
       const side = triggerCreatePtbGap.start; // same as end when sameSide
@@ -4940,7 +5044,8 @@ function renderTriggerPtbGapUi() {
   }
 
   for (const edge of ["start", "end"]) {
-    const selected = triggerCreatePtbGap[edge];
+    const endDisabled = zeroDuration && edge === "end";
+    const selected = endDisabled ? null : triggerCreatePtbGap[edge];
     const scale = getTriggerPriceScale(edge);
     const col = document.querySelector(`.trigger-price-column[data-edge="${edge}"]`);
     if (!scale || !col) continue;
@@ -4965,6 +5070,10 @@ function renderTriggerPtbGapUi() {
         btn.setAttribute("aria-pressed", active ? "true" : "false");
         btn.style.left = `${Math.round(btnX)}px`;
         btn.style.top = `${Math.round(yByKind[kind])}px`;
+        if (edge === "end") {
+          btn.disabled = zeroDuration;
+          btn.setAttribute("aria-disabled", zeroDuration ? "true" : "false");
+        }
       }
     }
 
@@ -4993,6 +5102,7 @@ function renderAllTriggerPriceRanges() {
 function toggleTriggerPtbGap(edge, kind) {
   if (edge !== "start" && edge !== "end") return;
   if (kind !== "negative" && kind !== "positive") return;
+  if (edge === "end" && isTriggerZeroDuration(triggerCreateDurationMs)) return;
   triggerCreatePtbGap[edge] = triggerCreatePtbGap[edge] === kind ? null : kind;
   renderTriggerPtbGapUi();
 }
@@ -5111,8 +5221,12 @@ function bindTriggerPriceTrendControls() {
 }
 
 function setTriggerPriceThumb(edge, thumb, cents) {
-  const endMode = edge === "end" ? normalizeTriggerEndMode(triggerCreateEndMode) : "range";
-  if (endMode === "change-side") {
+  if (edge === "start" && normalizeTriggerStartMode(triggerCreateStartMode) === "price") {
+    triggerCreateStartPriceCents = clampTriggerCents(cents);
+    renderTriggerPriceRange("start");
+    return;
+  }
+  if (edge === "end" && normalizeTriggerEndMode(triggerCreateEndMode) === "change-side") {
     triggerCreateEndChangeSideCents = clampTriggerSignedCents(cents);
     renderTriggerPriceRange("end");
     return;
@@ -5177,9 +5291,14 @@ function bindTriggerPriceRangeDrag() {
       if ((edge !== "start" && edge !== "end") || (thumb !== "high" && thumb !== "low") || !scale) {
         return;
       }
-      const endMode = edge === "end" ? normalizeTriggerEndMode(triggerCreateEndMode) : "range";
-      if (endMode === "change-side" && thumb === "low") return;
-      drag = { edge, thumb, scale, thumbEl, pointerId: e.pointerId, endMode };
+      if (edge === "end" && isTriggerZeroDuration(triggerCreateDurationMs)) return;
+      const startPriceMode =
+        edge === "start" && normalizeTriggerStartMode(triggerCreateStartMode) === "price";
+      const endChangeMode =
+        edge === "end" && normalizeTriggerEndMode(triggerCreateEndMode) === "change-side";
+      if ((startPriceMode || endChangeMode) && thumb === "low") return;
+      const dragMode = endChangeMode ? "change-side" : startPriceMode ? "price" : "range";
+      drag = { edge, thumb, scale, thumbEl, pointerId: e.pointerId, endMode: dragMode };
       thumbEl.classList.add("is-dragging");
       document.body.classList.add("is-trigger-price-dragging");
       try {
@@ -5191,7 +5310,7 @@ function bindTriggerPriceRangeDrag() {
       window.addEventListener("pointerup", stopDrag);
       window.addEventListener("pointercancel", stopDrag);
       const nextCents =
-        endMode === "change-side"
+        dragMode === "change-side"
           ? clientYToTriggerSignedCents(scale, e.clientY)
           : clientYToTriggerCents(scale, e.clientY);
       setTriggerPriceThumb(edge, thumb, nextCents);
@@ -5296,6 +5415,57 @@ function normalizeTriggerSellOrderType(raw) {
   return "FAK";
 }
 
+function triggerBuyGtdAllowed(durationMs, startMode) {
+  return isTriggerZeroDuration(durationMs) && normalizeTriggerStartMode(startMode) === "price";
+}
+
+function normalizeTriggerBuyOrderType(raw, durationMs, startMode) {
+  if (raw === "FAK") return "FAK";
+  if (raw === "GTD") {
+    return triggerBuyGtdAllowed(durationMs, startMode) ? "GTD" : "FOK";
+  }
+  return "FOK";
+}
+
+function syncTriggerCreateBuyOrderTypeUi() {
+  const el = $("trigger-buy-order-type");
+  if (!el) return;
+  const gtdOk = triggerBuyGtdAllowed(triggerCreateDurationMs, triggerCreateStartMode);
+  const gtdOpt = el.querySelector('option[value="GTD"]');
+  if (gtdOpt) gtdOpt.disabled = !gtdOk;
+  triggerCreateBuyOrderType = normalizeTriggerBuyOrderType(
+    el.value || triggerCreateBuyOrderType,
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+  );
+  if (el.value !== triggerCreateBuyOrderType) el.value = triggerCreateBuyOrderType;
+  const note = $("trigger-buy-order-note");
+  if (note) {
+    note.classList.toggle("is-gtd-locked", !gtdOk);
+  }
+}
+
+function syncTriggerCreateBuyOrderTypeDraft() {
+  const el = $("trigger-buy-order-type");
+  triggerCreateBuyOrderType = normalizeTriggerBuyOrderType(
+    el?.value ?? triggerCreateBuyOrderType,
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+  );
+  syncTriggerCreateBuyOrderTypeUi();
+}
+
+function applyTriggerBuyOrderTypeToInput(orderType) {
+  triggerCreateBuyOrderType = normalizeTriggerBuyOrderType(
+    orderType ?? "FOK",
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+  );
+  const el = $("trigger-buy-order-type");
+  if (el) el.value = triggerCreateBuyOrderType;
+  syncTriggerCreateBuyOrderTypeUi();
+}
+
 function normalizeTriggerExitOffsets(raw) {
   const tp = Math.round(Number(raw?.takeProfitCents));
   const sl = Math.round(Number(raw?.stopLossCents));
@@ -5317,11 +5487,27 @@ function normalizeTriggerRecord(raw) {
   return {
     ...raw,
     id,
+    durationMs: normalizeTriggerDurationMs(raw.durationMs, 5000),
     buyShares: normalizeTriggerBuyShares(raw.buyShares),
+    buyOrderType: normalizeTriggerBuyOrderType(
+      raw.buyOrderType,
+      raw.durationMs,
+      raw.startMode,
+    ),
     sellOrderType: normalizeTriggerSellOrderType(raw.sellOrderType),
     takeProfitCents: exits.takeProfitCents,
     stopLossCents: exits.stopLossCents,
     priceTrend: normalizeTriggerPriceTrend(raw.priceTrend),
+    priceSide: "buy",
+    startMode: normalizeTriggerStartMode(raw.startMode),
+    startPriceCents: clampTriggerCents(
+      raw.startPriceCents ??
+        (raw.startMode === "change-side" || raw.startMode === "price"
+          ? Math.abs(Number(raw.startChangeSideCents)) || 50
+          : 50),
+    ),
+    endMode: normalizeTriggerEndMode(raw.endMode),
+    endChangeSideCents: clampTriggerSignedCents(raw.endChangeSideCents ?? 20),
     runMode: raw.runMode === "trade" ? "trade" : "demo",
     paused: raw.paused !== false,
     demoStats: normalizeTriggerDemoStats(raw.demoStats),
@@ -5533,6 +5719,7 @@ function renderTriggersList() {
   cards.replaceChildren();
   const list = Array.isArray(userTriggers) ? userTriggers : [];
   if (empty) empty.hidden = list.length > 0;
+  window.ScheduleLiveTriggers?.render?.();
   for (const trigger of list) {
     const triggerId = String(trigger.id || "");
     const paused = trigger.paused !== false;
@@ -5760,8 +5947,16 @@ function updateTriggerCardStats(triggerId) {
   const trigger = findUserTrigger(id);
   const card = document.querySelector(`.trigger-card[data-trigger-id="${CSS.escape(id)}"]`);
   const statsRow = card?.querySelector(".trigger-card-stats");
-  if (!trigger || !statsRow) return;
-  fillTriggerCardStatsRow(statsRow, trigger);
+  if (trigger && statsRow) fillTriggerCardStatsRow(statsRow, trigger);
+  // Keep Schedule Live Trade+Active list in sync (membership + counters).
+  window.ScheduleLiveTriggers?.updateStats?.(id);
+  const tradeActive = trigger?.runMode === "trade" && trigger?.paused === false;
+  const liveCard = document.querySelector(
+    `.schedule-live-trigger-card[data-trigger-id="${CSS.escape(id)}"]`,
+  );
+  if (Boolean(liveCard) !== Boolean(tradeActive)) {
+    window.ScheduleLiveTriggers?.render?.();
+  }
 }
 
 function formatTriggerLivePriceCents(priceDollars) {
@@ -5877,15 +6072,18 @@ function applyTriggerDurationToInputs(ms) {
   const valueEl = $("trigger-duration-value");
   const unitEl = $("trigger-duration-unit");
   if (!valueEl || !unitEl) return;
-  const n = Number(ms);
-  if (Number.isFinite(n) && n >= 60_000 && n % 60_000 === 0) {
+  const n = normalizeTriggerDurationMs(ms, 5000);
+  if (n === 0) {
+    valueEl.value = "0";
+    if (!(unitEl.value in TRIGGER_DURATION_UNIT_MS)) unitEl.value = "s";
+  } else if (n >= 60_000 && n % 60_000 === 0) {
     valueEl.value = String(n / 60_000);
     unitEl.value = "min";
-  } else if (Number.isFinite(n) && n >= 1000 && n % 1000 === 0) {
+  } else if (n >= 1000 && n % 1000 === 0) {
     valueEl.value = String(n / 1000);
     unitEl.value = "s";
   } else {
-    valueEl.value = String(Math.max(1, Math.round(Number.isFinite(n) ? n : 5000)));
+    valueEl.value = String(n);
     unitEl.value = "ms";
   }
   syncTriggerDurationDraft();
@@ -6193,7 +6391,12 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   if (colorEl) colorEl.value = typeof trigger?.color === "string" ? trigger.color : "#58a6ff";
   triggerCreateName = String(trigger?.name || "").trim();
   triggerCreateColor = typeof trigger?.color === "string" ? trigger.color : "#58a6ff";
-  triggerCreatePriceSide = trigger?.priceSide === "sell" ? "sell" : "buy";
+  triggerCreatePriceSide = "buy";
+  triggerCreateStartMode = normalizeTriggerStartMode(trigger?.startMode);
+  triggerCreateStartPriceCents = clampTriggerCents(
+    trigger?.startPriceCents ??
+      (trigger?.startMode === "change-side" ? Math.abs(Number(trigger?.startChangeSideCents)) : 50),
+  );
   triggerCreateEndMode = normalizeTriggerEndMode(trigger?.endMode);
   triggerCreateEndChangeSideCents = clampTriggerSignedCents(trigger?.endChangeSideCents ?? 20);
   triggerCreatePriceRanges = {
@@ -6217,6 +6420,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   triggerCreatePriceTrend = normalizeTriggerPriceTrend(trigger?.priceTrend);
   applyTriggerDurationToInputs(trigger?.durationMs ?? 5000);
   applyTriggerBuySharesToInput(trigger?.buyShares);
+  applyTriggerBuyOrderTypeToInput(trigger?.buyOrderType ?? "FOK");
   applyTriggerSellToInputs(
     trigger?.takeProfitCents,
     trigger?.stopLossCents,
@@ -6229,6 +6433,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   setTriggerCreateActiveTab("buy");
   syncTriggerCreateColorIconContrast();
   syncTriggerCreateSideUi();
+  syncTriggerCreateBuyOrderTypeUi();
   syncTriggerCreateSubmitState();
   for (const edge of ["start", "end"]) syncTriggerGapSizeControl(edge);
   syncTriggerPriceTrendControls();
@@ -6246,9 +6451,11 @@ function buildTriggerFromCreateDraft() {
   syncTriggerCreateColorDraft();
   syncTriggerDurationDraft();
   syncTriggerCreateBuySharesDraft();
+  syncTriggerCreateBuyOrderTypeDraft();
   syncTriggerCreateSellDraft();
   const name = triggerCreateName;
   if (!name) return null;
+  const startMode = normalizeTriggerStartMode(triggerCreateStartMode);
   const endMode = normalizeTriggerEndMode(triggerCreateEndMode);
   const existing =
     triggerCreateEditingId != null
@@ -6268,7 +6475,9 @@ function buildTriggerFromCreateDraft() {
     color: triggerCreateColor || "#58a6ff",
     durationMs: triggerCreateDurationMs,
     buyShares: normalizeTriggerBuyShares(triggerCreateBuyShares),
-    priceSide: triggerCreatePriceSide === "sell" ? "sell" : "buy",
+    priceSide: "buy",
+    startMode,
+    startPriceCents: clampTriggerCents(triggerCreateStartPriceCents),
     endMode,
     endChangeSideCents: clampTriggerSignedCents(triggerCreateEndChangeSideCents),
     priceRanges: {
@@ -6290,6 +6499,11 @@ function buildTriggerFromCreateDraft() {
     priceTrend: normalizeTriggerPriceTrend(triggerCreatePriceTrend),
     takeProfitCents: clampTriggerOffsetCents(triggerCreateTakeProfitCents, 10),
     stopLossCents: clampTriggerOffsetCents(triggerCreateStopLossCents, 10),
+    buyOrderType: normalizeTriggerBuyOrderType(
+      triggerCreateBuyOrderType,
+      triggerCreateDurationMs,
+      startMode,
+    ),
     sellOrderType: normalizeTriggerSellOrderType(triggerCreateSellOrderType),
     windowArea: normalizeTriggerWindowArea(
       triggerCreateWindowArea.start,
@@ -6338,38 +6552,38 @@ function syncTriggerCreateColorDraft() {
 }
 
 function syncTriggerCreateSideUi() {
-  const side = triggerCreatePriceSide === "sell" ? "sell" : "buy";
-  const mode = normalizeTriggerEndMode(triggerCreateEndMode);
-  const startEl = $("trigger-price-side-start");
-  const modeEl = $("trigger-end-mode");
+  // Editor is BUY-only (Ask quotes). Left: Range / Price; right: Range / Change.
+  triggerCreatePriceSide = "buy";
+  const startMode = normalizeTriggerStartMode(triggerCreateStartMode);
+  const endMode = normalizeTriggerEndMode(triggerCreateEndMode);
+  const startEl = $("trigger-start-mode");
+  const endEl = $("trigger-end-mode");
 
   if (startEl) {
-    startEl.value = side;
-    startEl.classList.toggle("is-buy", side === "buy");
-    startEl.classList.toggle("is-sell", side === "sell");
+    startEl.value = startMode;
+    startEl.classList.add("is-buy");
+    startEl.classList.remove("is-sell");
   }
-
-  if (modeEl) {
-    const sideLabel = side === "sell" ? "SELL" : "BUY";
-    const rangeOpt = modeEl.querySelector('option[value="range"]');
-    const changeOpt = modeEl.querySelector('option[value="change-side"]');
-    if (rangeOpt) rangeOpt.textContent = `${sideLabel} Price Range`;
-    if (changeOpt) changeOpt.textContent = `${sideLabel} Price Change`;
-    modeEl.value = mode;
-    modeEl.classList.toggle("is-buy", side === "buy");
-    modeEl.classList.toggle("is-sell", side === "sell");
+  if (endEl) {
+    endEl.value = endMode;
+    endEl.classList.add("is-buy");
+    endEl.classList.remove("is-sell");
   }
 
   document.querySelectorAll(".trigger-price-column").forEach((col) => {
-    col.classList.toggle("is-buy", side === "buy");
-    col.classList.toggle("is-sell", side === "sell");
+    col.classList.add("is-buy");
+    col.classList.remove("is-sell");
   });
+  renderTriggerPriceRange("start");
+  renderTriggerPriceRange("end");
 }
 
-function syncTriggerCreateSideDraft(fromEl) {
-  const side = fromEl?.value === "sell" ? "sell" : "buy";
-  triggerCreatePriceSide = side;
+function syncTriggerCreateStartModeDraft() {
+  const el = $("trigger-start-mode");
+  triggerCreateStartMode = normalizeTriggerStartMode(el?.value);
   syncTriggerCreateSideUi();
+  syncTriggerCreateBuyOrderTypeUi();
+  renderTriggerPtbGapUi();
 }
 
 function syncTriggerCreateEndModeDraft() {
@@ -6391,6 +6605,8 @@ function resetTriggerCreateForm() {
   triggerCreateColor = "#58a6ff";
   triggerCreateDurationMs = 5000;
   triggerCreatePriceSide = "buy";
+  triggerCreateStartMode = "range";
+  triggerCreateStartPriceCents = 50;
   triggerCreateEndMode = "range";
   triggerCreateEndChangeSideCents = 20;
   triggerCreatePriceRanges = {
@@ -6404,11 +6620,14 @@ function resetTriggerCreateForm() {
   };
   triggerCreatePriceTrend = { dollars: 0, bound: "min" };
   applyTriggerBuySharesToInput(10);
+  applyTriggerBuyOrderTypeToInput("FOK");
   applyTriggerSellToInputs(10, 10, "FAK");
   triggerCreateWindowArea = { start: 0, end: 1 };
   setTriggerCreateActiveTab("buy");
   syncTriggerCreateColorIconContrast();
   syncTriggerCreateSideUi();
+  syncTriggerZeroDurationUi();
+  syncTriggerCreateBuyOrderTypeUi();
   syncTriggerCreateSubmitState();
   for (const edge of ["start", "end"]) syncTriggerGapSizeControl(edge);
   syncTriggerPriceTrendControls();
@@ -6470,6 +6689,11 @@ function closeTriggerCreateModal() {
 
 window.openTriggerCreateModalForHost = openTriggerCreateModalForHost;
 window.openTriggerEditModalForHost = openTriggerEditModalForHost;
+window.findUserTrigger = findUserTrigger;
+window.listMarketTriggersForSchedule = () =>
+  Array.isArray(userTriggers) ? userTriggers.slice() : [];
+window.fillTriggerCardStatsRow = fillTriggerCardStatsRow;
+window.fetchTriggerLiveStats = fetchTriggerLiveStats;
 
 function bindTriggerCreateModal() {
   void loadUserTriggers().then(() => renderTriggersList());
@@ -6524,6 +6748,9 @@ function bindTriggerCreateModal() {
   $("trigger-buy-shares")?.addEventListener("change", () => {
     syncTriggerCreateBuySharesDraft();
   });
+  $("trigger-buy-order-type")?.addEventListener("change", () => {
+    syncTriggerCreateBuyOrderTypeDraft();
+  });
   $("trigger-sell-order-type")?.addEventListener("change", () => {
     syncTriggerCreateSellDraft();
   });
@@ -6539,8 +6766,8 @@ function bindTriggerCreateModal() {
   $("trigger-stop-loss")?.addEventListener("change", () => {
     syncTriggerCreateSellDraft();
   });
-  $("trigger-price-side-start")?.addEventListener("change", (e) => {
-    syncTriggerCreateSideDraft(e.currentTarget);
+  $("trigger-start-mode")?.addEventListener("change", () => {
+    syncTriggerCreateStartModeDraft();
   });
   $("trigger-end-mode")?.addEventListener("change", () => {
     syncTriggerCreateEndModeDraft();
@@ -9930,11 +10157,14 @@ function recordTriggerChartHit(trigger, rt, state, side) {
   if (!Number.isFinite(windowStart)) return;
   syncTriggerChartHitsWindow(windowStart);
   const buySec = Date.now() / 1000;
-  const durationSec = Math.max(0.001, (Number(trigger.durationMs) || 5000) / 1000);
+  const durationMs = normalizeTriggerDurationMs(trigger.durationMs, 5000);
+  const durationSec = Math.max(0.001, durationMs / 1000);
   const watchFromRt =
     Number.isFinite(rt.watchStartedAtMs) && rt.watchStartedAtMs > 0
       ? rt.watchStartedAtMs / 1000
-      : buySec - durationSec;
+      : durationMs === 0
+        ? buySec
+        : buySec - durationSec;
   const watchStartSec = Math.max(windowStart, Math.min(buySec, watchFromRt));
   const y = Number(state?.assetPrice);
   triggerChartHits.push({
@@ -10075,24 +10305,40 @@ function triggerPriceInRange(cents, range) {
   return Number.isFinite(cents) && cents >= band.lowCents && cents <= band.highCents;
 }
 
+/** Signed ¢ change: 0 = unchanged; +N = rose ≥ N¢; −N = fell ≥ |N|¢. */
+function triggerSignedChangeMet(needRaw, fromCents, toCents) {
+  if (!Number.isFinite(fromCents) || !Number.isFinite(toCents)) return false;
+  const need = clampTriggerSignedCents(needRaw);
+  const delta = Math.round(toCents) - Math.round(fromCents);
+  if (need === 0) return delta === 0;
+  if (need > 0) return delta >= need;
+  return delta <= need;
+}
+
+function triggerStartConditionMet(trigger, currentCents) {
+  if (normalizeTriggerStartMode(trigger?.startMode) === "price") {
+    const need = clampTriggerCents(trigger.startPriceCents ?? 50);
+    return Number.isFinite(currentCents) && Math.round(currentCents) === need;
+  }
+  return triggerPriceInRange(currentCents, trigger.priceRanges?.start);
+}
+
 function triggerEndConditionMet(trigger, startPriceCents, endPriceCents) {
   const mode = trigger.endMode === "change-side" ? "change-side" : "range";
   if (mode === "change-side") {
-    if (!Number.isFinite(startPriceCents) || !Number.isFinite(endPriceCents)) return false;
-    const need = clampTriggerSignedCents(trigger.endChangeSideCents);
-    // Round to whole ¢ so quote float noise does not count as a change.
-    const delta = Math.round(endPriceCents) - Math.round(startPriceCents);
-    // 0 = price must be unchanged (not “any rise”). +N = rose ≥ N¢; −N = fell ≥ |N|¢.
-    if (need === 0) return delta === 0;
-    if (need > 0) return delta >= need;
-    return delta <= need;
+    return triggerSignedChangeMet(trigger.endChangeSideCents, startPriceCents, endPriceCents);
   }
   return triggerPriceInRange(endPriceCents, trigger.priceRanges?.end);
 }
 
 /** Max Ask (¢) for the FOK buy — must not walk the book above the diagram band high. */
 function triggerBuyMaxAskCents(trigger) {
-  if (trigger?.endMode === "change-side") {
+  const useStart =
+    isTriggerZeroDuration(trigger?.durationMs) || trigger?.endMode === "change-side";
+  if (useStart) {
+    if (normalizeTriggerStartMode(trigger?.startMode) === "price") {
+      return clampTriggerCents(trigger.startPriceCents ?? 50);
+    }
     return normalizeTriggerPriceRange(trigger?.priceRanges?.start).highCents;
   }
   return normalizeTriggerPriceRange(trigger?.priceRanges?.end).highCents;
@@ -10417,9 +10663,15 @@ async function openTriggerPosition(trigger, rt, state, side) {
       return;
     }
     rt.orderInFlight = true;
+    const buyOrderType = normalizeTriggerBuyOrderType(
+      trigger.buyOrderType,
+      trigger.durationMs,
+      trigger.startMode,
+    );
     const result = await placeTriggerTradeOrder(side, "buy", {
       shares: buyShares,
-      orderType: "FOK",
+      orderType: buyOrderType === "FAK" ? "FAK" : "FOK",
+      maxPrice: maxAskCents / 100,
       // TP offset 100 = disabled — do not rest a GTD take-profit sell.
       sellOrderType:
         isTriggerExitDisabled(rt.takeProfitCents) && sellOrderType === "GTD"
@@ -10556,6 +10808,85 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
   await forceTriggerMarketSell(trigger, rt, state, reason);
 }
 
+/** GTD buy sides: no gap → both; + Gap → UP while gap ok; − Gap → DOWN while gap ok. */
+function triggerGtdDesiredSides(trigger, state) {
+  const kind = trigger?.ptbGap?.start;
+  if (kind !== "positive" && kind !== "negative") return ["up", "down"];
+  if (!triggerGapMatches(state, kind, trigger?.gapSize?.start)) return [];
+  return kind === "positive" ? ["up"] : ["down"];
+}
+
+function triggerUsesBuyGtd(trigger) {
+  return (
+    normalizeTriggerBuyOrderType(trigger?.buyOrderType, trigger?.durationMs, trigger?.startMode) ===
+    "GTD"
+  );
+}
+
+let triggerGtdSyncInFlight = false;
+
+async function openTriggerPositionFromFill(trigger, rt, state, side, fillPrice, fillShares) {
+  if (rt.orderInFlight || rt.phase === "open" || rt.phase === "opening") return;
+  const buyShares = normalizeTriggerBuyShares(trigger.buyShares);
+  const sellOrderType = normalizeTriggerSellOrderType(trigger.sellOrderType);
+  rt.runMode = "trade";
+  rt.phase = "opening";
+  rt.side = side;
+  rt.takeProfitCents = clampTriggerOffsetCents(trigger.takeProfitCents ?? 10, 10);
+  rt.stopLossCents = clampTriggerOffsetCents(trigger.stopLossCents ?? 10, 10);
+  rt.sellOrderType = sellOrderType;
+  rt.entryPrice = Number.isFinite(fillPrice) ? fillPrice : clampTriggerCents(trigger.startPriceCents) / 100;
+  rt.entryShares =
+    Number.isFinite(fillShares) && fillShares > 0 ? fillShares : buyShares;
+  rt.entrySlug =
+    typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
+  rt.watchStartedAtMs = Date.now();
+  recordTriggerChartHit(trigger, rt, state, side);
+  rt.phase = "open";
+  rt.watchStartedAtMs = null;
+  rt.startPriceCents = null;
+  rt.sawHolding = triggerStillHolding(state, side);
+  setTriggerCardLiveUi(trigger.id, {
+    side,
+    leg: "buy",
+    price: rt.entryPrice,
+    shares: rt.entryShares,
+  });
+  appendLogEntry({
+    level: "info",
+    source: "client",
+    message: `Trigger "${trigger.name || "Untitled"}" GTD buy ${side.toUpperCase()} ${rt.entryShares} sh @ ${(rt.entryPrice * 100).toFixed(1)}¢`,
+  });
+  if (windowState) drawPriceChart(windowState);
+}
+
+async function flushTriggerGtdSync(state, desires) {
+  if (triggerGtdSyncInFlight) return;
+  triggerGtdSyncInFlight = true;
+  try {
+    const result = await postTriggerGtdSync(desires);
+    const fills = Array.isArray(result.body?.fills) ? result.body.fills : [];
+    for (const fill of fills) {
+      const triggerId = String(fill?.triggerId || "");
+      const side = fill?.side === "down" ? "down" : fill?.side === "up" ? "up" : null;
+      if (!triggerId || !side) continue;
+      const trigger = userTriggers.find((t) => String(t?.id) === triggerId);
+      if (!trigger) continue;
+      const rt = getOrCreateTriggerRuntime(triggerId);
+      await openTriggerPositionFromFill(
+        trigger,
+        rt,
+        state,
+        side,
+        Number(fill.fillPrice),
+        Number(fill.fillShares),
+      );
+    }
+  } finally {
+    triggerGtdSyncInFlight = false;
+  }
+}
+
 function tickUserTriggers(state) {
   if (!state || !isPredictionTriggerHost()) return;
   if (!Array.isArray(userTriggers) || userTriggers.length === 0) return;
@@ -10565,11 +10896,14 @@ function tickUserTriggers(state) {
     state.windowEnd != null &&
     Number.isFinite(state.windowEnd) &&
     nowMs >= state.windowEnd * 1000;
+  const gtdDesires = [];
+  let hasTradeGtd = false;
 
   for (const trigger of userTriggers) {
     const id = String(trigger?.id || "");
     if (!id) continue;
     const rt = getOrCreateTriggerRuntime(id);
+    const buyGtd = triggerUsesBuyGtd(trigger);
 
     if (rt.windowStart != null && state.windowStart !== rt.windowStart) {
       if (rt.phase === "open") {
@@ -10605,6 +10939,8 @@ function tickUserTriggers(state) {
       continue;
     }
 
+    if (rt.phase === "opening") continue;
+
     if (windowEnded) {
       rt.phase = "idle";
       rt.watchStartedAtMs = null;
@@ -10615,26 +10951,61 @@ function tickUserTriggers(state) {
       trigger.windowArea?.start,
       trigger.windowArea?.end,
     );
-    if (!isInManipulationArea(state, area.start, area.end)) {
+    const inArea = isInManipulationArea(state, area.start, area.end);
+    if (!inArea) {
       if (rt.phase === "watching") {
         rt.phase = "idle";
         rt.side = null;
         rt.watchStartedAtMs = null;
         rt.startPriceCents = null;
       }
+      // Trade GTD outside Apply window → sync with empty desire (cancel rests).
+      if (buyGtd && trigger.runMode === "trade") hasTradeGtd = true;
       continue;
     }
 
     if (trigger.runMode === "trade" && !isTriggerTradeArmed()) {
+      if (buyGtd) hasTradeGtd = true;
       continue;
     }
 
-    const priceSide = trigger.priceSide === "sell" ? "sell" : "buy";
-    const durationMs = Math.max(1, Number(trigger.durationMs) || 5000);
+    // Buy GTD: rest at Price from Apply-window start (no Duration / end condition).
+    if (buyGtd) {
+      const priceCents = clampTriggerCents(trigger.startPriceCents ?? 50);
+      const sides = triggerGtdDesiredSides(trigger, state);
+      if (trigger.runMode === "trade") {
+        hasTradeGtd = true;
+        if (sides.length && isTriggerTradeArmed()) {
+          gtdDesires.push({
+            triggerId: id,
+            sides,
+            priceCents,
+            shares: normalizeTriggerBuyShares(trigger.buyShares),
+            sellOrderType: normalizeTriggerSellOrderType(trigger.sellOrderType),
+            takeProfitCents: clampTriggerOffsetCents(trigger.takeProfitCents ?? 10, 10),
+          });
+        }
+      } else {
+        // Demo: fill when Ask is at/below the resting Price on an allowed side.
+        for (const side of sides) {
+          const ask = triggerAskPrice(state, side);
+          if (!Number.isFinite(ask) || ask * 100 > priceCents + 1e-6) continue;
+          rt.side = side;
+          rt.watchStartedAtMs = nowMs;
+          rt.startPriceCents = priceCents;
+          void openTriggerPosition(trigger, rt, state, side);
+          break;
+        }
+      }
+      continue;
+    }
+
+    const priceSide = "buy";
+    const durationMs = normalizeTriggerDurationMs(trigger.durationMs, 5000);
     const startGapOk = triggerGapMatches(state, trigger.ptbGap?.start, trigger.gapSize?.start);
     const endGapOk = triggerGapMatches(state, trigger.ptbGap?.end, trigger.gapSize?.end);
 
-    if (rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
+    if (durationMs > 0 && rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
       if (nowMs - rt.watchStartedAtMs < durationMs) continue;
       const endCents = triggerQuoteCents(state, rt.side, priceSide);
       const trendOk = triggerPriceTrendMatches(
@@ -10662,16 +11033,28 @@ function tickUserTriggers(state) {
 
     for (const side of ["up", "down"]) {
       const startCents = triggerQuoteCents(state, side, priceSide);
-      if (!triggerPriceInRange(startCents, trigger.priceRanges?.start)) continue;
-      rt.phase = "watching";
+      if (!triggerStartConditionMet(trigger, startCents)) continue;
       rt.side = side;
       rt.watchStartedAtMs = nowMs;
       rt.startPriceCents = startCents;
       rt.startAssetPrice = Number.isFinite(Number(state.assetPrice))
         ? Number(state.assetPrice)
         : null;
+      if (durationMs === 0) {
+        // No wait / no end condition — fire on start Range or Price (+ start gap).
+        void openTriggerPosition(trigger, rt, state, side);
+      } else {
+        rt.phase = "watching";
+      }
       break;
     }
+  }
+
+  if (hasTradeGtd && isTriggerTradeArmed()) {
+    void flushTriggerGtdSync(state, gtdDesires);
+  } else if (hasTradeGtd) {
+    // Allow trade off — cancel any resting trigger GTDs.
+    void flushTriggerGtdSync(state, []);
   }
 }
 
