@@ -1818,8 +1818,9 @@ function triggerEndConditionMet(trigger, startPriceCents, endPriceCents) {
   if (mode === "change-side") {
     if (!Number.isFinite(startPriceCents) || !Number.isFinite(endPriceCents)) return false;
     const need = clampTriggerSignedCents(trigger.endChangeSideCents);
-    const delta = endPriceCents - startPriceCents;
-    if (need >= 0) return delta >= need;
+    const delta = Math.round(endPriceCents) - Math.round(startPriceCents);
+    if (need === 0) return delta === 0;
+    if (need > 0) return delta >= need;
     return delta <= need;
   }
   return triggerPriceInRange(endPriceCents, trigger.priceRanges?.end);

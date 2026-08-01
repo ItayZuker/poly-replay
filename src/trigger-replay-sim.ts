@@ -373,8 +373,12 @@ function endConditionMet(def: ReplayTriggerDef, startCents: number, endCents: nu
   if (def.endMode === "change-side") {
     if (!Number.isFinite(startCents) || !Number.isFinite(endCents)) return false;
     const need = def.endChangeSideCents;
-    const delta = endCents - startCents;
-    return need >= 0 ? delta >= need : delta <= need;
+    // Round to whole ¢ so quote float noise does not count as a change.
+    const delta = Math.round(endCents) - Math.round(startCents);
+    // 0 = price must be unchanged (not “any rise”). +N = rose ≥ N¢; −N = fell ≥ |N|¢.
+    if (need === 0) return delta === 0;
+    if (need > 0) return delta >= need;
+    return delta <= need;
   }
   return inPriceRange(endCents, def.priceRanges.end);
 }

@@ -10012,8 +10012,11 @@ function triggerEndConditionMet(trigger, startPriceCents, endPriceCents) {
   if (mode === "change-side") {
     if (!Number.isFinite(startPriceCents) || !Number.isFinite(endPriceCents)) return false;
     const need = clampTriggerSignedCents(trigger.endChangeSideCents);
-    const delta = endPriceCents - startPriceCents;
-    if (need >= 0) return delta >= need;
+    // Round to whole ¢ so quote float noise does not count as a change.
+    const delta = Math.round(endPriceCents) - Math.round(startPriceCents);
+    // 0 = price must be unchanged (not “any rise”). +N = rose ≥ N¢; −N = fell ≥ |N|¢.
+    if (need === 0) return delta === 0;
+    if (need > 0) return delta >= need;
     return delta <= need;
   }
   return triggerPriceInRange(endPriceCents, trigger.priceRanges?.end);
@@ -10322,6 +10325,16 @@ async function openTriggerPosition(trigger, rt, state, side) {
   rt.stopLossCents = clampTriggerOffsetCents(trigger.stopLossCents ?? 10, 10);
   rt.sellOrderType = sellOrderType;
 
+  // Cap: FOK must not buy above the diagram band high (Demo + Trade).
+  const ask = triggerAskPrice(state, side);
+  const maxAskCents = triggerBuyMaxAskCents(trigger);
+  if (!Number.isFinite(ask) || ask * 100 > maxAskCents + 1e-6) {
+    rt.phase = "idle";
+    rt.side = null;
+    rt.watchStartedAtMs = null;
+    return;
+  }
+
   if (runMode === "trade") {
     if (!isTriggerTradeArmed()) {
       appendLogEntry({
@@ -10354,17 +10367,9 @@ async function openTriggerPosition(trigger, rt, state, side) {
     }
     const fillPrice = Number(result.body?.fillPrice);
     const fillShares = Number(result.body?.fillShares);
-    rt.entryPrice = Number.isFinite(fillPrice) ? fillPrice : triggerAskPrice(state, side);
+    rt.entryPrice = Number.isFinite(fillPrice) ? fillPrice : ask;
     rt.entryShares = Number.isFinite(fillShares) && fillShares > 0 ? fillShares : buyShares;
   } else {
-    const ask = triggerAskPrice(state, side);
-    const maxAskCents = triggerBuyMaxAskCents(trigger);
-    if (!Number.isFinite(ask) || ask * 100 > maxAskCents + 1e-6) {
-      rt.phase = "idle";
-      rt.side = null;
-      rt.watchStartedAtMs = null;
-      return;
-    }
     rt.entryPrice = ask;
     rt.entryShares = buyShares;
     appendLogEntry({
