@@ -5729,7 +5729,7 @@ body.is-row-resizing .panel-header-drag-handle {
   flex: 1 1 120px;
 }
 
-/* Visual-only UP / DOWN live status (not clickable). */
+/* Visual-only BUY (left) / SELL (right) live status (not clickable). */
 .trigger-card-live {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5773,23 +5773,18 @@ body.is-row-resizing .panel-header-drag-handle {
   opacity: 1;
 }
 
-.trigger-card-live-up.is-live.is-buy {
+.trigger-card-live-buy.is-live.is-up,
+.trigger-card-live-sell.is-live.is-up {
   border-color: var(--up, #3fb950);
   background: rgba(46, 160, 67, 0.16);
   color: var(--up, #3fb950);
 }
 
-.trigger-card-live-down.is-live.is-buy {
+.trigger-card-live-buy.is-live.is-down,
+.trigger-card-live-sell.is-live.is-down {
   border-color: var(--down, #f85149);
   background: rgba(248, 81, 73, 0.16);
   color: var(--down, #f85149);
-}
-
-.trigger-card-live-up.is-live.is-sell,
-.trigger-card-live-down.is-live.is-sell {
-  border-color: color-mix(in srgb, #d29922 75%, var(--border));
-  background: rgba(210, 153, 34, 0.16);
-  color: #e3b341;
 }
 
 .trigger-card-stats {

@@ -5646,14 +5646,14 @@ function renderTriggersList() {
 
     const liveRow = document.createElement("div");
     liveRow.className = "trigger-card-live";
-    liveRow.setAttribute("aria-label", "Live trigger status");
+    liveRow.setAttribute("aria-label", "Live trigger buy and sell status");
     liveRow.setAttribute("aria-live", "polite");
-    for (const side of ["up", "down"]) {
+    for (const leg of ["buy", "sell"]) {
       const cell = document.createElement("div");
-      cell.className = `trigger-card-live-side trigger-card-live-${side}`;
-      cell.dataset.side = side;
+      cell.className = `trigger-card-live-side trigger-card-live-${leg}`;
+      cell.dataset.leg = leg;
       cell.innerHTML =
-        `<span class="trigger-card-live-label">${side === "up" ? "UP" : "DOWN"}</span>` +
+        `<span class="trigger-card-live-label">${leg === "buy" ? "BUY" : "SELL"}</span>` +
         `<span class="trigger-card-live-detail">—</span>`;
       liveRow.appendChild(cell);
     }
@@ -5773,7 +5773,7 @@ function clearTriggerCardLiveUiTimer(triggerId) {
   rt.liveUiTimer = null;
 }
 
-/** Visual-only UP/DOWN status on the card (not clickable). */
+/** Visual-only BUY (left) / SELL (right) status on the card (not clickable). */
 function syncTriggerCardLiveUi(triggerId) {
   const id = String(triggerId || "");
   const card = document.querySelector(`.trigger-card[data-trigger-id="${CSS.escape(id)}"]`);
@@ -5781,22 +5781,41 @@ function syncTriggerCardLiveUi(triggerId) {
   if (!row) return;
   const rt = triggerRuntimeById.get(id);
   const live = rt?.liveUi && typeof rt.liveUi === "object" ? rt.liveUi : null;
-  for (const side of ["up", "down"]) {
-    const cell = row.querySelector(`.trigger-card-live-side[data-side="${side}"]`);
-    if (!cell) continue;
-    const detail = cell.querySelector(".trigger-card-live-detail");
-    const active = live && live.side === side;
-    cell.classList.toggle("is-live", Boolean(active));
-    cell.classList.toggle("is-buy", Boolean(active && live.leg === "buy"));
-    cell.classList.toggle("is-sell", Boolean(active && live.leg === "sell"));
+  const side = live?.side === "down" ? "down" : live?.side === "up" ? "up" : null;
+  const buy = live?.buy && typeof live.buy === "object" ? live.buy : null;
+  const sell = live?.sell && typeof live.sell === "object" ? live.sell : null;
+
+  const buyCell = row.querySelector('.trigger-card-live-side[data-leg="buy"]');
+  const sellCell = row.querySelector('.trigger-card-live-side[data-leg="sell"]');
+  if (buyCell) {
+    const detail = buyCell.querySelector(".trigger-card-live-detail");
+    const active = Boolean(buy && side);
+    buyCell.classList.toggle("is-live", active);
+    buyCell.classList.toggle("is-up", active && side === "up");
+    buyCell.classList.toggle("is-down", active && side === "down");
     if (detail) {
       if (!active) {
         detail.textContent = "—";
       } else {
-        const leg = live.leg === "sell" ? "SELL" : "BUY";
-        const px = formatTriggerLivePriceCents(live.price);
-        const sh = Math.max(0, Math.round(Number(live.shares) || 0));
-        detail.textContent = `${leg} ${px} · ${sh} sh`;
+        const px = formatTriggerLivePriceCents(buy.price);
+        const sh = Math.max(0, Math.round(Number(buy.shares) || 0));
+        detail.textContent = `${side === "down" ? "DOWN" : "UP"} ${px} · ${sh} sh`;
+      }
+    }
+  }
+  if (sellCell) {
+    const detail = sellCell.querySelector(".trigger-card-live-detail");
+    const active = Boolean(sell && side);
+    sellCell.classList.toggle("is-live", active);
+    sellCell.classList.toggle("is-up", active && side === "up");
+    sellCell.classList.toggle("is-down", active && side === "down");
+    if (detail) {
+      if (!active) {
+        detail.textContent = "—";
+      } else {
+        const px = formatTriggerLivePriceCents(sell.price);
+        const sh = Math.max(0, Math.round(Number(sell.shares) || 0));
+        detail.textContent = `${px} · ${sh} sh`;
       }
     }
   }
@@ -5811,24 +5830,38 @@ function setTriggerCardLiveUi(triggerId, next) {
     syncTriggerCardLiveUi(id);
     return;
   }
-  rt.liveUi = {
-    side: next.side === "down" ? "down" : "up",
-    leg: next.leg === "sell" ? "sell" : "buy",
+  const side = next.side === "down" ? "down" : "up";
+  const fill = {
     price: Number(next.price),
     shares: Math.max(0, Math.round(Number(next.shares) || 0)),
   };
+  if (next.leg === "sell") {
+    const prevBuy = rt.liveUi?.buy && typeof rt.liveUi.buy === "object" ? rt.liveUi.buy : null;
+    rt.liveUi = { side, buy: prevBuy, sell: fill };
+  } else {
+    rt.liveUi = { side, buy: fill, sell: null };
+  }
   syncTriggerCardLiveUi(id);
 }
 
-/** After a sell, briefly show the exit then clear so the card re-arms visually. */
+/** After a sell, briefly show the exit on the right then clear so the card re-arms. */
 function flashTriggerCardLiveSell(triggerId, side, price, shares) {
   const id = String(triggerId || "");
-  setTriggerCardLiveUi(id, { side, leg: "sell", price, shares });
   const rt = getOrCreateTriggerRuntime(id);
+  const prevBuy = rt.liveUi?.buy && typeof rt.liveUi.buy === "object" ? rt.liveUi.buy : null;
   clearTriggerCardLiveUiTimer(id);
+  rt.liveUi = {
+    side: side === "down" ? "down" : "up",
+    buy: prevBuy,
+    sell: {
+      price: Number(price),
+      shares: Math.max(0, Math.round(Number(shares) || 0)),
+    },
+  };
+  syncTriggerCardLiveUi(id);
   rt.liveUiTimer = setTimeout(() => {
     rt.liveUiTimer = null;
-    if (rt.liveUi?.leg === "sell") {
+    if (rt.liveUi?.sell) {
       rt.liveUi = null;
       syncTriggerCardLiveUi(id);
     }
@@ -10119,7 +10152,7 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   rt.entrySlug = null;
   rt.orderInFlight = false;
 
-  // Visual: flash SELL on that side, then clear so the card looks re-armed.
+  // Visual: flash SELL on the right, then clear so the card looks re-armed.
   if (liveSide && reason !== "window-end") {
     flashTriggerCardLiveSell(trigger.id, liveSide, exit, liveShares);
   } else {
