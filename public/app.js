@@ -9850,6 +9850,8 @@ function getOrCreateTriggerRuntime(triggerId) {
       orderInFlight: false,
       windowStart: null,
       entrySlug: null,
+      /** True after we observed a live book position while this trigger was open (Trade). */
+      sawHolding: false,
       /** @type {{ side: "up"|"down", leg: "buy"|"sell", price: number, shares: number } | null} */
       liveUi: null,
       liveUiTimer: null,
@@ -9863,6 +9865,42 @@ function triggerStillHolding(state, side) {
   if (!side) return false;
   const pos = tradingState(state)?.positions?.[side];
   return Boolean(pos && Number(pos.shares) > 0);
+}
+
+/** Exit price after the Trade position went flat (manual sell, GTD fill, etc.). */
+function resolveTriggerFlatExitPrice(state, rt) {
+  const side = rt?.side === "down" ? "down" : rt?.side === "up" ? "up" : null;
+  const cards = tradingState(state)?.positionCards;
+  if (side && Array.isArray(cards)) {
+    const entry = Number(rt.entryPrice);
+    const sold = cards.find((c) => {
+      if (!c || c.status !== "sold" || c.side !== side) return false;
+      if (!Number.isFinite(Number(c.sellPrice))) return false;
+      // Prefer a card whose buy matches this trigger fill when possible.
+      if (Number.isFinite(entry) && Number.isFinite(Number(c.buyPrice))) {
+        return Math.abs(Number(c.buyPrice) - entry) < 0.02;
+      }
+      return true;
+    });
+    if (sold && Number.isFinite(Number(sold.sellPrice))) return Number(sold.sellPrice);
+  }
+  const bidCents = side ? triggerBidCents(state, side) : NaN;
+  if (Number.isFinite(bidCents)) return bidCents / 100;
+  const entry = Number(rt?.entryPrice);
+  return Number.isFinite(entry) ? entry : NaN;
+}
+
+/** Trade open → flat (e.g. manual sell): record real sell P/L, not a held $1/$0 settle. */
+function settleTriggerTradeIfFlat(trigger, rt, state, reason = "sell") {
+  if (rt?.runMode !== "trade" || rt.phase !== "open" || !rt.side) return false;
+  if (triggerStillHolding(state, rt.side)) {
+    rt.sawHolding = true;
+    return false;
+  }
+  if (!rt.sawHolding) return false;
+  const exitPrice = resolveTriggerFlatExitPrice(state, rt);
+  settleTriggerOpenPosition(trigger, rt, exitPrice, reason);
+  return true;
 }
 
 function clearTriggerChartHits() {
@@ -10154,6 +10192,7 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
   rt.entrySlug = null;
   rt.orderInFlight = false;
+  rt.sawHolding = false;
 
   // Visual: flash SELL on the right, then clear so the card looks re-armed.
   if (liveSide && reason !== "window-end") {
@@ -10389,6 +10428,7 @@ async function openTriggerPosition(trigger, rt, state, side) {
   rt.side = side;
   rt.watchStartedAtMs = null;
   rt.startPriceCents = null;
+  rt.sawHolding = runMode === "trade" && triggerStillHolding(state, side);
   setTriggerCardLiveUi(trigger.id, {
     side,
     leg: "buy",
@@ -10444,12 +10484,14 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
 
   // GTD: resting TP was placed on buy fill — settle when flat (filled) or SL market-sell.
   if (sellOrderType === "GTD" && rt.runMode === "trade") {
-    if (tpEnabled && !triggerStillHolding(state, rt.side)) {
-      const bidCents = triggerBidCents(state, rt.side);
-      const exitPrice = Number.isFinite(bidCents) ? bidCents / 100 : Number(rt.entryPrice);
+    if (triggerStillHolding(state, rt.side)) rt.sawHolding = true;
+    if (tpEnabled && rt.sawHolding && !triggerStillHolding(state, rt.side)) {
+      const exitPrice = resolveTriggerFlatExitPrice(state, rt);
       settleTriggerOpenPosition(trigger, rt, exitPrice, "tp");
       return;
     }
+    // TP off (or not yet flat): still catch manual / external sells so we don't held-$1 later.
+    if (settleTriggerTradeIfFlat(trigger, rt, state, "sell")) return;
     if (!slEnabled) return;
     const bidCents = triggerBidCents(state, rt.side);
     if (!Number.isFinite(bidCents)) return;
@@ -10463,6 +10505,9 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
     }
     return;
   }
+
+  // FAK/FOK (and TP/SL both off): if the book position is gone, record the real sell.
+  if (settleTriggerTradeIfFlat(trigger, rt, state, "sell")) return;
 
   if (!tpEnabled && !slEnabled) return;
   const bidCents = triggerBidCents(state, rt.side);
@@ -10520,6 +10565,8 @@ function tickUserTriggers(state) {
     }
 
     if (rt.phase === "open") {
+      // Manual (or other) sell already flattened — never score as held $1/$0.
+      if (settleTriggerTradeIfFlat(trigger, rt, state, "sell")) continue;
       if (windowEnded) {
         settleTriggerHeldToWindowEnd(trigger, rt, state);
         continue;
