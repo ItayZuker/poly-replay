@@ -249,7 +249,6 @@
       statsRow.className = "trigger-card-stats";
       statsRow.innerHTML =
         '<div class="trigger-card-stats-exits">' +
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Take Profit</span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
         '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
         "</div>" +
         '<div class="trigger-card-stats-main">' +
@@ -261,13 +260,11 @@
       const successEl = statsRow.querySelector('[data-stat="success"]');
       const blueEl = statsRow.querySelector('[data-stat="blue"]');
       const failEl = statsRow.querySelector('[data-stat="fail"]');
-      const tpEl = statsRow.querySelector('[data-stat="takeProfit"]');
       const slEl = statsRow.querySelector('[data-stat="stopLoss"]');
       const pnlEl = statsRow.querySelector('[data-stat="pnl"]');
       if (successEl) successEl.textContent = String(stats.success);
       if (blueEl) blueEl.textContent = String(stats.blue ?? 0);
       if (failEl) failEl.textContent = String(stats.fail);
-      if (tpEl) tpEl.textContent = String(stats.takeProfit);
       if (slEl) slEl.textContent = String(stats.stopLoss);
       if (pnlEl) {
         pnlEl.textContent = formatPnl(stats.pnlUsd);
