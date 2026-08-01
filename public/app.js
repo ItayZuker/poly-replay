@@ -9962,8 +9962,24 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   const entry = Number(rt.entryPrice);
   const shares = Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares);
   const exit = Number(exitPrice);
-  const pnlUsd =
-    Number.isFinite(entry) && Number.isFinite(exit) ? (exit - entry) * shares : 0;
+  // Number(null) === 0 — reject that so held losses don't become fail + $0.
+  if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(exit)) {
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Trigger "${String(trigger.name || "Untitled trigger")}" settle skipped — bad entry/exit (${entry}/${exit})`,
+    });
+    rt.phase = "idle";
+    rt.side = null;
+    rt.watchStartedAtMs = null;
+    rt.startPriceCents = null;
+    rt.entryPrice = null;
+    rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
+    rt.entrySlug = null;
+    rt.orderInFlight = false;
+    return;
+  }
+  const pnlUsd = (exit - entry) * shares;
   let result;
   if (reason === "window-end" && opts.heldWon === true) result = "blue";
   else if (reason === "window-end" && opts.heldWon === false) result = "fail";
@@ -10095,12 +10111,8 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     (typeof rt.entrySlug === "string" && rt.entrySlug.trim()) ||
     (typeof state?.slug === "string" && state.slug.trim()) ||
     "";
-  if (!slug) {
-    appendLogEntry({
-      level: "warn",
-      source: "client",
-      message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — missing window slug`,
-    });
+  const entryPrice = Number(rt.entryPrice);
+  const clearOpenRt = () => {
     rt.phase = "idle";
     rt.side = null;
     rt.watchStartedAtMs = null;
@@ -10109,12 +10121,30 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
     rt.entrySlug = null;
     rt.orderInFlight = false;
+  };
+  if (!slug) {
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — missing window slug`,
+    });
+    clearOpenRt();
+    return;
+  }
+  // Number(null) === 0; only park settles with a real buy fill price.
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — missing entry price`,
+    });
+    clearOpenRt();
     return;
   }
   const pending = {
     triggerId: id,
     side: rt.side,
-    entryPrice: Number(rt.entryPrice),
+    entryPrice,
     entryShares: Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares),
     runMode: rt.runMode === "trade" ? "trade" : "demo",
     windowStart: rt.windowStart ?? state?.windowStart ?? null,
@@ -10123,14 +10153,7 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     timer: null,
   };
   triggerPendingHeldById.set(id, pending);
-  rt.phase = "idle";
-  rt.side = null;
-  rt.watchStartedAtMs = null;
-  rt.startPriceCents = null;
-  rt.entryPrice = null;
-  rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
-  rt.entrySlug = null;
-  rt.orderInFlight = false;
+  clearOpenRt();
   appendLogEntry({
     level: "info",
     source: "client",
