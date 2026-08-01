@@ -38,6 +38,8 @@ export interface ReplayTriggerDef {
     start: ReplayTriggerGapSize;
     end: ReplayTriggerGapSize;
   };
+  /** Signed $ market-price change over Duration; active when both gaps share a side. */
+  priceTrend: { dollars: number; bound: "min" | "max" };
   /** ¢ above buy fill to take profit (1–100). */
   takeProfitCents: number;
   /** ¢ below buy fill to stop out (1–100). */
@@ -81,6 +83,7 @@ type Rt = {
   side: WindowOutcome | null;
   watchStartedAtMs: number | null;
   startPriceCents: number | null;
+  startAssetPrice: number | null;
   entryPrice: number | null;
   entryShares: number;
   positionCost: number;
@@ -140,6 +143,21 @@ function normalizeGapSize(raw: unknown): ReplayTriggerGapSize {
   return { bound, value };
 }
 
+function normalizePriceTrend(raw: unknown): { dollars: number; bound: "min" | "max" } {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const bound = o.bound === "max" ? "max" : "min";
+  let dollars = Number(o.dollars);
+  if (!Number.isFinite(dollars)) dollars = 0;
+  dollars = Math.max(-100_000, Math.min(100_000, Math.round(dollars * 100) / 100));
+  return { dollars, bound };
+}
+
+function sameSideGaps(gaps: ReplayTriggerDef["ptbGap"]): boolean {
+  return (
+    (gaps.start === "positive" || gaps.start === "negative") && gaps.start === gaps.end
+  );
+}
+
 function normalizeGapKind(raw: unknown): "positive" | "negative" | null {
   return raw === "positive" || raw === "negative" ? raw : null;
 }
@@ -188,6 +206,7 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
       start: normalizeGapSize(gapSize.start),
       end: normalizeGapSize(gapSize.end),
     },
+    priceTrend: normalizePriceTrend(o.priceTrend),
     ...normalizeExitOffsets(o),
     sellOrderType,
     windowArea: { start: areaStart, end: areaEnd },
@@ -325,6 +344,27 @@ function gapMatches(
   return size.bound === "max" ? abs <= size.value : abs >= size.value;
 }
 
+function priceTrendMatches(
+  def: ReplayTriggerDef,
+  startAsset: number | null,
+  endAsset: number | undefined,
+): boolean {
+  if (!sameSideGaps(def.ptbGap)) return true;
+  const trend = def.priceTrend;
+  if (!(Math.abs(trend.dollars) > 0)) return true;
+  const start = Number(startAsset);
+  const end = Number(endAsset);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const delta = end - start;
+  const need = trend.dollars;
+  if (need > 0) {
+    if (!(delta > 0)) return false;
+    return trend.bound === "max" ? delta <= need : delta >= need;
+  }
+  if (!(delta < 0)) return false;
+  return trend.bound === "max" ? delta >= need : delta <= need;
+}
+
 function inPriceRange(cents: number, range: ReplayTriggerPriceRange): boolean {
   return Number.isFinite(cents) && cents >= range.lowCents && cents <= range.highCents;
 }
@@ -386,6 +426,7 @@ export class TriggerReplayRaceSession {
       side: null,
       watchStartedAtMs: null,
       startPriceCents: null,
+      startAssetPrice: null,
       entryPrice: null,
       entryShares: def.buyShares,
       positionCost: 0,
@@ -461,7 +502,12 @@ export class TriggerReplayRaceSession {
       if (tick.tMs - rt.watchStartedAtMs < durationMs) return;
       const endCents = quoteCents(tick, rt.side, def.priceSide);
       const endGapOk = gapMatches(tick, def.ptbGap.end, def.gapSize.end);
-      if (endGapOk && endConditionMet(def, Number(rt.startPriceCents), endCents)) {
+      const trendOk = priceTrendMatches(def, rt.startAssetPrice, tick.assetPrice);
+      if (
+        endGapOk &&
+        trendOk &&
+        endConditionMet(def, Number(rt.startPriceCents), endCents)
+      ) {
         rt.buyReadyAtMs = tick.tMs + this.latency;
         if (tick.tMs >= rt.buyReadyAtMs) {
           this.tryBuy(rt, tick, slotBusy);
@@ -471,6 +517,7 @@ export class TriggerReplayRaceSession {
         rt.side = null;
         rt.watchStartedAtMs = null;
         rt.startPriceCents = null;
+        rt.startAssetPrice = null;
       }
       return;
     }
@@ -483,6 +530,9 @@ export class TriggerReplayRaceSession {
       rt.side = side;
       rt.watchStartedAtMs = tick.tMs;
       rt.startPriceCents = startCents;
+      rt.startAssetPrice = Number.isFinite(Number(tick.assetPrice))
+        ? Number(tick.assetPrice)
+        : null;
       break;
     }
   }

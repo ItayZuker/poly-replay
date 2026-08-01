@@ -32,6 +32,8 @@ export interface UserTriggerRecord {
     start: { bound: "min" | "max"; value: number };
     end: { bound: "min" | "max"; value: number };
   };
+  /** Signed $ market-price change over Duration; active when both gaps share a side. */
+  priceTrend: { dollars: number; bound: "min" | "max" };
   takeProfitCents: number;
   stopLossCents: number;
   sellOrderType: "FAK" | "FOK" | "GTD";
@@ -97,6 +99,15 @@ function normalizeGapSize(raw: unknown): { bound: "min" | "max"; value: number }
   const bound = o.bound === "max" ? "max" : "min";
   const value = Math.max(0, Number(o.value) || 0);
   return { bound, value };
+}
+
+function normalizePriceTrend(raw: unknown): { dollars: number; bound: "min" | "max" } {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const bound = o.bound === "max" ? "max" : "min";
+  let dollars = Number(o.dollars);
+  if (!Number.isFinite(dollars)) dollars = 0;
+  dollars = Math.max(-100_000, Math.min(100_000, Math.round(dollars * 100) / 100));
+  return { dollars, bound };
 }
 
 function normalizeGapKind(raw: unknown): "positive" | "negative" | null {
@@ -185,6 +196,9 @@ export function normalizeUserTriggerInput(
       start: normalizeGapSize(gapSize.start ?? existing?.gapSize?.start),
       end: normalizeGapSize(gapSize.end ?? existing?.gapSize?.end),
     },
+    priceTrend: normalizePriceTrend(
+      o.priceTrend !== undefined ? o.priceTrend : existing?.priceTrend,
+    ),
     ...exits,
     sellOrderType:
       o.sellOrderType === "FOK" || o.sellOrderType === "GTD"

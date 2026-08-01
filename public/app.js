@@ -4285,6 +4285,12 @@ let triggerCreateGapSize = {
   start: { bound: "min", value: 0 },
   end: { bound: "min", value: 0 },
 };
+/**
+ * Signed market-price trend over Duration ($). Active only when both gap halves
+ * are the same side. dollars 0 = any trend (bound ignored).
+ */
+let triggerCreatePriceTrend = { dollars: 0, bound: "min" };
+let triggerPriceTrendSpin = null;
 /** SELL tab: take-profit / stop-loss offsets in ¢ from the buy fill (1–100). */
 let triggerCreateTakeProfitCents = 10;
 let triggerCreateStopLossCents = 10;
@@ -4565,7 +4571,7 @@ function triggerGapBiasOffset(kind, gapOffset) {
   return 0;
 }
 
-function buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, gaps = {}) {
+function buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, gaps = {}, trendRaw = null) {
   const startCol = startScale.closest(".trigger-price-column");
   const endCol = endScale.closest(".trigger-price-column");
   const startRect = (startCol || startScale).getBoundingClientRect();
@@ -4596,43 +4602,70 @@ function buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, gaps = 
     startBias = endBias = triggerGapBiasOffset(endKind, gapOffset);
   }
   const crossesPtb = Boolean(startKind && endKind && startKind !== endKind);
+  const clear = 5;
+  const scaleTop = scaleRect.top - stageRect.top;
+  const scaleBottom = scaleRect.bottom - stageRect.top;
+  // Same-side gaps: slope the placeholder line by signed $ trend (visual only).
+  // Cap slope so start/end stay inside the gap highlight band (PTB ↔ outer edge).
+  let trendSlopePx = 0;
+  if (triggerSameSideGaps(gaps)) {
+    const trend = normalizeTriggerPriceTrend(trendRaw);
+    const visual = Math.max(-100, Math.min(100, trend.dollars));
+    const maxTrend = Math.max(10, gapOffset * 0.55);
+    // Positive $ → price rises L→R → end higher on chart → lower screen y.
+    trendSlopePx = (visual / 100) * maxTrend;
+  }
   const points = [];
   let noise = 0;
   let velocity = (rand() - 0.5) * amp * 0.35;
 
+  const clampYToGapBand = (y, kind) => {
+    if (kind === "positive") {
+      const outer = Math.max(scaleTop + 2, ptbY - gapOffset - amp * 0.35);
+      const inner = ptbY - clear;
+      return Math.max(outer, Math.min(inner, y));
+    }
+    if (kind === "negative") {
+      const inner = ptbY + clear;
+      const outer = Math.min(scaleBottom - 2, ptbY + gapOffset + amp * 0.35);
+      return Math.max(inner, Math.min(outer, y));
+    }
+    return y;
+  };
+
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const blend = crossesPtb ? t * t * (3 - 2 * t) : 0;
-    const centerY = ptbY + startBias * (1 - blend) + endBias * blend;
+    // trendSlopePx>0: start lower price (higher y), end higher price (lower y).
+    const trendBias = trendSlopePx * (0.5 - t);
+    const centerY = ptbY + startBias * (1 - blend) + endBias * blend + trendBias;
 
     velocity += (rand() - 0.5) * amp * 0.55;
     velocity *= 0.72;
     if (rand() < 0.18) velocity += (rand() - 0.5) * amp * 0.9;
     noise += velocity;
     noise += (0 - noise) * 0.08;
-    if (noise < -amp) {
-      noise = -amp + (-amp - noise) * 0.35;
+    // Soften noise when trending so the line stays inside the highlight.
+    const noiseCap = trendSlopePx !== 0 ? amp * 0.45 : amp;
+    if (noise < -noiseCap) {
+      noise = -noiseCap + (-noiseCap - noise) * 0.35;
       velocity = Math.abs(velocity) * 0.4;
-    } else if (noise > amp) {
-      noise = amp - (noise - amp) * 0.35;
+    } else if (noise > noiseCap) {
+      noise = noiseCap - (noise - noiseCap) * 0.35;
       velocity = -Math.abs(velocity) * 0.4;
     }
 
     let y = centerY + noise;
-    // Keep the path on the required side(s) of mid PTB.
-    const clear = 5;
+    // Keep the path on the required side(s) of mid PTB, inside the highlight band.
     if (crossesPtb) {
-      if (blend < 0.35) {
-        if (startKind === "positive") y = Math.min(y, ptbY - clear);
-        if (startKind === "negative") y = Math.max(y, ptbY + clear);
-      } else if (blend > 0.65) {
-        if (endKind === "positive") y = Math.min(y, ptbY - clear);
-        if (endKind === "negative") y = Math.max(y, ptbY + clear);
+      if (blend < 0.35) y = clampYToGapBand(y, startKind);
+      else if (blend > 0.65) y = clampYToGapBand(y, endKind);
+      else {
+        // Mid blend: stay on whichever side the blended center is on.
+        y = y < ptbY ? clampYToGapBand(y, "positive") : clampYToGapBand(y, "negative");
       }
     } else {
-      const side = startKind || endKind;
-      if (side === "positive") y = Math.min(y, ptbY - clear);
-      if (side === "negative") y = Math.max(y, ptbY + clear);
+      y = clampYToGapBand(y, startKind || endKind);
     }
 
     const jitter = i === 0 || i === steps ? 0 : (rand() - 0.5) * (span / steps) * 0.45;
@@ -4699,6 +4732,65 @@ function normalizeTriggerGapSize(raw) {
   if (!Number.isFinite(value) || value < 0) value = 0;
   value = Math.min(100000, Math.round(value * 100) / 100);
   return { bound, value };
+}
+
+function normalizeTriggerPriceTrend(raw) {
+  const bound = raw?.bound === "max" ? "max" : "min";
+  let dollars = Number(raw?.dollars);
+  if (!Number.isFinite(dollars)) dollars = 0;
+  dollars = Math.max(-100000, Math.min(100000, Math.round(dollars * 100) / 100));
+  return { dollars, bound };
+}
+
+/** Both start and end gap halves on the same side (+/+ or -/-). */
+function triggerSameSideGaps(gaps) {
+  const start = gaps?.start;
+  const end = gaps?.end;
+  return (start === "positive" || start === "negative") && start === end;
+}
+
+/** Visual tilt range for ±$100 (display only). */
+const TRIGGER_TREND_VISUAL_MAX_DEG = 55;
+/**
+ * Spin gearing: degrees of pointer travel per $1.
+ * Higher = less sensitive (need more spin for the same $ change).
+ */
+const TRIGGER_TREND_DEG_PER_DOLLAR = 3.5;
+
+function triggerPriceTrendDollarsToAngle(dollars) {
+  const n = Number(dollars);
+  if (!Number.isFinite(n) || n === 0) return 0;
+  const visual = Math.max(-100, Math.min(100, n));
+  // Positive $ (price up L→R) tilts the bar up-right → negative CSS rotate.
+  return -(visual / 100) * TRIGGER_TREND_VISUAL_MAX_DEG;
+}
+
+function triggerPriceTrendNormalizeAngleDelta(deg) {
+  let d = Number(deg);
+  if (!Number.isFinite(d)) return 0;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+function syncTriggerPriceTrendControls() {
+  const wrap = $("trigger-price-trend");
+  if (!wrap) return;
+  const trend = normalizeTriggerPriceTrend(triggerCreatePriceTrend);
+  triggerCreatePriceTrend = trend;
+  const valueEl = $("trigger-price-trend-value");
+  const boundEl = $("trigger-price-trend-bound");
+  const rotor = $("trigger-price-trend-rotor");
+  if (valueEl && document.activeElement !== valueEl) {
+    valueEl.value = String(trend.dollars);
+  }
+  if (boundEl) boundEl.value = trend.bound;
+  if (rotor) {
+    rotor.style.transform = `rotate(${triggerPriceTrendDollarsToAngle(trend.dollars)}deg)`;
+  }
+  wrap.classList.toggle("is-up", trend.dollars > 0);
+  wrap.classList.toggle("is-down", trend.dollars < 0);
+  wrap.classList.toggle("is-flat", trend.dollars === 0);
 }
 
 function syncTriggerGapSizeControl(edge) {
@@ -4802,7 +4894,13 @@ function renderTriggerPtbGapUi() {
   const endScale = getTriggerPriceScale("end");
   if (!startScale || !endScale) return;
 
-  const built = buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, triggerCreatePtbGap);
+  const built = buildTriggerMarketZigzagPoints(
+    stageRect,
+    startScale,
+    endScale,
+    triggerCreatePtbGap,
+    triggerCreatePriceTrend,
+  );
   const zigzagPoints = built.points;
   const ptbY = built.ptbY;
   const edgeLayouts = { start: null, end: null };
@@ -4817,6 +4915,23 @@ function renderTriggerPtbGapUi() {
     midLine.style.width = `${Math.round(built.x1 - built.x0)}px`;
     midLine.style.right = "auto";
     midLine.style.bottom = "auto";
+  }
+
+  // Trend wheel: only when both gap areas are on the same side.
+  const trendWrap = $("trigger-price-trend");
+  if (trendWrap) {
+    const sameSide = triggerSameSideGaps(triggerCreatePtbGap);
+    trendWrap.hidden = !sameSide;
+    if (sameSide) {
+      const side = triggerCreatePtbGap.start; // same as end when sameSide
+      trendWrap.classList.toggle("is-gap-positive", side === "positive");
+      trendWrap.classList.toggle("is-gap-negative", side === "negative");
+      trendWrap.style.left = `${Math.round(midX)}px`;
+      trendWrap.style.top = `${Math.round(ptbY)}px`;
+      syncTriggerPriceTrendControls();
+    } else {
+      trendWrap.classList.remove("is-gap-positive", "is-gap-negative");
+    }
   }
 
   for (const edge of ["start", "end"]) {
@@ -4875,6 +4990,119 @@ function toggleTriggerPtbGap(edge, kind) {
   if (kind !== "negative" && kind !== "positive") return;
   triggerCreatePtbGap[edge] = triggerCreatePtbGap[edge] === kind ? null : kind;
   renderTriggerPtbGapUi();
+}
+
+function setTriggerCreatePriceTrendDollars(dollars) {
+  triggerCreatePriceTrend = normalizeTriggerPriceTrend({
+    ...triggerCreatePriceTrend,
+    dollars,
+  });
+  syncTriggerPriceTrendControls();
+  renderTriggerPtbGapUi();
+}
+
+function bindTriggerPriceTrendControls() {
+  const wrap = $("trigger-price-trend");
+  if (!wrap || wrap.dataset.trendBound === "1") return;
+  wrap.dataset.trendBound = "1";
+
+  const valueEl = $("trigger-price-trend-value");
+  const boundEl = $("trigger-price-trend-bound");
+  valueEl?.addEventListener("input", (e) => {
+    const dollars = Number(e.currentTarget.value);
+    triggerCreatePriceTrend = normalizeTriggerPriceTrend({
+      ...triggerCreatePriceTrend,
+      dollars: Number.isFinite(dollars) ? dollars : 0,
+    });
+    const rotor = $("trigger-price-trend-rotor");
+    if (rotor) {
+      rotor.style.transform = `rotate(${triggerPriceTrendDollarsToAngle(
+        triggerCreatePriceTrend.dollars,
+      )}deg)`;
+    }
+    wrap.classList.toggle("is-up", triggerCreatePriceTrend.dollars > 0);
+    wrap.classList.toggle("is-down", triggerCreatePriceTrend.dollars < 0);
+    wrap.classList.toggle("is-flat", triggerCreatePriceTrend.dollars === 0);
+    renderTriggerPtbGapUi();
+  });
+  valueEl?.addEventListener("change", (e) => {
+    const dollars = Number(e.currentTarget.value);
+    setTriggerCreatePriceTrendDollars(Number.isFinite(dollars) ? dollars : 0);
+  });
+  boundEl?.addEventListener("change", (e) => {
+    triggerCreatePriceTrend = normalizeTriggerPriceTrend({
+      ...triggerCreatePriceTrend,
+      bound: e.currentTarget.value === "max" ? "max" : "min",
+    });
+    syncTriggerPriceTrendControls();
+  });
+
+  const onPointerMove = (e) => {
+    if (!triggerPriceTrendSpin) return;
+    const { cx, cy, lastAngleDeg, startDollars, traveledDeg } = triggerPriceTrendSpin;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    if (dx * dx + dy * dy < 16) return;
+    // atan2(dy, dx): 0 = right, positive = clockwise (screen down).
+    const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const step = triggerPriceTrendNormalizeAngleDelta(angleDeg - lastAngleDeg);
+    triggerPriceTrendSpin.lastAngleDeg = angleDeg;
+    // Counter-clockwise (negative css step when dragging up on the right) → +$.
+    triggerPriceTrendSpin.traveledDeg = traveledDeg - step;
+    const dollars = startDollars + triggerPriceTrendSpin.traveledDeg / TRIGGER_TREND_DEG_PER_DOLLAR;
+    setTriggerCreatePriceTrendDollars(Math.round(dollars * 10) / 10);
+  };
+
+  const stopSpin = () => {
+    if (!triggerPriceTrendSpin) return;
+    const { pointerId, target } = triggerPriceTrendSpin;
+    triggerPriceTrendSpin = null;
+    wrap.classList.remove("is-spinning");
+    document.body.classList.remove("is-trigger-price-dragging");
+    try {
+      target.releasePointerCapture(pointerId);
+    } catch {
+      /* ignore */
+    }
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopSpin);
+    window.removeEventListener("pointercancel", stopSpin);
+  };
+
+  wrap.addEventListener("pointerdown", (e) => {
+    if (wrap.hidden) return;
+    if (e.target?.closest?.("#trigger-price-trend-value, #trigger-price-trend-bound")) return;
+    const arm = e.target?.closest?.("[data-trend-arm], .trigger-price-trend-wheel");
+    if (!arm) return;
+    e.preventDefault();
+    const wheel = $("trigger-price-trend-wheel");
+    const rect = wheel?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    triggerPriceTrendSpin = {
+      cx,
+      cy,
+      pointerId: e.pointerId,
+      target: arm,
+      lastAngleDeg: angleDeg,
+      startDollars: Number(triggerCreatePriceTrend.dollars) || 0,
+      traveledDeg: 0,
+    };
+    wrap.classList.add("is-spinning");
+    document.body.classList.add("is-trigger-price-dragging");
+    try {
+      arm.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopSpin);
+    window.addEventListener("pointercancel", stopSpin);
+  });
 }
 
 function setTriggerPriceThumb(edge, thumb, cents) {
@@ -5088,6 +5316,7 @@ function normalizeTriggerRecord(raw) {
     sellOrderType: normalizeTriggerSellOrderType(raw.sellOrderType),
     takeProfitCents: exits.takeProfitCents,
     stopLossCents: exits.stopLossCents,
+    priceTrend: normalizeTriggerPriceTrend(raw.priceTrend),
     runMode: raw.runMode === "trade" ? "trade" : "demo",
     paused: raw.paused !== false,
     demoStats: normalizeTriggerDemoStats(raw.demoStats),
@@ -5250,6 +5479,24 @@ function setTriggerPaused(triggerId, paused) {
   }
 }
 
+function emptyTriggerDemoStats() {
+  return { success: 0, fail: 0, blue: 0, takeProfit: 0, stopLoss: 0, pnlUsd: 0 };
+}
+
+/** Reset Demo stats only — Trade live totals are never cleared from the card. */
+function resetTriggerDemoStats(triggerId) {
+  const trigger = findUserTrigger(triggerId);
+  if (!trigger) return;
+  if (trigger.runMode === "trade") return;
+  const label = String(trigger.name || "Untitled trigger");
+  if (!window.confirm(`Reset Demo stats for "${label}"?`)) return;
+  patchUserTrigger(triggerId, { demoStats: emptyTriggerDemoStats() });
+  updateTriggerCardStats(triggerId);
+  if (triggerCreateEditingId && String(triggerCreateEditingId) === String(triggerId)) {
+    syncTriggerStatsPanel();
+  }
+}
+
 function closeTriggerMenus() {
   closeSetupMenus();
 }
@@ -5400,7 +5647,29 @@ function renderTriggersList() {
     const statsRow = document.createElement("div");
     statsRow.className = "trigger-card-stats";
     statsRow.setAttribute("aria-label", runMode === "trade" ? "Trade stats" : "Demo stats");
-    statsRow.innerHTML =
+
+    if (runMode === "demo") {
+      const resetBtn = document.createElement("button");
+      resetBtn.type = "button";
+      resetBtn.className = "trigger-card-stats-reset";
+      resetBtn.title = "Reset Demo stats";
+      resetBtn.setAttribute("aria-label", "Reset Demo stats");
+      resetBtn.innerHTML =
+        '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
+        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
+        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
+        "</svg>";
+      resetBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resetTriggerDemoStats(triggerId);
+      });
+      statsRow.appendChild(resetBtn);
+    }
+
+    const statsBody = document.createElement("div");
+    statsBody.className = "trigger-card-stats-body";
+    statsBody.innerHTML =
       '<div class="trigger-card-stats-exits">' +
       '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Take Profit</span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
       '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
@@ -5411,6 +5680,7 @@ function renderTriggersList() {
       '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
       '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>' +
       "</div>";
+    statsRow.appendChild(statsBody);
 
     card.append(header, controls, statsRow);
     cards.appendChild(card);
@@ -5818,6 +6088,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
     start: normalizeTriggerGapSize(trigger?.gapSize?.start),
     end: normalizeTriggerGapSize(trigger?.gapSize?.end),
   };
+  triggerCreatePriceTrend = normalizeTriggerPriceTrend(trigger?.priceTrend);
   applyTriggerDurationToInputs(trigger?.durationMs ?? 5000);
   applyTriggerBuySharesToInput(trigger?.buyShares);
   applyTriggerSellToInputs(
@@ -5834,6 +6105,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   syncTriggerCreateSideUi();
   syncTriggerCreateSubmitState();
   for (const edge of ["start", "end"]) syncTriggerGapSizeControl(edge);
+  syncTriggerPriceTrendControls();
   renderAllTriggerPriceRanges();
   syncTriggerWindowAreaUi();
   syncTriggerStatsPanel();
@@ -5889,6 +6161,7 @@ function buildTriggerFromCreateDraft() {
       start: normalizeTriggerGapSize(triggerCreateGapSize.start),
       end: normalizeTriggerGapSize(triggerCreateGapSize.end),
     },
+    priceTrend: normalizeTriggerPriceTrend(triggerCreatePriceTrend),
     takeProfitCents: clampTriggerOffsetCents(triggerCreateTakeProfitCents, 10),
     stopLossCents: clampTriggerOffsetCents(triggerCreateStopLossCents, 10),
     sellOrderType: normalizeTriggerSellOrderType(triggerCreateSellOrderType),
@@ -6003,6 +6276,7 @@ function resetTriggerCreateForm() {
     start: { bound: "min", value: 0 },
     end: { bound: "min", value: 0 },
   };
+  triggerCreatePriceTrend = { dollars: 0, bound: "min" };
   applyTriggerBuySharesToInput(10);
   applyTriggerSellToInputs(10, 10, "FAK");
   triggerCreateWindowArea = { start: 0, end: 1 };
@@ -6011,6 +6285,7 @@ function resetTriggerCreateForm() {
   syncTriggerCreateSideUi();
   syncTriggerCreateSubmitState();
   for (const edge of ["start", "end"]) syncTriggerGapSizeControl(edge);
+  syncTriggerPriceTrendControls();
   renderAllTriggerPriceRanges();
   syncTriggerWindowAreaUi();
 }
@@ -6172,6 +6447,7 @@ function bindTriggerCreateModal() {
       syncTriggerGapSizeControl(edge);
     });
   });
+  bindTriggerPriceTrendControls();
   $("trigger-duration-value")?.addEventListener("input", () => {
     syncTriggerDurationDraft();
   });
@@ -9375,6 +9651,22 @@ function isInManipulationArea(state, areaStart, areaEnd) {
 /** Per-trigger runtime: watching start→end pattern, or open TP/SL position. */
 const triggerRuntimeById = new Map();
 /**
+ * Held-to-window settlements waiting on official UP/DOWN (`/api/window-resolution`).
+ * Live window SSE state has no `outcome`, so we must poll after the window ends.
+ * @type {Map<string, {
+ *   triggerId: string,
+ *   side: "up" | "down",
+ *   entryPrice: number,
+ *   entryShares: number,
+ *   runMode: "demo" | "trade",
+ *   windowStart: number | null,
+ *   slug: string,
+ *   attempts: number,
+ *   timer: ReturnType<typeof setTimeout> | null,
+ * }>}
+ */
+const triggerPendingHeldById = new Map();
+/**
  * Chart overlays for fired trigger buys in the current market window.
  * Each hit: duration band (watch→buy) + buy dot.
  * @type {Array<{
@@ -9388,13 +9680,29 @@ const triggerRuntimeById = new Map();
  */
 let triggerChartHits = [];
 
+function clearTriggerPendingHeld(triggerId) {
+  const id = String(triggerId || "");
+  if (!id) {
+    for (const pending of triggerPendingHeldById.values()) {
+      if (pending?.timer != null) clearTimeout(pending.timer);
+    }
+    triggerPendingHeldById.clear();
+    return;
+  }
+  const pending = triggerPendingHeldById.get(id);
+  if (pending?.timer != null) clearTimeout(pending.timer);
+  triggerPendingHeldById.delete(id);
+}
+
 function clearTriggerRuntime(triggerId) {
   const id = String(triggerId || "");
   if (!id) {
     triggerRuntimeById.clear();
+    clearTriggerPendingHeld();
     return;
   }
   triggerRuntimeById.delete(id);
+  clearTriggerPendingHeld(id);
 }
 
 function getOrCreateTriggerRuntime(triggerId) {
@@ -9406,6 +9714,7 @@ function getOrCreateTriggerRuntime(triggerId) {
       side: null,
       watchStartedAtMs: null,
       startPriceCents: null,
+      startAssetPrice: null,
       entryPrice: null,
       entryShares: 10,
       takeProfitCents: 10,
@@ -9414,6 +9723,7 @@ function getOrCreateTriggerRuntime(triggerId) {
       runMode: "demo",
       orderInFlight: false,
       windowStart: null,
+      entrySlug: null,
     };
     triggerRuntimeById.set(id, rt);
   }
@@ -9541,6 +9851,28 @@ function triggerGapMatches(state, kind, gapSizeRaw) {
   return size.bound === "max" ? abs <= size.value : abs >= size.value;
 }
 
+/**
+ * Market asset price change over Duration (on top of gap size).
+ * Only enforced when both gap halves share a side and |dollars| > 0.
+ * +20 Min → rose ≥ $20; -40 Max → fell by at most $40 (and still fell).
+ */
+function triggerPriceTrendMatches(trigger, startAsset, endAsset) {
+  if (!triggerSameSideGaps(trigger?.ptbGap)) return true;
+  const trend = normalizeTriggerPriceTrend(trigger?.priceTrend);
+  if (!(Math.abs(trend.dollars) > 0)) return true;
+  const start = Number(startAsset);
+  const end = Number(endAsset);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  const delta = end - start;
+  const need = trend.dollars;
+  if (need > 0) {
+    if (!(delta > 0)) return false;
+    return trend.bound === "max" ? delta <= need : delta >= need;
+  }
+  if (!(delta < 0)) return false;
+  return trend.bound === "max" ? delta >= need : delta <= need;
+}
+
 function triggerPriceInRange(cents, range) {
   const band = normalizeTriggerPriceRange(range);
   return Number.isFinite(cents) && cents >= band.lowCents && cents <= band.highCents;
@@ -9636,7 +9968,13 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   if (reason === "window-end" && opts.heldWon === true) result = "blue";
   else if (reason === "window-end" && opts.heldWon === false) result = "fail";
   else if (reason === "window-end" && opts.heldWon == null) {
-    result = pnlUsd > 0 ? "blue" : "fail";
+    // Never invent a fail/$0 when the market outcome is still unknown.
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — outcome unknown`,
+    });
+    return;
   } else {
     result = pnlUsd > 0 ? "success" : "fail";
   }
@@ -9661,16 +9999,148 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   rt.startPriceCents = null;
   rt.entryPrice = null;
   rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
+  rt.entrySlug = null;
   rt.orderInFlight = false;
 }
 
+async function fetchOfficialTriggerWindowOutcome(slug) {
+  const key = typeof slug === "string" ? slug.trim() : "";
+  if (!key) return null;
+  try {
+    const res = await fetch(`/api/window-resolution?slug=${encodeURIComponent(key)}`, {
+      credentials: "same-origin",
+    });
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (body?.resolved && (body.outcome === "up" || body.outcome === "down")) {
+      return body.outcome;
+    }
+  } catch {
+    /* keep polling */
+  }
+  return null;
+}
+
+function scheduleTriggerHeldResolve(triggerId, delayMs) {
+  const id = String(triggerId || "");
+  const pending = triggerPendingHeldById.get(id);
+  if (!pending) return;
+  if (pending.timer != null) clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => {
+    pending.timer = null;
+    void resolveTriggerHeldSettlement(id);
+  }, delayMs);
+}
+
+async function resolveTriggerHeldSettlement(triggerId) {
+  const id = String(triggerId || "");
+  const pending = triggerPendingHeldById.get(id);
+  if (!pending) return;
+  const outcome = await fetchOfficialTriggerWindowOutcome(pending.slug);
+  if (!outcome) {
+    pending.attempts += 1;
+    // ~5 min of 5s polls, then stop (do not count fake fails).
+    if (pending.attempts >= 60) {
+      appendLogEntry({
+        level: "warn",
+        source: "client",
+        message: `Trigger held settle abandoned — no official outcome for ${pending.slug || "window"}`,
+      });
+      clearTriggerPendingHeld(id);
+      return;
+    }
+    scheduleTriggerHeldResolve(id, 5000);
+    return;
+  }
+  clearTriggerPendingHeld(id);
+  const trigger = findUserTrigger(id) || {
+    id,
+    name: "Untitled trigger",
+    buyShares: pending.entryShares,
+  };
+  const won = outcome === pending.side;
+  const rt = {
+    runMode: pending.runMode === "trade" ? "trade" : "demo",
+    entryPrice: pending.entryPrice,
+    entryShares: pending.entryShares,
+    side: pending.side,
+    phase: "open",
+    watchStartedAtMs: null,
+    startPriceCents: null,
+    orderInFlight: false,
+  };
+  settleTriggerOpenPosition(trigger, rt, won ? 1 : 0, "window-end", { heldWon: won });
+}
+
+/**
+ * Park an open Trigger position until official UP/DOWN is known, then score blue/red + P/L.
+ * (Live SSE state never carries `outcome`.)
+ */
+function enqueueTriggerHeldSettlement(trigger, rt, state) {
+  const id = String(trigger?.id || "");
+  if (!id || !rt?.side || (rt.side !== "up" && rt.side !== "down")) return;
+  if (triggerPendingHeldById.has(id)) {
+    // Already waiting — clear the live open phase so the next window can arm.
+    rt.phase = "idle";
+    rt.side = null;
+    rt.watchStartedAtMs = null;
+    rt.startPriceCents = null;
+    rt.entryPrice = null;
+    rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
+    rt.entrySlug = null;
+    rt.orderInFlight = false;
+    return;
+  }
+  const slug =
+    (typeof rt.entrySlug === "string" && rt.entrySlug.trim()) ||
+    (typeof state?.slug === "string" && state.slug.trim()) ||
+    "";
+  if (!slug) {
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — missing window slug`,
+    });
+    rt.phase = "idle";
+    rt.side = null;
+    rt.watchStartedAtMs = null;
+    rt.startPriceCents = null;
+    rt.entryPrice = null;
+    rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
+    rt.entrySlug = null;
+    rt.orderInFlight = false;
+    return;
+  }
+  const pending = {
+    triggerId: id,
+    side: rt.side,
+    entryPrice: Number(rt.entryPrice),
+    entryShares: Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares),
+    runMode: rt.runMode === "trade" ? "trade" : "demo",
+    windowStart: rt.windowStart ?? state?.windowStart ?? null,
+    slug,
+    attempts: 0,
+    timer: null,
+  };
+  triggerPendingHeldById.set(id, pending);
+  rt.phase = "idle";
+  rt.side = null;
+  rt.watchStartedAtMs = null;
+  rt.startPriceCents = null;
+  rt.entryPrice = null;
+  rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
+  rt.entrySlug = null;
+  rt.orderInFlight = false;
+  appendLogEntry({
+    level: "info",
+    source: "client",
+    message: `Trigger "${String(trigger.name || "Untitled trigger")}" held — waiting for official outcome`,
+  });
+  void resolveTriggerHeldSettlement(id);
+}
+
 function settleTriggerHeldToWindowEnd(trigger, rt, state) {
-  const outcome =
-    state?.outcome === "up" || state?.outcome === "down" ? state.outcome : null;
-  const won = outcome && rt.side ? outcome === rt.side : null;
-  const exitPrice =
-    won === true ? 1 : won === false ? 0 : Number(rt.entryPrice);
-  settleTriggerOpenPosition(trigger, rt, exitPrice, "window-end", { heldWon: won });
+  enqueueTriggerHeldSettlement(trigger, rt, state);
 }
 
 async function openTriggerPosition(trigger, rt, state, side) {
@@ -9737,6 +10207,9 @@ async function openTriggerPosition(trigger, rt, state, side) {
       message: `Trigger "${trigger.name || "Untitled"}" Demo buy ${side.toUpperCase()} ${buyShares} sh @ ${(ask * 100).toFixed(1)}¢ (${sellOrderType} sell)`,
     });
   }
+
+  rt.entrySlug =
+    typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
 
   // Preserve watch start for the chart duration band, then clear watch state.
   rt.watchStartedAtMs = Number.isFinite(watchStartedAtMs) ? watchStartedAtMs : rt.watchStartedAtMs;
@@ -9910,8 +10383,14 @@ function tickUserTriggers(state) {
     if (rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
       if (nowMs - rt.watchStartedAtMs < durationMs) continue;
       const endCents = triggerQuoteCents(state, rt.side, priceSide);
+      const trendOk = triggerPriceTrendMatches(
+        trigger,
+        rt.startAssetPrice,
+        state.assetPrice,
+      );
       if (
         endGapOk &&
+        trendOk &&
         triggerEndConditionMet(trigger, rt.startPriceCents, endCents)
       ) {
         void openTriggerPosition(trigger, rt, state, rt.side);
@@ -9920,6 +10399,7 @@ function tickUserTriggers(state) {
         rt.side = null;
         rt.watchStartedAtMs = null;
         rt.startPriceCents = null;
+        rt.startAssetPrice = null;
       }
       continue;
     }
@@ -9933,6 +10413,9 @@ function tickUserTriggers(state) {
       rt.side = side;
       rt.watchStartedAtMs = nowMs;
       rt.startPriceCents = startCents;
+      rt.startAssetPrice = Number.isFinite(Number(state.assetPrice))
+        ? Number(state.assetPrice)
+        : null;
       break;
     }
   }
