@@ -1,6 +1,11 @@
 {
-  "current": "1.35.0",
+  "current": "1.36.0",
   "releases": [
+    {
+      "version": "1.36.0",
+      "releasedAt": "2026-08-01T20:51:54.174Z",
+      "notes": "Trigger Trade fills always count on the Live Schedule placement covering the window (Use Schedule not required). Phase Auto Trade still needs Use Schedule. Docs updated."
+    },
     {
       "version": "1.35.0",
       "releasedAt": "2026-08-01T20:17:11.023Z",
