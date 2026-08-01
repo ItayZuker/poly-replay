@@ -1,6 +1,11 @@
 {
-  "current": "1.29.0",
+  "current": "1.30.0",
   "releases": [
+    {
+      "version": "1.30.0",
+      "releasedAt": "2026-08-01T06:35:46.316Z",
+      "notes": "Trigger price-trend wheel (Min/Max $ Change over Duration when same-side gaps); Demo stats reset icon; held settles wait for official outcome. Docs updated."
+    },
     {
       "version": "1.29.0",
       "releasedAt": "2026-07-31T21:12:40.536Z",
