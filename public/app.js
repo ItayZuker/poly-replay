@@ -5974,8 +5974,13 @@ function fillTriggerCardStatsRow(statsRow, trigger) {
   if (slEl) slEl.textContent = stats.pending ? "…" : String(stats.stopLoss);
   if (pnlEl) {
     pnlEl.textContent = stats.pending ? "…" : formatTriggerStatsPnl(stats.pnlUsd);
-    pnlEl.classList.toggle("is-pos", !stats.pending && stats.pnlUsd > 0);
-    pnlEl.classList.toggle("is-neg", !stats.pending && stats.pnlUsd < 0);
+    const pos = !stats.pending && stats.pnlUsd > 0;
+    const neg = !stats.pending && stats.pnlUsd < 0;
+    pnlEl.classList.toggle("is-pos", pos);
+    pnlEl.classList.toggle("is-neg", neg);
+    pnlEl.classList.toggle("is-positive", pos);
+    pnlEl.classList.toggle("is-negative", neg);
+    pnlEl.classList.toggle("is-neutral", !stats.pending && !pos && !neg);
   }
   statsRow.setAttribute(
     "aria-label",

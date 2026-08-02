@@ -353,10 +353,12 @@
       const main = document.createElement("div");
       main.className = "trigger-card-stats-main";
       main.innerHTML =
+        '<span class="trigger-card-stats-counts">' +
         '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>';
+        "</span>" +
+        '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>';
 
       stack.append(controls, refreshBtn, exits, main);
 
@@ -373,8 +375,9 @@
         if (slEl) slEl.textContent = String(s.stopLoss);
         if (pnlEl) {
           pnlEl.textContent = formatPnl(s.pnlUsd);
-          pnlEl.classList.toggle("is-pos", s.pnlUsd > 0);
-          pnlEl.classList.toggle("is-neg", s.pnlUsd < 0);
+          pnlEl.classList.toggle("is-positive", s.pnlUsd > 0);
+          pnlEl.classList.toggle("is-negative", s.pnlUsd < 0);
+          pnlEl.classList.toggle("is-neutral", !(s.pnlUsd > 0) && !(s.pnlUsd < 0));
         }
       };
       applyStats(stats);
