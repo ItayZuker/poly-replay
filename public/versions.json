@@ -1,6 +1,11 @@
 {
-  "current": "1.39.9",
+  "current": "1.39.10",
   "releases": [
+    {
+      "version": "1.39.10",
+      "releasedAt": "2026-08-02T18:10:16.843Z",
+      "notes": "Live Open Replay: ask the recorder which windows have Chainlink ticks so production trading hosts no longer show an empty window list. Docs updated."
+    },
     {
       "version": "1.39.9",
       "releasedAt": "2026-08-02T17:54:05.207Z",
