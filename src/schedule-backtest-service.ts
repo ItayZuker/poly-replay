@@ -1221,21 +1221,20 @@ export async function backtestSchedulePlacements(
           stats: computed,
         });
       }
-      const phaseSetup = setupCache.get(plan.placement.setupId);
-      if (phaseSetup) {
-        rememberPlacementPlay(userId, {
-          placementId: plan.placement._id,
-          setupId: plan.placement.setupId,
-          title: plan.placement.title,
-          day: plan.placement.day,
-          startHour: plan.placement.startHour,
-          durationHours: plan.placement.durationHours,
-          setup: phaseSetup,
-          latencyMs,
-          fillSuccessPct,
-          windows: await playWindowsFromSims(market, withTicks, plan.slotWindows),
-        });
-      }
+      const phaseSetup = setupCache.get(plan.placement.setupId) ?? triggerOnlyPhaseSetup();
+      rememberPlacementPlay(userId, {
+        placementId: plan.placement._id,
+        setupId: plan.placement.setupId,
+        title: plan.placement.title,
+        day: plan.placement.day,
+        startHour: plan.placement.startHour,
+        durationHours: plan.placement.durationHours,
+        setup: phaseSetup,
+        latencyMs,
+        fillSuccessPct,
+        triggerOnly: triggers.length > 0,
+        windows: await playWindowsFromSims(market, withTicks, plan.slotWindows),
+      });
       logService.info(
         "replay",
         `Card ${cardIndex}/${plans.length} ${label} — done (g${computed.green}/r${computed.red}/b${computed.blue}/gray${computed.gray} pnl ${computed.pnl.toFixed(2)}; pred ${computed.predictionRight}/${computed.predictionWrong}; ${withTicks.length}/${plan.slotWindows.length} windows with ticks)`,
@@ -1323,6 +1322,45 @@ export interface PlacementPlayPayload {
   latencyMs: number;
   fillSuccessPct: number;
   windows: PlacementPlayWindowItem[];
+  /** Trigger-only Open Replay — hide phase bands / phase editor chrome. */
+  triggerOnly?: boolean;
+}
+
+const SCHEDULE_DAY_IDS: ScheduleDayId[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+/** Synthetic Replay hour cell id (`hour:mon:14`) — not stored in Mongo. */
+export function parseSyntheticHourPlacement(
+  placementId: string,
+  series: string,
+): SchedulePlacementListItem | null {
+  const m = /^hour:([a-z]+):(\d{1,2})$/i.exec(String(placementId || ""));
+  if (!m) return null;
+  const day = m[1].toLowerCase() as ScheduleDayId;
+  const hour = Number(m[2]);
+  if (!SCHEDULE_DAY_IDS.includes(day) || !Number.isFinite(hour) || hour < 0 || hour > 23) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  const seriesId = String(series || "").trim();
+  return {
+    _id: `hour:${day}:${hour}`,
+    series: seriesId,
+    setupId: "__trigger_only__",
+    title: `${day.toUpperCase()} ${String(hour).padStart(2, "0")}:00`,
+    day,
+    startHour: hour,
+    durationHours: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function triggerOnlyPhaseSetup(): TradingPhaseSetup {
+  const phaseOff = { ...defaultPhaseConfig(), buyEnabled: false };
+  return {
+    phaseSplit: [1 / 3, 2 / 3],
+    phases: [phaseOff, phaseOff, phaseOff],
+  };
 }
 
 /** Nearest chainlink spot at-or-before tMs (fallback: first later tick). */
@@ -1510,6 +1548,8 @@ export interface BuildPlacementPlayOptions {
   forceResimulate?: boolean;
   /** Replay Prediction settings (same as Schedule Run). */
   prediction?: Partial<PredictionDetectorConfig> | null;
+  /** Replay Triggers (when present, replace Prediction; phase buys stay muted). */
+  triggers?: unknown[] | null;
 }
 
 function ensurePlayTradeDots(windows: PlacementPlayWindowItem[]): PlacementPlayWindowItem[] {
@@ -1559,7 +1599,10 @@ export async function buildPlacementPlayPayload(
     typeof rawFill === "number" && Number.isFinite(rawFill)
       ? Math.max(0, Math.min(100, rawFill))
       : 100;
-  const predictionOff = options.prediction === null;
+  const triggers = normalizeReplayTriggerDefs(options.triggers);
+  const triggerOnly = triggers.length > 0;
+  // Triggers replace Prediction; also honor explicit prediction: null.
+  const predictionOff = triggerOnly || options.prediction === null;
 
   // Prefer the exact windows/markers from the last Replay that painted this card.
   if (!options.forceResimulate) {
@@ -1573,11 +1616,15 @@ export async function buildPlacementPlayPayload(
       const needsEnrich = remembered.windows.some(
         (w) => w.windowOutcome == null || w.finalPrice == null || w.prevCloseAsset == null,
       );
+      const withFlags = {
+        ...remembered,
+        triggerOnly: remembered.triggerOnly === true || triggerOnly,
+      };
       if (!needsEnrich) {
         const windows = ensurePlayTradeDots(remembered.windows);
         return predictionOff
-          ? { ...remembered, windows: stripPredictionFromPlayWindows(windows) }
-          : { ...remembered, windows };
+          ? { ...withFlags, windows: stripPredictionFromPlayWindows(windows) }
+          : { ...withFlags, windows };
       }
       const enriched = await Promise.all(
         remembered.windows.map(async (w) => {
@@ -1605,7 +1652,7 @@ export async function buildPlacementPlayPayload(
         }),
       );
       const windows = ensurePlayTradeDots(enriched);
-      const next = { ...remembered, windows };
+      const next = { ...withFlags, windows };
       rememberPlacementPlay(userId, next);
       return predictionOff
         ? { ...next, windows: stripPredictionFromPlayWindows(windows) }
@@ -1614,9 +1661,12 @@ export async function buildPlacementPlayPayload(
   }
 
   let phaseSetup = options.phaseSetup ?? null;
-  if (!phaseSetup) {
+  if (!phaseSetup && !triggerOnly) {
     const setupDoc = await getTradingSetupById(userId, placement.setupId, "replay");
     phaseSetup = setupDoc?.setup ?? null;
+  }
+  if (!phaseSetup) {
+    phaseSetup = triggerOnly ? triggerOnlyPhaseSetup() : null;
   }
 
   const empty: PlacementPlayPayload = {
@@ -1632,6 +1682,7 @@ export async function buildPlacementPlayPayload(
     },
     latencyMs,
     fillSuccessPct,
+    triggerOnly,
     windows: [],
   };
 
@@ -1687,15 +1738,16 @@ export async function buildPlacementPlayPayload(
       ? slotWindows[0].windowEnd - slotWindows[0].windowStart
       : undefined;
   const simSetup = phaseSetupToSimSetup(phaseSetup, latencyMs, windowDuration, fillSuccessPct);
-  const prediction =
-    options.prediction === null
+  const prediction = triggerOnly
+    ? null
+    : options.prediction === null
       ? null
       : normalizePredictionDetectorConfig(options.prediction);
   const tickCache = new Map<number, ReplayTickDocument[]>();
 
   logService.info(
     "replay",
-    `Open Replay ${placement._id}: simulating ${slotWindows.length} window(s) (${placement.day} @ ${placement.startHour}h, latency ${latencyMs} ms, fill ${fillSuccessPct}%)`,
+    `Open Replay ${placement._id}: simulating ${slotWindows.length} window(s) (${placement.day} @ ${placement.startHour}h, latency ${latencyMs} ms, fill ${fillSuccessPct}%${triggerOnly ? `, ${triggers.length} trigger(s)` : ""})`,
   );
 
   const sims = await mapWithConcurrency(slotWindows, WINDOW_SIM_CONCURRENCY, async (window) => {
@@ -1707,6 +1759,7 @@ export async function buildPlacementPlayPayload(
       tickCache,
       undefined,
       prediction,
+      triggerOnly ? triggers : null,
     );
     let markers = sim.markers ?? [];
     if (markers.some((m) => m.y == null || !Number.isFinite(m.y))) {
@@ -1763,6 +1816,7 @@ export async function buildPlacementPlayPayload(
     setup: phaseSetup,
     latencyMs,
     fillSuccessPct,
+    triggerOnly,
     windows,
   };
   if (windows.length > 0) {

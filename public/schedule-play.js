@@ -162,8 +162,12 @@
 
   function formatPnl(pnl) {
     if (pnl == null || !Number.isFinite(pnl)) return "—";
-    const sign = pnl > 0 ? "+" : "";
-    return `${sign}$${pnl.toFixed(2)}`;
+    const sign = pnl > 0 ? "+" : pnl < 0 ? "-" : "";
+    const abs = Math.abs(pnl).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${sign}$${abs}`;
   }
 
   function formatPrice(price) {
@@ -174,7 +178,11 @@
   function fmtUsd(amount) {
     if (amount == null || !Number.isFinite(amount)) return "—";
     const sign = amount < 0 ? "-" : "";
-    return `${sign}$${Math.abs(amount).toFixed(2)}`;
+    const abs = Math.abs(amount).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${sign}$${abs}`;
   }
 
   function fmtPriceCents(price) {
@@ -234,8 +242,13 @@
     if (phaseHoverEl) phaseHoverEl.hidden = true;
   }
 
+  /** Phase chrome only when the payload still has buy-enabled phases. */
   function playSetup() {
-    return payload?.setup ?? null;
+    if (payload?.triggerOnly === true) return null;
+    const setup = payload?.setup ?? null;
+    if (!setup?.phases?.length) return null;
+    const anyBuy = setup.phases.some((p) => p?.buyEnabled !== false);
+    return anyBuy ? setup : null;
   }
 
   function xToFrac(x, layout) {
@@ -1556,7 +1569,7 @@
 
     const layout = window.drawPriceChart(state, {
       canvas,
-      setupOverride: payload?.setup,
+      setupOverride: playSetup(),
       markersOverride: markers,
       revealUntil: until,
       hoverLine: null,
@@ -2481,6 +2494,7 @@
             fillSuccessPct,
             setup: options.setup ?? null,
             prediction: options.prediction ?? null,
+            triggers: Array.isArray(options.triggers) ? options.triggers : undefined,
           }),
         },
       );
