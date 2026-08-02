@@ -41,14 +41,14 @@ In **Live**, the left column lists **Trade + Active** Market Triggers only (no D
 | **Fill Success (%)** | Chance each would-be fill succeeds after latency (random per attempt). **100%** = always fill when the book allows; **0%** = never. Prefills from live **Fill success** total % (last 7 days). Frozen for the duration of a **Run**. |
 | **Triggers** | Replay-only list (same create/edit dialog as Market **Triggers**). Each card shows **Title**, **Pause** / **Active**, refresh, **Stop Loss**, and green/blue/red / P/L from the last **Run**. **Pause** skips that card on **Run**; **Active** includes it. New cards start **Paused**. On **Run**, every **Active** trigger is applied on each simulated window (with Latency / Fill Success). Frozen for the duration of a **Run**. |
 
-**Run** simulates every UTC hour slot that has recordings (top-left first: Monday → Sunday, then earlier UTC hour). Results stream back **one hour at a time** into that cell. Trigger card stats accumulate as hours finish, and commit when the Run completes.
+**Run** simulates every UTC hour slot that has recordings (top-left first: Monday → Sunday, then earlier UTC hour). Results stream back **one hour at a time** into that cell. Trigger card stats accumulate as hours finish, and commit when the Run completes. Windows with **no Chainlink tick files** (or book-only / empty price path) are **skipped** — they do not count toward Run stats or gray “no trade” results.
 
-**Open Replay:** in **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats to open the window list + scrubbable price chart for that UTC weekday×hour. Cells still at zeros do nothing. Bottom transport shows play controls and the selected window’s **Official** Up/Down (Polymarket crypto-price / Gamma on the recording). The price line is Chainlink through the window; the **last point**, **Current**, **PTB**, and **Gap** at window end use the recording’s official open/close so they match Official (no invented tip). If the recording lacks official outcome + open/close, the chart shows **No official settlement data for this window**.
+**Open Replay:** in **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats to open the window list + scrubbable price chart for that UTC weekday×hour. Cells still at zeros do nothing. Bottom transport shows play controls and the selected window’s **Official** Up/Down (Polymarket crypto-price / Gamma on the recording). The price line is Chainlink through the window; the **last point**, **Current**, **PTB**, and **Gap** at window end use the recording’s official open/close so they match Official (no invented tip). If the recording lacks official outcome + open/close, the chart shows **No official settlement data for this window**. Windows without a mid-window Chainlink path are omitted from the list (not shown as empty charts with trade dots).
 
 | Workspace | What you see |
 |-----------|----------------|
-| **Live** | This ISO week’s recorded windows for that hour, with **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Price ticks come from the same recorder as Replay. |
-| **Replay** | Last **Run** results when available (Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with current Active triggers. |
+| **Live** | This ISO week’s **recorded** windows for that hour that still have Chainlink ticks, with **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Ledger fills whose window was never recorded (or whose ticks are missing) are not listed. |
+| **Replay** | Last **Run** results when available (Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with current Active triggers — only windows with Chainlink ticks. |
 
 Phase bands are not shown in either mode.
 
@@ -64,7 +64,7 @@ Gray is Replay-only: windows that ran with ticks but never triggered a buy. In R
 
 Replay Trigger definitions are saved per signed-in user in the browser and are separate from Market Triggers. While a run is in progress, the button switches to **Stop**; **Latency**, **Fill Success**, and **Add Trigger** are disabled. Click **Stop** to cancel. Saving/deleting a Replay Trigger during a run also stops the run. Switching Live ↔ Replay does **not** stop a running job.
 
-Replay uses the same simulation engine as demo Trigger trading. Window times/outcomes come from Mongo (`recorded_windows`); the engine needs **tick files** under the recorder’s `DATA_DIR`. On **Live**/Heroku with `SCHEDULE_REPLAY_SERVICE_URL` set, Open Replay ticks are proxied to that recorder.
+Replay uses the same simulation engine as demo Trigger trading. Window times/outcomes come from Mongo (`recorded_windows`); the engine needs **Chainlink tick files** under the recorder’s `DATA_DIR`. On **Live**/Heroku with `SCHEDULE_REPLAY_SERVICE_URL` set, Open Replay ticks are proxied to that recorder. Missing tick files are excluded from Run and Open Replay so they cannot produce false sim/review results.
 
 **Bad recordings:** windows where the Chainlink/asset price is flat for the entire window are discarded (see prior behavior).
 

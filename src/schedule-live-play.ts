@@ -1,8 +1,12 @@
 /**
  * Live Schedule Open Replay: recorded windows for a UTC hour this ISO week,
  * with buy/sell markers from real Trigger (and legacy phase) fills — not re-sim.
+ *
+ * Windows without Chainlink tick files are omitted (same rule as Replay Run):
+ * no price path ⇒ no Open Replay row (avoids empty charts / false review).
  */
 import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
+import { listChainlinkTicks } from "./db/tick-repository.js";
 import { listTradingStatEvents, type TradingStatEvent } from "./db/trading-session-memory-repository.js";
 import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
 import { isFlatPriceWindow } from "./window-dynamics.js";
@@ -152,9 +156,18 @@ function tradeDotsFromEvent(event: TradingStatEvent): TradeDot[] {
   ];
 }
 
+async function windowHasChainlinkTicks(
+  market: MarketDocument,
+  windowStart: number,
+): Promise<boolean> {
+  const ticks = await listChainlinkTicks(market, windowStart, 1);
+  return ticks.length > 0;
+}
+
 /**
  * Build Open Replay payload for a Live Schedule hour cell (`hour:mon:14`).
  * Uses Mongo recorded_windows for this ISO week + live ledger markers.
+ * Omits windows with no Chainlink ticks (and ledger-only / orphan rows).
  */
 export async function buildLiveHourPlayPayload(
   userId: string,
@@ -183,7 +196,6 @@ export async function buildLiveHourPlayPayload(
 
   // Group events by window start (from windowKey, else buyAt floored to window).
   const eventsByWindow = new Map<number, TradingStatEvent[]>();
-  const orphanEvents: TradingStatEvent[] = [];
 
   for (const event of events) {
     const atMs = triggerTradeWindowMs({
@@ -201,24 +213,26 @@ export async function buildLiveHourPlayPayload(
       const buySec = Math.floor(atMs / 1000);
       winStart = buySec - (buySec % 300);
     }
-    if (!Number.isFinite(winStart)) {
-      orphanEvents.push(event);
-      continue;
-    }
+    if (!Number.isFinite(winStart)) continue;
     const list = eventsByWindow.get(winStart) ?? [];
     list.push(event);
     eventsByWindow.set(winStart, list);
   }
 
-  const windowStarts = new Set<number>([
-    ...slotWindows.map((w) => w.windowStart),
-    ...eventsByWindow.keys(),
-  ]);
+  // Only recorded windows that still have Chainlink ticks on disk.
+  const tickFlags = await Promise.all(
+    slotWindows.map(async (meta) => ({
+      meta,
+      hasTicks: await windowHasChainlinkTicks(market, meta.windowStart),
+    })),
+  );
 
   const windows: PlacementPlayWindowItem[] = [];
-  for (const windowStart of [...windowStarts].sort((a, b) => a - b)) {
-    const meta = slotWindows.find((w) => w.windowStart === windowStart);
-    const windowEnd = meta?.windowEnd ?? windowStart + 300;
+  for (const { meta, hasTicks } of tickFlags) {
+    if (!hasTicks) continue;
+
+    const windowStart = meta.windowStart;
+    const windowEnd = meta.windowEnd ?? windowStart + 300;
     const winEvents = eventsByWindow.get(windowStart) ?? [];
     const markers: SimMarker[] = [];
     let pnl = 0;
@@ -237,20 +251,17 @@ export async function buildLiveHourPlayPayload(
 
     // Official settlement only from the recording (crypto-price / Gamma finalize).
     const windowOutcome: WindowOutcome | undefined =
-      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
+      meta.windowOutcome === "up" || meta.windowOutcome === "down"
         ? meta.windowOutcome
         : undefined;
     const prevCloseAsset =
-      meta?.prevCloseAsset != null && Number.isFinite(meta.prevCloseAsset)
+      meta.prevCloseAsset != null && Number.isFinite(meta.prevCloseAsset)
         ? Number(meta.prevCloseAsset)
         : undefined;
     const finalPrice =
-      meta?.assetPrice != null && Number.isFinite(meta.assetPrice)
+      meta.assetPrice != null && Number.isFinite(meta.assetPrice)
         ? Number(meta.assetPrice)
         : undefined;
-
-    // Skip empty windows with no recording meta and no trades.
-    if (!meta && markers.length === 0) continue;
 
     windows.push({
       windowStart,
@@ -264,38 +275,13 @@ export async function buildLiveHourPlayPayload(
       plLabel: markers.length ? (sold ? "Trade" : "Settlement") : "No trade",
       sold,
       markers: markers.sort((a, b) => a.t - b.t),
-      // Absent when the recorder never saved this slot (flat discard / gap) — ticks will be empty.
-      recordingMissing: !meta,
+      recordingMissing: false,
       predictionSide: null,
       predictionScore: null,
       predictionScores: [],
       predictionTriggers: [],
       predictionTriggeredAtMs: null,
       predictionSensitivitySec: null,
-    });
-  }
-
-  // Attach orphan events (couldn't parse window) as synthetic single-window rows.
-  for (const event of orphanEvents) {
-    const atMs = triggerTradeWindowMs({
-      buyAt: event.card?.buyAt,
-      windowKey: event.card?.windowKey,
-    });
-    if (!Number.isFinite(atMs)) continue;
-    const windowStart = Math.floor(atMs / 1000) - (Math.floor(atMs / 1000) % 300);
-    if (windows.some((w) => w.windowStart === windowStart)) continue;
-    const markers = markersFromEvent(event);
-    windows.push({
-      windowStart,
-      windowEnd: windowStart + 300,
-      bucket: bucketFromEvent(event),
-      tradeDots: tradeDotsFromEvent(event),
-      pnl: Number(event.pnl) || 0,
-      plLabel: event.status === "sold" ? "Trade" : "Settlement",
-      sold: event.status === "sold",
-      markers,
-      recordingMissing: true,
-      predictionTriggers: [],
     });
   }
 

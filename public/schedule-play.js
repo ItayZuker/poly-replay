@@ -1842,14 +1842,25 @@
     return Number.isFinite(close) ? close : null;
   }
 
+  /** Mid-window Chainlink samples only (excludes the official close tip at windowEnd). */
+  function midWindowChainlinkCount(history, win) {
+    const endT = Number(win?.windowEnd);
+    const pts = Array.isArray(history) ? history : [];
+    if (!Number.isFinite(endT)) return pts.length;
+    return pts.filter((p) => Number(p.t) < endT - 1e-9).length;
+  }
+
   /**
    * End tip = stored official close at windowEnd (real settlement stamp).
    * Mid-window path stays Chainlink; if official close is missing, extend last tick in time only.
+   * Tip-only (no mid-window Chainlink) is not a usable Replay path — callers must skip those windows.
    */
   function withOfficialClose(history, win) {
     const endT = Number(win?.windowEnd);
     if (!Number.isFinite(endT)) return history || [];
     const pts = Array.isArray(history) ? history.filter((p) => Number(p.t) < endT - 1e-9) : [];
+    // No Chainlink path — do not invent a one-point tip history (false Open Replay).
+    if (pts.length === 0) return [];
     const officialClose = officialClosePrice(win);
     if (officialClose != null) {
       pts.push({ t: endT, price: officialClose });
@@ -2312,24 +2323,33 @@
         loadBookQuotes(win.windowStart).catch(() => []),
       ]);
       if (token !== loadToken) return;
+      // No mid-window Chainlink → drop from Open Replay (false results without a price path).
+      if (midWindowChainlinkCount(history, win) === 0) {
+        priceHistory = [];
+        setTicksLoading(false);
+        updateTransportEnabled();
+        const removed = removeWindowAtIndex(index);
+        if (!removed || windowCount() === 0) {
+          setStatus("No Chainlink recording for this window");
+          drawFrame();
+          if (continueAutoPlay) stopPlayback();
+          return;
+        }
+        setStatus("Skipped window with no Chainlink ticks");
+        const nextIndex = Math.min(index, windowCount() - 1);
+        void selectWindow(nextIndex, {
+          fromSlide: true,
+          continueAutoPlay,
+          force: true,
+        });
+        return;
+      }
       priceHistory = history;
       setTicksLoading(false);
       updateTransportEnabled();
-      if (history.length === 0) {
-        setStatus("No price ticks for this window");
-        drawFrame();
-        if (continueAutoPlay) {
-          if (index + 1 < windowCount()) {
-            void selectWindow(index + 1, { fromSlide: true, continueAutoPlay: true });
-          } else {
-            stopPlayback();
-          }
-        }
-      } else {
-        setStatus(`${history.length} price ticks`);
-        drawFrame();
-        if (continueAutoPlay) startPlayback();
-      }
+      setStatus(`${history.length} price ticks`);
+      drawFrame();
+      if (continueAutoPlay) startPlayback();
       const next = payload.windows[index + 1];
       if (next && hasOfficialSettlement(next)) {
         if (!tickCache.has(String(next.windowStart))) {
@@ -2348,6 +2368,19 @@
       drawFrame();
       if (continueAutoPlay) stopPlayback();
     }
+  }
+
+  /** Remove an unusable window from the open session list. Returns true if removed. */
+  function removeWindowAtIndex(index) {
+    if (!payload?.windows || index < 0 || index >= payload.windows.length) return false;
+    payload.windows.splice(index, 1);
+    if (selectedIndex > index) selectedIndex -= 1;
+    else if (selectedIndex >= payload.windows.length) {
+      selectedIndex = Math.max(0, payload.windows.length - 1);
+    }
+    renderList({ instant: true });
+    syncHeaderProgress();
+    return true;
   }
 
   function bindControls() {
@@ -2619,12 +2652,16 @@
       if (openToken !== loadToken) return;
       if (!res.ok) throw new Error(body.error || `Open Replay failed (${res.status})`);
       payload = body;
+      // Server may still send legacy ledger-only rows — never Open-Replay those.
+      if (Array.isArray(payload.windows)) {
+        payload.windows = payload.windows.filter((w) => w && w.recordingMissing !== true);
+      }
       const titleEl = $("schedule-play-title");
       if (titleEl) {
         const prefix = options.live === true ? "Live Open" : "Open Replay";
         titleEl.textContent = `${prefix} · ${body.title || "Placement"}`;
       }
-      if (!body.windows?.length) {
+      if (!payload.windows?.length) {
         stopSlotSpin();
         selectedIndex = -1;
         if (listTrackEl) listTrackEl.replaceChildren();
@@ -2632,8 +2669,8 @@
         setWindowsLoading(false);
         setStatus(
           options.live === true
-            ? "No windows or fills in this hour this week"
-            : "No recorded windows in this card",
+            ? "No recorded windows with Chainlink ticks in this hour"
+            : "No recorded windows with Chainlink ticks in this card",
         );
         drawFrame();
         return;

@@ -493,12 +493,25 @@ export interface PredictionTriggerPlayItem {
   score: "right" | "wrong";
 }
 
+/** True when merged replay ticks include a Chainlink asset price (or derivable gap). */
+function replayTicksHaveChainlinkPath(ticks: ReplayTickDocument[]): boolean {
+  return ticks.some((t) => {
+    if (t.assetPrice != null && Number.isFinite(t.assetPrice)) return true;
+    return (
+      t.assetGap != null &&
+      Number.isFinite(t.assetGap) &&
+      t.prevCloseAsset != null &&
+      Number.isFinite(t.prevCloseAsset)
+    );
+  });
+}
+
 export interface RecordedWindowSimulation {
   result: SimLastWindow | null;
   markers: SimMarker[];
   windowStart: number;
   windowEnd: number;
-  /** False when window metadata exists but tick files are missing/empty on disk. */
+  /** False when tick files are missing/empty or have no Chainlink price path. */
   hadTicks: boolean;
   /** Official / inferred market outcome for held-position trade dots. */
   windowOutcome?: WindowOutcome | null;
@@ -561,7 +574,8 @@ export async function simulateRecordedWindow(
   const windowEnd = window.windowEnd;
   const windowStart = window.windowStart;
 
-  if (ticks.length === 0) {
+  // No Chainlink price path → exclude from Replay (book-only / empty files give false results).
+  if (ticks.length === 0 || !replayTicksHaveChainlinkPath(ticks)) {
     // Do not cache empties as sim results — missing files must stay distinguishable.
     return {
       result: null,
