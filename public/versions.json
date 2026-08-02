@@ -1,6 +1,11 @@
 {
-  "current": "1.37.2",
+  "current": "1.38.0",
   "releases": [
+    {
+      "version": "1.38.0",
+      "releasedAt": "2026-08-02T07:54:11.545Z",
+      "notes": "Trigger-only Schedule: 7x24 hour-cell stats from Trade+Active timeline; Replay Open on double-click; day-header day totals; GTD hold latch; docs updated."
+    },
     {
       "version": "1.37.2",
       "releasedAt": "2026-08-02T05:29:18.463Z",
