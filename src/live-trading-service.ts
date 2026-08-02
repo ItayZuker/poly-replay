@@ -907,6 +907,14 @@ export class LiveTradingService {
    * Separate from phase restingBuys so First dual-rest does not collide.
    */
   private triggerRestingBuys = new Map<string, TriggerRestingBuyOrder>();
+  /**
+   * After a Trigger GTD buy fill, latch that triggerId → sessionKey until the
+   * position is confirmed sold (or the window rolls). Prevents a second 100-share
+   * rest on the same side while holding to settlement.
+   */
+  private triggerGtdHoldSessionById = new Map<string, string>();
+  /** Serialize Trigger GTD sync so concurrent client posts cannot double-place. */
+  private triggerGtdSyncChain: Promise<void> = Promise.resolve();
   /** After gap-filter cancel, delay before placing another resting GTD buy. */
   private gtdBuyRepressUntilMs = 0;
   /** Last phase index for clearing buy repress across phase boundaries. */
@@ -2389,6 +2397,7 @@ export class LiveTradingService {
     this.manualBuyPending = false;
     this.manualBuyOverrideWindowKey = null;
     this.predictionTradeHoldWindowKey = null;
+    this.triggerGtdHoldSessionById.clear();
     this.buyBlockedWindowKey = null;
     this.pendingBuyConfirm = null;
     this.pendingBuyConfirmBackoffMs = 0;
@@ -4147,6 +4156,10 @@ export class LiveTradingService {
     this.positions[side] = null;
     if (!this.isLiveArmed()) this.autoEngine.clearExternalPosition(side);
     this.restingSell = null;
+    // Confirmed sell: allow Trigger GTD to re-arm for this card's trigger.
+    if (card?.triggerId) {
+      this.clearTriggerGtdHold(card.triggerId);
+    }
     // Prediction Trade race: sell (FAK/FOK or GTD fill) releases the hold.
     if (this.predictionTradeHoldWindowKey) {
       this.predictionTradeHoldWindowKey = null;
@@ -4154,6 +4167,32 @@ export class LiveTradingService {
     }
     void refreshCollateralBalance(this.userId);
     this.notify();
+  }
+
+  private latchTriggerGtdHold(triggerId: string, session: string): void {
+    const id = String(triggerId || "").trim();
+    if (!id || !session) return;
+    this.triggerGtdHoldSessionById.set(id, session);
+  }
+
+  private clearTriggerGtdHold(triggerId: string): void {
+    const id = String(triggerId || "").trim();
+    if (!id) return;
+    this.triggerGtdHoldSessionById.delete(id);
+  }
+
+  /** True while this trigger already filled a buy this window and has not sold yet. */
+  private isTriggerGtdHeld(triggerId: string, session: string): boolean {
+    const id = String(triggerId || "").trim();
+    if (!id || !session) return false;
+    if (this.triggerGtdHoldSessionById.get(id) === session) return true;
+    return this.positionCards.some(
+      (c) =>
+        c.source === "trigger" &&
+        c.triggerId === id &&
+        c.status === "open" &&
+        c.windowKey === session,
+    );
   }
 
   private async recordBuyFill(
@@ -4338,6 +4377,13 @@ export class LiveTradingService {
       }
     }
 
+    // Latch Trigger GTD until a confirmed sell (or window roll). Blocks a second rest
+    // while holding to TP/SL / settlement — even if the client keeps desiring both sides.
+    if (source === "trigger" && resolvedTriggerId) {
+      this.latchTriggerGtdHold(resolvedTriggerId, windowKey);
+      this.predictionTradeHoldWindowKey = windowKey;
+    }
+
     void refreshCollateralBalance(this.userId);
     this.notify();
   }
@@ -4353,18 +4399,36 @@ export class LiveTradingService {
     return `${triggerId}:${side}`;
   }
 
-  private async cancelAllTriggerRestingBuys(reason: string): Promise<void> {
+  private async cancelAllTriggerRestingBuys(
+    reason: string,
+    state?: LiveWindowState,
+  ): Promise<void> {
     const keys = [...this.triggerRestingBuys.keys()];
     for (const key of keys) {
-      await this.cancelTriggerRestingBuy(key, reason);
+      await this.cancelTriggerRestingBuy(key, reason, state);
     }
   }
 
-  private async cancelTriggerRestingBuy(key: string, reason: string): Promise<void> {
+  private async cancelTriggerRestingBuy(
+    key: string,
+    reason: string,
+    state?: LiveWindowState,
+  ): Promise<void> {
     const resting = this.triggerRestingBuys.get(key);
     if (!resting) return;
-    this.triggerRestingBuys.delete(key);
+    // Harvest before removing the map entry — a race fill must latch hold first.
+    if (state && (await this.harvestTriggerGtdFill(resting, state))) {
+      this.triggerRestingBuys.delete(key);
+      this.notify();
+      return;
+    }
     const result = await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
+    if (state && (await this.harvestTriggerGtdFill(resting, state))) {
+      this.triggerRestingBuys.delete(key);
+      this.notify();
+      return;
+    }
+    this.triggerRestingBuys.delete(key);
     logService.info(
       "trading",
       `Trigger GTD cancel ${resting.side.toUpperCase()} (${reason})${
@@ -4374,15 +4438,74 @@ export class LiveTradingService {
     this.notify();
   }
 
+  /**
+   * Record a Trigger GTD buy fill (poll or cancel race). Latches hold for the trigger.
+   * Returns true when a fill was applied (or order is fully done).
+   */
+  private async harvestTriggerGtdFill(
+    resting: TriggerRestingBuyOrder,
+    state: LiveWindowState,
+  ): Promise<boolean> {
+    const snap = await fetchOpenOrder(this.userId, resting.orderId);
+    if (!snap) {
+      // Open-order lookup miss: if we already tracked a fill/hold for this trigger, done.
+      const key = sessionKey(state);
+      if (this.isTriggerGtdHeld(resting.triggerId, key)) return true;
+      return false;
+    }
+    const matched = Math.max(0, snap.sizeMatched);
+    if (matched > resting.sizeMatched + 1e-9) {
+      const delta = matched - resting.sizeMatched;
+      const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
+      resting.sizeMatched = matched;
+      await this.recordBuyFill(
+        state,
+        resting.side,
+        delta,
+        fillPrice,
+        delta * fillPrice,
+        resting.tokenId ?? snap.assetId,
+        resting.conditionId ?? snap.market,
+        resting.slug,
+        "trigger",
+        undefined,
+        undefined,
+        { triggerId: resting.triggerId },
+      );
+      if (resting.sellOrderType === "GTD") {
+        await this.ensureTriggerGtdSell(
+          state,
+          resting.side,
+          resting.takeProfitCents,
+          delta,
+          fillPrice,
+          resting.triggerId,
+        );
+      }
+      await this.cancelTriggerSiblingRests(resting.triggerId, resting.side, state);
+      const status = snap.status.toLowerCase();
+      if (status === "live" || status === "delayed") {
+        await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
+      }
+      this.notify();
+      return true;
+    }
+    const status = snap.status.toLowerCase();
+    if (status === "live" || status === "delayed") return false;
+    if (matched <= 1e-9) await this.noteFillClose(resting.orderId);
+    return true;
+  }
+
   private async cancelTriggerSiblingRests(
     triggerId: string,
     filledSide: "up" | "down",
+    state?: LiveWindowState,
   ): Promise<void> {
     for (const side of SIDES_ORDER) {
       if (side === filledSide) continue;
       const key = this.triggerRestKey(triggerId, side);
       if (this.triggerRestingBuys.has(key)) {
-        await this.cancelTriggerRestingBuy(key, "first fill — cancel other");
+        await this.cancelTriggerRestingBuy(key, "first fill — cancel other", state);
       }
     }
   }
@@ -4390,8 +4513,23 @@ export class LiveTradingService {
   /**
    * Reconcile Trigger Trade GTD buys (Duration 0 + Price).
    * Client sends desired rests each tick; server places/cancels/polls and returns fills.
+   * Serialized: concurrent client posts share one chain so two 100-share rests cannot race.
    */
   async syncTriggerGtdBuys(
+    state: LiveWindowState,
+    desires: TriggerGtdDesire[],
+  ): Promise<{ ok: boolean; fills: TriggerGtdFill[]; error?: string }> {
+    const run = this.triggerGtdSyncChain.then(() =>
+      this.syncTriggerGtdBuysLocked(state, desires),
+    );
+    this.triggerGtdSyncChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async syncTriggerGtdBuysLocked(
     state: LiveWindowState,
     desires: TriggerGtdDesire[],
   ): Promise<{ ok: boolean; fills: TriggerGtdFill[]; error?: string }> {
@@ -4399,7 +4537,7 @@ export class LiveTradingService {
     const fills: TriggerGtdFill[] = [];
     if (!this.canExecuteOrders() || !this.config.startTrading) {
       if (this.triggerRestingBuys.size > 0) {
-        await this.cancelAllTriggerRestingBuys("Allow trade off");
+        await this.cancelAllTriggerRestingBuys("Allow trade off", state);
       }
       return { ok: true, fills };
     }
@@ -4408,11 +4546,12 @@ export class LiveTradingService {
     const nowSec = Math.floor((state.lastTickMs ?? Date.now()) / 1000);
     const windowEnd = state.windowEnd ?? nowSec + 300;
 
-    const desiredKeys = new Set<string>();
     const desireByKey = new Map<string, TriggerGtdDesire & { side: "up" | "down" }>();
     for (const d of desires) {
       const triggerId = String(d.triggerId || "").trim();
       if (!triggerId) continue;
+      // Already filled this window and not sold yet — do not rest again.
+      if (this.isTriggerGtdHeld(triggerId, key)) continue;
       const priceCents = Math.max(0, Math.min(100, Math.round(Number(d.priceCents))));
       if (!Number.isFinite(priceCents)) continue;
       const shares = Math.max(1, Math.floor(Number(d.shares) || 1));
@@ -4427,7 +4566,6 @@ export class LiveTradingService {
       for (const side of d.sides) {
         if (side !== "up" && side !== "down") continue;
         const rk = this.triggerRestKey(triggerId, side);
-        desiredKeys.add(rk);
         desireByKey.set(rk, {
           triggerId,
           sides: d.sides,
@@ -4437,6 +4575,13 @@ export class LiveTradingService {
           sellOrderType,
           takeProfitCents,
         });
+      }
+    }
+
+    // Drop rests for held triggers (client may still send desires while holding).
+    for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      if (this.isTriggerGtdHeld(resting.triggerId, key)) {
+        await this.cancelTriggerRestingBuy(rk, "trigger holding — no rearm", state);
       }
     }
 
@@ -4453,6 +4598,7 @@ export class LiveTradingService {
         await this.cancelTriggerRestingBuy(
           rk,
           !want ? "gap/window — not desired" : "price/size change",
+          state,
         );
       }
     }
@@ -4460,64 +4606,48 @@ export class LiveTradingService {
     // Poll remaining rests for fills.
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
       if (resting.sessionKey !== key) {
-        await this.cancelTriggerRestingBuy(rk, "window roll");
+        await this.cancelTriggerRestingBuy(rk, "window roll", state);
         continue;
       }
-      const snap = await fetchOpenOrder(this.userId, resting.orderId);
-      if (!snap) continue;
-      const matched = Math.max(0, snap.sizeMatched);
-      if (matched > resting.sizeMatched + 1e-9) {
-        const delta = matched - resting.sizeMatched;
-        const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
-        await this.recordBuyFill(
-          state,
-          resting.side,
-          delta,
-          fillPrice,
-          delta * fillPrice,
-          resting.tokenId ?? snap.assetId,
-          resting.conditionId ?? snap.market,
-          resting.slug,
-          "trigger",
-          undefined,
-          undefined,
-          { triggerId: resting.triggerId },
-        );
-        this.predictionTradeHoldWindowKey = key;
-        if (resting.sellOrderType === "GTD") {
-          await this.ensureTriggerGtdSell(
-            state,
-            resting.side,
-            resting.takeProfitCents,
-            delta,
-            fillPrice,
-            resting.triggerId,
-          );
-        }
-        fills.push({
-          triggerId: resting.triggerId,
-          side: resting.side,
-          fillPrice,
-          fillShares: delta,
-        });
-        await this.cancelTriggerSiblingRests(resting.triggerId, resting.side);
+      const beforeMatched = resting.sizeMatched;
+      const beforeSide = resting.side;
+      const beforeTriggerId = resting.triggerId;
+      const beforeShares = resting.shares;
+      const beforePrice = resting.limitPrice;
+      const done = await this.harvestTriggerGtdFill(resting, state);
+      if (done) {
         this.triggerRestingBuys.delete(rk);
-        // Cancel this side's remainder if still live.
-        const status = snap.status.toLowerCase();
-        if (status === "live" || status === "delayed") {
-          await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
+        if (resting.sizeMatched > beforeMatched + 1e-9) {
+          fills.push({
+            triggerId: beforeTriggerId,
+            side: beforeSide,
+            fillPrice: beforePrice,
+            fillShares: Math.min(
+              beforeShares,
+              resting.sizeMatched - beforeMatched,
+            ),
+          });
+          // Prefer last known fill price from harvest path via positions card.
+          const card = this.positionCards.find(
+            (c) =>
+              c.source === "trigger" &&
+              c.triggerId === beforeTriggerId &&
+              c.status === "open" &&
+              c.windowKey === key,
+          );
+          if (card) {
+            fills[fills.length - 1]!.fillPrice = card.buyPrice;
+            fills[fills.length - 1]!.fillShares = Math.min(
+              beforeShares,
+              resting.sizeMatched - beforeMatched,
+            );
+          }
         }
         this.notify();
-        continue;
       }
-      const status = snap.status.toLowerCase();
-      if (status === "live" || status === "delayed") continue;
-      this.triggerRestingBuys.delete(rk);
-      if (matched <= 1e-9) await this.noteFillClose(resting.orderId);
-      this.notify();
     }
 
-    // Do not place new rests while a trigger/prediction position is open or buy is blocked.
+    // Global blocks: open position / pending confirm / prediction hold.
     if (
       this.positions.up ||
       this.positions.down ||
@@ -4527,7 +4657,7 @@ export class LiveTradingService {
       this.predictionTradeHoldWindowKey === key
     ) {
       if (this.triggerRestingBuys.size > 0 && (this.positions.up || this.positions.down)) {
-        await this.cancelAllTriggerRestingBuys("position open");
+        await this.cancelAllTriggerRestingBuys("position open", state);
       }
       return { ok: true, fills };
     }
@@ -4536,7 +4666,9 @@ export class LiveTradingService {
 
     for (const [rk, want] of desireByKey.entries()) {
       if (this.triggerRestingBuys.has(rk)) continue;
+      if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
       if (this.positions.up || this.positions.down) break;
+      if (this.predictionTradeHoldWindowKey === key) break;
 
       // Trigger GTD takes the slot — drop phase rests first.
       if (this.restingBuys.size > 0) {
@@ -4582,7 +4714,6 @@ export class LiveTradingService {
             undefined,
             { triggerId: want.triggerId },
           );
-          this.predictionTradeHoldWindowKey = key;
           if (want.sellOrderType === "GTD") {
             await this.ensureTriggerGtdSell(
               state,
@@ -4599,13 +4730,9 @@ export class LiveTradingService {
             fillPrice: result.fillPrice!,
             fillShares: result.fillShares!,
           });
-          await this.cancelTriggerSiblingRests(want.triggerId, want.side);
-          // Remove sibling desires so we don't place the other side this tick.
-          for (const side of SIDES_ORDER) {
-            if (side === want.side) continue;
-            desireByKey.delete(this.triggerRestKey(want.triggerId, side));
-          }
-          continue;
+          await this.cancelTriggerSiblingRests(want.triggerId, want.side, state);
+          // Stop placing further rests this sync — hold latch is set; rearm only after sell.
+          break;
         }
 
         this.triggerRestingBuys.set(rk, {
@@ -4738,7 +4865,7 @@ export class LiveTradingService {
         fromPrediction ? "prediction buy" : fromTrigger ? "trigger buy" : "manual buy",
       );
       if (fromTrigger && this.triggerRestingBuys.size > 0) {
-        await this.cancelAllTriggerRestingBuys("trigger FAK/FOK buy");
+        await this.cancelAllTriggerRestingBuys("trigger FAK/FOK buy", state);
       }
     } else if (
       !(fromPrediction && this.config.predictionSellOrderType === "GTD") &&
@@ -4841,6 +4968,9 @@ export class LiveTradingService {
           if (holdsPhases) {
             // Pause phase Auto Trade for the window (Prediction + detector Triggers).
             this.predictionTradeHoldWindowKey = sessionKey(state);
+            if (fromTrigger && triggerId) {
+              this.latchTriggerGtdHold(triggerId, sessionKey(state));
+            }
             if (
               fromPrediction &&
               this.config.predictionSellOrderType === "GTD" &&
@@ -4879,6 +5009,7 @@ export class LiveTradingService {
           const remaining = this.positions[side]?.shares ?? 0;
           if (holdsPhases && remaining <= 0) {
             this.predictionTradeHoldWindowKey = null;
+            if (triggerId) this.clearTriggerGtdHold(triggerId);
             if (!this.isLiveArmed()) this.autoEngine.setExternalBuyPaused(false);
           }
           if (!this.isLiveArmed() && remaining <= 0) {
@@ -5423,6 +5554,7 @@ export class LiveTradingService {
           total: proceeds,
         });
         this.positions[side] = null;
+        if (card?.triggerId) this.clearTriggerGtdHold(card.triggerId);
         void refreshCollateralBalance(this.userId);
         this.notify();
       }
