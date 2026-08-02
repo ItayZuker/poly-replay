@@ -4384,9 +4384,9 @@
     syncNowHighlights();
   }
 
-  /** Open Replay popup for a synthetic hour cell (`hour:mon:14`). */
+  /** Open Replay popup for a synthetic hour cell (`hour:mon:14`). Live = real fills; Replay = sim. */
   function openHourSlotReplay(day, hour) {
-    if (!isReplayWorkspace() || !isScheduleView()) return;
+    if (!isScheduleView()) return;
     if (!DAYS.includes(day) || !Number.isFinite(hour) || hour < 0 || hour > 23) return;
     const placementId = `hour:${day}:${hour}`;
     const slot = window.ScheduleHourSlots?.getSlot?.(day, hour);
@@ -4395,16 +4395,18 @@
       (slot?.red ?? 0) +
       (slot?.blue ?? 0) +
       (slot?.gray ?? 0);
-    // All-zero stats → no replay windows for this hour; do not open the popup.
+    // All-zero stats → nothing to open.
     if (hint <= 0 || slot?.hasData !== true) return;
+    const live = !isReplayWorkspace();
     window.SchedulePlay?.open?.(placementId, {
       windowCountHint: hint,
-      latencyMs: readReplayLatencyMs(),
-      fillSuccessPct: readReplayFillSuccessPct(),
+      latencyMs: live ? 0 : readReplayLatencyMs(),
+      fillSuccessPct: live ? 100 : readReplayFillSuccessPct(),
       prediction: null,
-      triggers: window.ScheduleReplayTriggers?.listForRun?.() ?? [],
+      triggers: live ? [] : window.ScheduleReplayTriggers?.listForRun?.() ?? [],
       series: selectedSeries(),
       setup: null,
+      live,
     });
   }
 
@@ -4413,7 +4415,7 @@
     if (!page || page.dataset.hourOpenBound === "1") return;
     page.dataset.hourOpenBound = "1";
     page.addEventListener("dblclick", (event) => {
-      if (!isReplayWorkspace() || !isScheduleView()) return;
+      if (!isScheduleView()) return;
       const slot = event.target?.closest?.(".schedule-hour-slot");
       if (!slot || !page.contains(slot)) return;
       const col = slot.closest(".schedule-day-column");

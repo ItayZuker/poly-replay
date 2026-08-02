@@ -15,8 +15,9 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 ## Schedule grid
 
 - Days × UTC hours — **all 7×24 cells always show** a stats line (green / red / blue dots) and **P/L** (`0` / `+$0.00` when empty)
-- Each cell aggregates **Trigger Trade** outcomes for that UTC weekday×hour in the **current ISO week** (Live)
-- A trade counts in a cell only if its trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Legacy trades from before timeline tracking still count when they have a trigger id
+- Each cell aggregates outcomes for that UTC weekday×hour in the **current ISO week** (Live):
+  - **Trigger Trade** when the trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade+Active (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
+  - **Legacy phase / schedule-placement** fills still in this week’s ledger (from before Trigger-only Schedule). They stay on the board for the rest of the ISO week and clear only when that weekday×hour is in the **next** ISO week
 - Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). There is no per-day Clear control
 - Current UTC cell is highlighted
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. **Manual** quote-box buys count in Market/Live only — not on Schedule hour cells
@@ -42,7 +43,14 @@ In **Live**, the left column lists **Trade + Active** Market Triggers only (no D
 
 **Run** simulates every UTC hour slot that has recordings (top-left first: Monday → Sunday, then earlier UTC hour). Results stream back **one hour at a time** into that cell. Trigger card stats accumulate as hours finish, and commit when the Run completes.
 
-**Open Replay:** in Replay **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats (at least one green / red / blue / gray) to open the window list + scrubbable price replay for that UTC weekday×hour. Cells still at zeros (no replay windows) do nothing. Uses the last **Run** results when available (same Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with the current Active triggers. Phase bands are not shown — markers and Duration bands come from Triggers only.
+**Open Replay:** in **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats to open the window list + scrubbable price chart for that UTC weekday×hour. Cells still at zeros do nothing.
+
+| Workspace | What you see |
+|-----------|----------------|
+| **Live** | This ISO week’s recorded windows for that hour, with **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Price ticks come from the same recorder as Replay. |
+| **Replay** | Last **Run** results when available (Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with current Active triggers. |
+
+Phase bands are not shown in either mode.
 
 **Trade dots (per fill, not per window):**
 

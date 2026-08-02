@@ -47,9 +47,9 @@ Phase Auto Trade / Use Schedule are removed.
 
 ## Triggers and schedule
 
-Market Triggers are saved over REST (`triggers` collection). Active/Paused and Demo/Trade changes append to `trigger_mode_timeline`. Live Schedule hour cells load via `GET /api/schedule-hour-stats` (current UTC ISO week; timeline-gated Trigger Trade aggregates).
+Market Triggers are saved over REST (`triggers` collection). Active/Paused and Demo/Trade changes append to `trigger_mode_timeline`. Live Schedule hour cells load via `GET /api/schedule-hour-stats` (current UTC ISO week: timeline-gated Trigger Trade plus legacy phase/auto placement fills still in that week).
 
-**Replay** runs via REST `POST /api/schedule-replay` (SSE: `progress` / `placement` / `done` / `failure`) over synthetic 1-hour slots with Replay Triggers only. Body includes `latencyMs`, `fillSuccessPct`, and `triggers`. When `SCHEDULE_REPLAY_SERVICE_URL` is set, the run is proxied to the recorder. **Open Replay** uses `POST /api/schedule-placements/:id/play` with synthetic ids (`hour:mon:14`) plus `triggers` / latency / fill success; prefers in-memory windows from the last Run. Open Replay ticks use `GET /api/ticks` (proxied to the recorder when configured).
+**Replay** runs via REST `POST /api/schedule-replay` (SSE: `progress` / `placement` / `done` / `failure`) over synthetic 1-hour slots with Replay Triggers only. Body includes `latencyMs`, `fillSuccessPct`, and `triggers`. When `SCHEDULE_REPLAY_SERVICE_URL` is set, the run is proxied to the recorder. **Open Replay** uses `POST /api/schedule-placements/:id/play` with synthetic ids (`hour:mon:14`). Replay mode sends `triggers` / latency / fill success (last Run cache or re-sim; may proxy to the recorder). Live mode sends `live: true` and builds windows + **real ledger markers** on the Live server (not proxied). Open Replay ticks use `GET /api/ticks` (proxied to the recorder when configured).
 
 Live **Fill success** (Market → Trade) tracks CLOB buy/sell outcomes over the rolling 7-day cutoff, broken down by **FAK / FOK / GTD**. Partial match = success. FAK/FOK count on fire/send; GTD counts only after the resting limit is touched while live (then success if any size matched, else miss). Strategy cancels with no touch stay out of the %.
 

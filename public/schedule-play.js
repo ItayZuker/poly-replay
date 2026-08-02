@@ -220,8 +220,9 @@
         tooltipRow("Total", fmtUsd(markerTotal(marker))),
       ].join("");
     }
+    const exitTitle = marker.heldSettlement ? `Settlement ${sideLabel}` : `Sell ${sideLabel}`;
     return [
-      `<div class="sim-marker-tooltip-title">Sell ${sideLabel}</div>`,
+      `<div class="sim-marker-tooltip-title">${exitTitle}</div>`,
       ...rows,
       tooltipRow("Shares", marker.shares != null ? String(marker.shares) : "—"),
       tooltipRow("Price", fmtPriceCents(marker.price)),
@@ -231,9 +232,10 @@
     ].join("");
   }
 
-  /** Compact tooltip for hits/target map: buy/sell + up/down only. */
+  /** Compact tooltip for hits/target map: buy/sell/settlement + up/down only. */
   function renderHitsMapTooltipHtml(marker) {
-    const action = marker.type === "sell" ? "Sell" : "Buy";
+    const action =
+      marker.type === "sell" ? (marker.heldSettlement ? "Settlement" : "Sell") : "Buy";
     const side = marker.side === "up" ? "UP" : "DOWN";
     return `<div class="sim-marker-tooltip-title">${action} ${side}</div>`;
   }
@@ -1020,6 +1022,7 @@
           proceeds: m.proceeds,
           profit: m.profit,
           total: m.total,
+          heldSettlement: m.heldSettlement === true,
           plLabel: win.plLabel,
           pnl: win.pnl,
           bucket: tradeBucketForMarker(win, m),
@@ -1216,7 +1219,6 @@
     const duration = windowDuration(win);
     const elapsed = Math.max(0, Math.min(duration, playheadSec - (win?.windowStart || 0)));
     updateScrubberUi(win, elapsed, duration);
-    syncPlayPredictionBadge(win);
   }
 
   function resolveTriggerDurationSec(raw, win) {
@@ -1294,33 +1296,6 @@
       bands.push({ startSec, endSec, side });
     }
     return bands;
-  }
-
-  /** Show Trigger UP/DOWN for the latest buy the playhead has reached. */
-  function syncPlayPredictionBadge(win) {
-    const badge = $("schedule-play-prediction");
-    const label = $("schedule-play-prediction-label");
-    if (!badge || !label) return;
-
-    const triggers = predictionTriggersForWindow(win);
-    const playheadMs = playheadSec * 1000;
-    let side = null;
-    for (const trig of triggers) {
-      const triggeredAtMs = Number(trig.triggeredAtMs);
-      if (!Number.isFinite(triggeredAtMs)) continue;
-      if (playheadMs >= triggeredAtMs) side = trig.side;
-    }
-    const ready = viewMode === "play" && (side === "up" || side === "down");
-
-    badge.classList.remove("is-up", "is-down");
-    if (!ready) {
-      badge.hidden = true;
-      label.textContent = "";
-      return;
-    }
-    badge.hidden = false;
-    badge.classList.add(side === "up" ? "is-up" : "is-down");
-    label.textContent = side === "up" ? "Trigger UP" : "Trigger DOWN";
   }
 
   function scrubberWidthPx() {
@@ -1546,6 +1521,31 @@
           }
         }
       }
+      return;
+    }
+
+    // Ledger-only windows (trade exists, Chainlink recording missing) have no price line.
+    if (!ticksLoading && priceHistory.length === 0) {
+      hoverTargets = [];
+      playChartLayout = null;
+      hidePhaseHover();
+      hideHitTooltip();
+      const { ctx, width, height } = resizeCanvas();
+      if (ctx) {
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("No Chainlink recording for this window", width / 2, height / 2 - 8);
+        ctx.font = "11px sans-serif";
+        ctx.fillStyle = "#6e7681";
+        const hitNote = windowHasAnyHit(win)
+          ? "Trade stats are from the live ledger — price ticks were not saved"
+          : "No price ticks on the recorder for this slot";
+        ctx.fillText(hitNote, width / 2, height / 2 + 12);
+      }
+      updateTimeUi(win);
       return;
     }
 
@@ -2495,6 +2495,7 @@
             setup: options.setup ?? null,
             prediction: options.prediction ?? null,
             triggers: Array.isArray(options.triggers) ? options.triggers : undefined,
+            live: options.live === true,
           }),
         },
       );
@@ -2504,7 +2505,8 @@
       payload = body;
       const titleEl = $("schedule-play-title");
       if (titleEl) {
-        titleEl.textContent = `Open Replay · ${body.title || "Placement"}`;
+        const prefix = options.live === true ? "Live Open" : "Open Replay";
+        titleEl.textContent = `${prefix} · ${body.title || "Placement"}`;
       }
       if (!body.windows?.length) {
         stopSlotSpin();
@@ -2512,7 +2514,11 @@
         if (listTrackEl) listTrackEl.replaceChildren();
         syncListNavButtons();
         setWindowsLoading(false);
-        setStatus("No recorded windows in this card");
+        setStatus(
+          options.live === true
+            ? "No windows or fills in this hour this week"
+            : "No recorded windows in this card",
+        );
         drawFrame();
         return;
       }

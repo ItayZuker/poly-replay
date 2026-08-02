@@ -493,7 +493,7 @@ export interface PlacementLiveStats {
   locked: boolean;
 }
 
-/** Trigger Trade aggregates for one UTC weekday×hour slot (current ISO week). */
+/** Hour-slot aggregates for one UTC weekday×hour (current ISO week: Trigger + legacy phase). */
 export interface ScheduleHourSlotStats {
   day: string; // mon..sun
   hour: number; // 0-23

@@ -105,6 +105,7 @@ import {
   parseSyntheticHourPlacement,
   type PlacementBacktestStats,
 } from "./schedule-backtest-service.js";
+import { buildLiveHourPlayPayload } from "./schedule-live-play.js";
 import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
 import { ensureWalletRegistryReady, listWalletsForSeries, countWalletsForSeries } from "./wallet-registry.js";
 import { computeWalletWinLossForUser } from "./db/wallet-win-loss.js";
@@ -1972,6 +1973,7 @@ async function runPlacementPlay(
     fillSuccessPct?: number;
     phaseSetup?: unknown;
     triggers?: unknown[] | null;
+    live?: boolean;
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
@@ -1988,6 +1990,25 @@ async function runPlacementPlay(
 ) {
   const seriesHint =
     typeof input.series === "string" && input.series.trim() ? input.series.trim() : "";
+
+  // Live Schedule hour review: real ledger markers + Mongo windows (not proxied / re-sim).
+  if (input.live === true) {
+    const synthetic = parseSyntheticHourPlacement(placementId, seriesHint);
+    if (!synthetic) {
+      return { status: 400 as const, body: { error: "Live Open Replay requires an hour slot id" } };
+    }
+    const series = String(synthetic.series || seriesHint).trim();
+    const market = await getMarket(series);
+    if (!market) {
+      return { status: 404 as const, body: { error: "Market not found" } };
+    }
+    const payload = await buildLiveHourPlayPayload(userId, market, placementId);
+    if (!payload) {
+      return { status: 404 as const, body: { error: "Hour slot not found" } };
+    }
+    return { status: 200 as const, body: payload };
+  }
+
   let placement = await getSchedulePlacementById(userId, placementId, "replay");
   if (!placement) {
     placement = parseSyntheticHourPlacement(placementId, seriesHint);
@@ -2027,6 +2048,7 @@ function parsePlayRequestBody(req: express.Request): {
   fillSuccessPct?: number;
   phaseSetup?: unknown;
   triggers?: unknown[] | null;
+  live?: boolean;
   prediction?: {
     sensitivitySec?: number;
     maxQuoteCents?: number;
@@ -2065,12 +2087,14 @@ function parsePlayRequestBody(req: express.Request): {
         : undefined
     : undefined;
   const triggers = Array.isArray(body.triggers) ? body.triggers : undefined;
+  const live = body.live === true || body.mode === "live" || q.live === "1";
   return {
     series,
     latencyMs: Number.isFinite(latencyRaw) ? latencyRaw : undefined,
     fillSuccessPct: Number.isFinite(fillRaw) ? fillRaw : undefined,
     phaseSetup,
     triggers,
+    live,
     prediction,
   };
 }
@@ -2082,8 +2106,9 @@ app.post("/api/schedule-placements/:id/play", async (req, res) => {
     const id = String(req.params.id);
     const parsed = parsePlayRequestBody(req);
 
+    // Live hour review must run where the user's trade ledger lives (not the recorder).
     const workerBase = replayWorkerBaseUrl();
-    if (workerBase) {
+    if (workerBase && !parsed.live) {
       const remoteHeaders: Record<string, string> = {
         Accept: "application/json",
         "Content-Type": "application/json",

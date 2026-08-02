@@ -1799,17 +1799,25 @@ export class LiveTradingService {
   }
 
   /**
-   * Trigger Trade → UTC weekday×hour slot stats for the current ISO week.
-   * Uses in-memory ledger/cards + Active/Paused (+ Trade/Demo) timeline.
+   * UTC weekday×hour slot stats for the current ISO week:
+   * Trigger Trade (timeline-gated) plus legacy phase/auto placement trades still in this week.
+   * Prior week clears automatically when the UTC ISO week rolls.
    */
   async getHourSlotStats(): Promise<ScheduleHourSlotStats[]> {
     const triggerIds = new Set<string>();
     for (const card of this.positionCards) {
-      if (card.source === "trigger" && card.triggerId) triggerIds.add(card.triggerId);
+      const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+      if (tid && card.source !== "manual" && card.source !== "auto") triggerIds.add(tid);
     }
     for (const event of this.liveStatLedger.values()) {
-      const tid = event.card?.triggerId;
-      if (event.card?.source === "trigger" && tid) triggerIds.add(tid);
+      const tid = typeof event.card?.triggerId === "string" ? event.card.triggerId.trim() : "";
+      if (
+        tid &&
+        event.card?.source !== "manual" &&
+        event.card?.source !== "auto"
+      ) {
+        triggerIds.add(tid);
+      }
     }
     const timelineEvents = triggerIds.size
       ? await listTriggerModeEvents(this.userId, [...triggerIds])

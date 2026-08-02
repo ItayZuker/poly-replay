@@ -110,7 +110,7 @@ function contribFromCounts(
 
 function contribFromCard(card: TradingPositionCard): SlotContrib | null {
   if (card.status === "open") return null;
-  if (card.confirmed === false) return null;
+  // Include settled fills even when on-chain confirm is still pending.
   const pl = Number(card.pl);
   if (!Number.isFinite(pl)) return null;
   let green = 0;
@@ -130,7 +130,7 @@ function contribFromCard(card: TradingPositionCard): SlotContrib | null {
 }
 
 function contribFromEvent(event: TradingStatEvent): SlotContrib | null {
-  if (event.card?.confirmed === false) return null;
+  // Settled ledger rows count even when confirm was still false at persist time.
   const pl = Number(event.pnl);
   if (!Number.isFinite(pl)) return null;
   let green = 0;
@@ -150,15 +150,29 @@ function contribFromEvent(event: TradingStatEvent): SlotContrib | null {
 }
 
 function triggerIdOfCard(card: Pick<TradingPositionCard, "source" | "triggerId">): string | null {
-  if (card.source !== "trigger") return null;
   const id = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
-  return id || null;
+  if (!id) return null;
+  // Prefer explicit Trigger source; also accept triggerId on older rows missing source.
+  if (card.source === "manual" || card.source === "auto") return null;
+  return id;
 }
 
 function triggerIdOfEvent(event: TradingStatEvent): string | null {
-  if (event.card?.source !== "trigger") return null;
-  const id = typeof event.card.triggerId === "string" ? event.card.triggerId.trim() : "";
-  return id || null;
+  const id = typeof event.card?.triggerId === "string" ? event.card.triggerId.trim() : "";
+  if (!id) return null;
+  if (event.card?.source === "manual" || event.card?.source === "auto") return null;
+  return id;
+}
+
+/**
+ * Legacy phase / schedule-placement trades (pre Trigger-only Schedule).
+ * Counted into the current ISO week hour cells until the next week rolls over.
+ */
+function isLegacyPhaseTrade(card: Pick<TradingPositionCard, "source" | "placementId"> | null | undefined): boolean {
+  if (!card) return false;
+  if (card.source === "manual" || card.source === "trigger") return false;
+  // Live phase fills use source "auto"; older rows may only carry placementId.
+  return card.source === "auto" || Boolean(card.placementId);
 }
 
 function groupTimelineByTrigger(
@@ -177,6 +191,8 @@ function groupTimelineByTrigger(
  * Include a trigger trade when:
  * - No timeline rows exist for that triggerId → legacy count (pre-timeline fills)
  * - Else only if wasTriggerTradingActive at the window time
+ * - Late timeline seed: no row at/before the trade, but every known row is Trade+Active
+ *   (timeline feature deployed after the trigger was already trading) → still count
  */
 function shouldCountTriggerTrade(
   triggerId: string,
@@ -187,7 +203,12 @@ function shouldCountTriggerTrade(
   // Legacy: triggers created before the Active/Paused (+ Trade/Demo) timeline
   // have no rows — keep counting their settled Trade fills in hour slots.
   if (!timeline || timeline.length === 0) return true;
-  return wasTriggerTradingActive(timeline, atMs);
+  if (wasTriggerTradingActive(timeline, atMs)) return true;
+  const hasRowAtOrBefore = timeline.some((ev) => ev.atMs <= atMs);
+  if (hasRowAtOrBefore) return false;
+  // Gap before the first timeline row — only backfill when we never recorded Demo/Pause.
+  const everNotTrading = timeline.some((ev) => ev.paused || ev.runMode !== "trade");
+  return !everNotTrading;
 }
 
 export interface ComputeHourSlotStatsInput {
@@ -203,7 +224,12 @@ export interface ComputeHourSlotStatsInput {
 }
 
 /**
- * Aggregate Trigger Trade settled outcomes into UTC weekday×hour slots for one ISO week.
+ * Aggregate settled outcomes into UTC weekday×hour slots for one ISO week:
+ * - Trigger Trade (timeline-gated Trade+Active)
+ * - Legacy phase / schedule-placement ("auto") trades still in this week’s ledger
+ *
+ * Week filter is the only reset: when the UTC ISO week rolls, prior-week cells clear
+ * as new-week trades start filling the same weekday×hour slots.
  */
 export function computeScheduleHourSlotStats(
   input: ComputeHourSlotStatsInput,
@@ -241,15 +267,28 @@ export function computeScheduleHourSlotStats(
     row.hasData = true;
   };
 
-  for (const card of input.cards ?? []) {
+  const shouldCountCard = (card: TradingPositionCard, atMs: number): boolean => {
     const triggerId = triggerIdOfCard(card);
-    if (!triggerId) continue;
+    if (triggerId) return shouldCountTriggerTrade(triggerId, atMs, byTrigger);
+    // Older Trigger fills often have source "trigger" but no triggerId persisted.
+    if (card.source === "trigger") return true;
+    return isLegacyPhaseTrade(card);
+  };
+
+  const shouldCountEvent = (event: TradingStatEvent, atMs: number): boolean => {
+    const triggerId = triggerIdOfEvent(event);
+    if (triggerId) return shouldCountTriggerTrade(triggerId, atMs, byTrigger);
+    if (event.card?.source === "trigger") return true;
+    return isLegacyPhaseTrade(event.card);
+  };
+
+  for (const card of input.cards ?? []) {
     if (card.status === "open") continue;
     const contrib = contribFromCard(card);
     if (!contrib) continue;
     const atMs = triggerTradeWindowMs({ buyAt: card.buyAt, windowKey: card.windowKey });
     if (!Number.isFinite(atMs)) continue;
-    if (!shouldCountTriggerTrade(triggerId, atMs, byTrigger)) continue;
+    if (!shouldCountCard(card, atMs)) continue;
     const id = identityOf(card.conditionId, card.asset, card.buyAt);
     if (id) {
       if (seenIdentities.has(id)) continue;
@@ -260,8 +299,6 @@ export function computeScheduleHourSlotStats(
   }
 
   for (const event of input.events) {
-    const triggerId = triggerIdOfEvent(event);
-    if (!triggerId) continue;
     if (seenCardIds.has(event.cardId)) continue;
     const contrib = contribFromEvent(event);
     if (!contrib) continue;
@@ -270,7 +307,7 @@ export function computeScheduleHourSlotStats(
       windowKey: event.card?.windowKey,
     });
     if (!Number.isFinite(atMs)) continue;
-    if (!shouldCountTriggerTrade(triggerId, atMs, byTrigger)) continue;
+    if (!shouldCountEvent(event, atMs)) continue;
     const id = identityOf(event.card?.conditionId, event.card?.asset, event.card?.buyAt);
     if (id) {
       if (seenIdentities.has(id)) continue;

@@ -1276,6 +1276,8 @@ export interface PlacementPlayWindowItem {
   plLabel: string;
   sold: boolean;
   markers: SimMarker[];
+  /** Live Open: true when the ledger has a trade but Mongo has no recorded_windows row. */
+  recordingMissing?: boolean;
   /** Replay Prediction side when the detector fired in this window. */
   predictionSide?: WindowOutcome | null;
   /** Last Prediction trade score in the window (null if none). Prefer predictionScores. */

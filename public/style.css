@@ -3917,12 +3917,12 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   box-sizing: border-box;
 }
 
-/* Replay Schedule: double-click opens Open Replay when the cell has windows. */
-.app-page-schedule.is-replay-workspace:not(.is-heatmap-view) .schedule-hour-slot.has-slot-stats {
+/* Schedule (Live + Replay): double-click opens Open Replay when the cell has windows. */
+.app-page-schedule:not(.is-heatmap-view) .schedule-hour-slot.has-slot-stats {
   cursor: pointer;
 }
 
-.app-page-schedule.is-replay-workspace:not(.is-heatmap-view) .schedule-hour-slot.has-slot-stats:hover {
+.app-page-schedule:not(.is-heatmap-view) .schedule-hour-slot.has-slot-stats:hover {
   background: rgba(88, 166, 255, 0.1);
 }
 
@@ -9040,67 +9040,6 @@ body.is-column-resizing * {
 .schedule-play-item-sub {
   font-size: 0.72rem;
   color: var(--muted);
-}
-
-.schedule-play-prediction-scores {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.schedule-play-prediction-score {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-}
-
-.schedule-play-prediction-score svg {
-  width: 14px;
-  height: 14px;
-  display: block;
-}
-
-.schedule-play-prediction-score.is-right {
-  color: var(--up);
-}
-
-.schedule-play-prediction-score.is-wrong {
-  color: var(--down);
-}
-
-.schedule-play-prediction-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.78rem;
-  font-weight: 650;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
-
-.schedule-play-prediction-badge[hidden] {
-  display: none !important;
-}
-
-.schedule-play-prediction-badge.is-up {
-  border-color: var(--up);
-  background: rgba(63, 185, 80, 0.24);
-  color: var(--up);
-}
-
-.schedule-play-prediction-badge.is-down {
-  border-color: var(--down);
-  background: rgba(248, 81, 73, 0.24);
-  color: var(--down);
 }
 
 .schedule-play-main {
