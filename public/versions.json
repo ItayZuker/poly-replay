@@ -1,6 +1,11 @@
 {
-  "current": "1.36.0",
+  "current": "1.37.0",
   "releases": [
+    {
+      "version": "1.37.0",
+      "releasedAt": "2026-08-02T05:08:29.749Z",
+      "notes": "Buy GTD rests at Apply/window start by wall clock (no tick wait). Trigger Trade card stats credit only from settled position cards (same as phases), not client flat guesses. Docs updated."
+    },
     {
       "version": "1.36.0",
       "releasedAt": "2026-08-01T20:51:54.174Z",
