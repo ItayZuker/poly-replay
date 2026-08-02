@@ -13,6 +13,7 @@
     "heroku-postbuild": "npm run build",
     "typecheck": "tsc --noEmit",
     "backfill:outcomes": "tsx src/scripts/backfill-window-outcomes.ts",
+    "sync:mongo-outcomes": "tsx src/scripts/sync-mongo-outcomes-from-disk.ts",
     "migrate:heatmap-to-windows": "tsx src/scripts/migrate-heatmap-to-windows.ts",
     "set-password": "tsx src/scripts/set-user-password.ts",
     "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",

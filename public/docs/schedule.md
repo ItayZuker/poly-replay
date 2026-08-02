@@ -64,7 +64,7 @@ Gray is Replay-only: windows that ran with ticks but never triggered a buy. In R
 
 Replay Trigger definitions are saved per signed-in user in the browser and are separate from Market Triggers. While a run is in progress, the button switches to **Stop**; **Latency**, **Fill Success**, and **Add Trigger** are disabled. Click **Stop** to cancel. Saving/deleting a Replay Trigger during a run also stops the run. Switching Live ↔ Replay does **not** stop a running job.
 
-Replay uses the same simulation engine as demo Trigger trading. Window times/outcomes come from Mongo (`recorded_windows`); the engine needs **Chainlink tick files** under the recorder’s `DATA_DIR`. On **Live**/Heroku with `SCHEDULE_REPLAY_SERVICE_URL` set, Open Replay ticks are proxied to that recorder. Missing tick files are excluded from Run and Open Replay so they cannot produce false sim/review results.
+Replay uses the same simulation engine as demo Trigger trading. Window times/outcomes come from Mongo (`recorded_windows`), kept in sync with the recorder’s local window JSON (official crypto-price / Gamma at finalize, and any outcome backfill). The engine needs **Chainlink tick files** under the recorder’s `DATA_DIR`. On **Live**/Heroku with `SCHEDULE_REPLAY_SERVICE_URL` set, Open Replay ticks are proxied to that recorder. Missing tick files are excluded from Run and Open Replay so they cannot produce false sim/review results.
 
 **Bad recordings:** windows where the Chainlink/asset price is flat for the entire window are discarded (see prior behavior).
 

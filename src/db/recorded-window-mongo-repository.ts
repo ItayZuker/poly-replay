@@ -205,10 +205,16 @@ export async function upsertRecordedWindowSummary(
     $set.windowOutcome = window.windowOutcome;
   }
 
+  // Prefer flat fields; clear legacy nested outcome so reads cannot diverge.
+  const update: { $set: MongoRecordedWindowDoc; $unset?: Record<string, ""> } = { $set };
+  if (window.windowOutcome === "up" || window.windowOutcome === "down") {
+    update.$unset = { "window.windowOutcome": "" };
+  }
+
   await mongo
     .db(getMongoDbName())
     .collection<MongoRecordedWindowDoc>(COLLECTION)
-    .updateOne({ _id }, { $set }, { upsert: true });
+    .updateOne({ _id }, update, { upsert: true });
 }
 
 /** Delete one Mongo recorded_windows summary. */

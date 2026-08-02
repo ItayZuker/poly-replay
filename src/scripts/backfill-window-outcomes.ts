@@ -9,10 +9,11 @@
 import "dotenv/config";
 import { getMarket, listMarkets } from "../db/market-repository.js";
 import {
-  getRecordedWindow,
   listRecordedWindows,
   saveRecordedWindow,
 } from "../db/recorded-window-repository.js";
+import { upsertRecordedWindowSummary } from "../db/recorded-window-mongo-repository.js";
+import { closeMongoClient } from "../db/mongo-client.js";
 import { initStorage } from "../db/data-dir.js";
 import { fetchOfficialWindowResolution } from "../official-window-resolution.js";
 import { buildUpDownSlug, parseMarketSeries } from "../market-pair.js";
@@ -70,7 +71,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         continue;
       }
 
-      await saveRecordedWindow(market, {
+      const nextDoc = {
         windowStart: window.windowStart,
         windowEnd: window.windowEnd,
         savedAt: window.savedAt,
@@ -96,6 +97,24 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         clobRawCount: window.clobRawCount,
         clobBookCount: window.clobBookCount,
         chainlinkCount: window.chainlinkCount,
+      };
+      await saveRecordedWindow(market, nextDoc);
+      // Keep Mongo heatmap/Replay index in sync with disk (same fields as recorder finalize).
+      await upsertRecordedWindowSummary(market._id, {
+        windowStart: nextDoc.windowStart,
+        windowEnd: nextDoc.windowEnd,
+        savedAt: nextDoc.savedAt,
+        ptbCrossings: nextDoc.ptbCrossings,
+        rangeTop: nextDoc.rangeTop,
+        rangeBottom: nextDoc.rangeBottom,
+        uniqueTraders: nextDoc.uniqueTraders,
+        newWallets: nextDoc.newWallets,
+        windowOutcome: nextDoc.windowOutcome,
+        minAssetPrice: nextDoc.minAssetPrice,
+        maxAssetPrice: nextDoc.maxAssetPrice,
+        assetRange: nextDoc.assetRange,
+        prevCloseAsset: nextDoc.prevCloseAsset,
+        assetPrice: nextDoc.assetPrice,
       });
 
       updated += 1;
@@ -136,9 +155,11 @@ async function main(): Promise<void> {
   for (const market of markets) {
     await backfillMarket(market);
   }
+  await closeMongoClient();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
   process.exitCode = 1;
+  await closeMongoClient().catch(() => undefined);
 });

@@ -44,8 +44,13 @@ export async function listRecordedWindows(
   const files = await listWindowFiles(dir);
   const windows = await Promise.all(
     files.map(async (filename) => {
-      const doc = await readJsonFile<StoredWindowDocument>(path.join(dir, filename));
-      return doc ? fromStoredRecordedWindow(doc) : null;
+      try {
+        const doc = await readJsonFile<StoredWindowDocument>(path.join(dir, filename));
+        return doc ? fromStoredRecordedWindow(doc) : null;
+      } catch {
+        // Skip corrupt / truncated JSON (Dropbox sync collisions, etc.).
+        return null;
+      }
     }),
   );
   return windows
