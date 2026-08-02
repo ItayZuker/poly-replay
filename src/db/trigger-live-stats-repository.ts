@@ -126,6 +126,68 @@ export async function recordTriggerLiveStatsEvent(
   return getTriggerLiveStats(userId, triggerId);
 }
 
+const CREDITS_COLLECTION = "trigger_live_stats_credits";
+
+type TriggerStatsCreditDoc = {
+  _id: string;
+  userId: string;
+  triggerId: string;
+  cardId: string;
+  result: "success" | "fail" | "blue";
+  pnlUsd: number;
+  exitReason: string | null;
+  createdAt: string;
+};
+
+async function creditsCol() {
+  const mongo = await getMongoClient();
+  return mongo.db(getMongoDbName()).collection<TriggerStatsCreditDoc>(CREDITS_COLLECTION);
+}
+
+function isDuplicateKeyError(err: unknown): boolean {
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: number }).code === 11000,
+  );
+}
+
+/**
+ * Credit Trade trigger stats once per settled position card (same settlement as Positions).
+ * Duplicate card ids are ignored so enrich/retry cannot double-count.
+ */
+export async function recordTriggerLiveStatsForSettledCard(
+  userId: string,
+  triggerId: string,
+  cardId: string,
+  result: "success" | "fail" | "blue",
+  pnlUsd: number,
+  exitReason?: TriggerExitReason,
+): Promise<TriggerLiveStats | null> {
+  const tid = String(triggerId || "").trim();
+  const cid = String(cardId || "").trim();
+  if (!tid || !cid) return null;
+  await ensureIndexes();
+  const credits = await creditsCol();
+  try {
+    await credits.insertOne({
+      _id: `${userId}:${cid}`,
+      userId,
+      triggerId: tid,
+      cardId: cid,
+      result,
+      pnlUsd: Number.isFinite(pnlUsd) ? pnlUsd : 0,
+      exitReason: exitReason != null ? String(exitReason) : null,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    if (isDuplicateKeyError(err)) return null;
+    throw err;
+  }
+  return recordTriggerLiveStatsEvent(userId, tid, result, pnlUsd, exitReason);
+}
+
 export async function deleteTriggerLiveStats(
   userId: string,
   triggerId: string,

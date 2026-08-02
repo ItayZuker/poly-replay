@@ -876,6 +876,12 @@ app.post("/api/trading/order", async (req, res) => {
       req.body?.sellOrderType === "GTD"
         ? req.body.sellOrderType
         : undefined;
+    const triggerIdRaw =
+      typeof req.body?.triggerId === "string" ? req.body.triggerId.trim() : "";
+    const triggerExitReason =
+      req.body?.triggerExitReason === "tp" || req.body?.triggerExitReason === "sl"
+        ? req.body.triggerExitReason
+        : undefined;
     const result = await tradingFor(req).manualOrder(state, side, leg, {
       source,
       ...(Number.isFinite(sharesRaw) && sharesRaw > 0
@@ -886,6 +892,8 @@ app.post("/api/trading/order", async (req, res) => {
       ...(Number.isFinite(takeProfitCentsRaw)
         ? { takeProfitCents: Math.round(takeProfitCentsRaw) }
         : {}),
+      ...(source === "trigger" && triggerIdRaw ? { triggerId: triggerIdRaw } : {}),
+      ...(source === "trigger" && triggerExitReason ? { triggerExitReason } : {}),
       ...(Number.isFinite(maxPriceRaw) && maxPriceRaw > 0 && maxPriceRaw < 1
         ? { maxPrice: maxPriceRaw }
         : {}),

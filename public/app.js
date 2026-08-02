@@ -1842,7 +1842,16 @@ let quoteOrderInFlight = false;
 async function postTradingOrder(
   side,
   leg,
-  { source, shares, orderType, sellOrderType, takeProfitCents, maxPrice } = {},
+  {
+    source,
+    shares,
+    orderType,
+    sellOrderType,
+    takeProfitCents,
+    maxPrice,
+    triggerId,
+    triggerExitReason,
+  } = {},
 ) {
   const res = await fetch("/api/trading/order", {
     method: "POST",
@@ -1860,6 +1869,13 @@ async function postTradingOrder(
         : {}),
       ...(Number.isFinite(Number(takeProfitCents))
         ? { takeProfitCents: Math.round(Number(takeProfitCents)) }
+        : {}),
+      ...(source === "trigger" && typeof triggerId === "string" && triggerId.trim()
+        ? { triggerId: triggerId.trim() }
+        : {}),
+      ...(source === "trigger" &&
+      (triggerExitReason === "tp" || triggerExitReason === "sl")
+        ? { triggerExitReason }
         : {}),
       ...(Number.isFinite(Number(maxPrice)) && Number(maxPrice) > 0 && Number(maxPrice) < 1
         ? { maxPrice: Number(maxPrice) }
@@ -3888,6 +3904,23 @@ function syncPositionsScrollable() {
   body.classList.toggle("is-scrollable", height > 0 && hasCards);
 }
 
+function refreshTradeTriggerStatsFromPositions(state) {
+  const cards = state?.trading?.positionCards;
+  if (!Array.isArray(cards) || !Array.isArray(userTriggers)) return;
+  const ids = new Set();
+  for (const card of cards) {
+    if (!card || card.source !== "trigger" || card.status === "open") continue;
+    const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+    if (tid) ids.add(tid);
+  }
+  for (const id of ids) {
+    void fetchTriggerLiveStats(id).then(() => {
+      updateTriggerCardStats(id);
+      window.ScheduleLiveTriggers?.updateStats?.(id);
+    });
+  }
+}
+
 function updatePositionsPanel(state) {
   const list = $("positions-cards");
   const empty = $("positions-empty");
@@ -3905,6 +3938,7 @@ function updatePositionsPanel(state) {
   const fingerprint = positionsFingerprint(cards);
   if (fingerprint === lastPositionsFingerprint) return;
   lastPositionsFingerprint = fingerprint;
+  if (positionsView === "live") refreshTradeTriggerStatsFromPositions(state);
 
   if (cards.length === 0) {
     list.innerHTML = "";
@@ -3981,6 +4015,8 @@ function updateWindowUI(state) {
   updateGraphPanel(state);
   syncManipulationAreaUi();
   tickManipulationDetector(state);
+  // Buy GTD: arm rests at Apply/window start by wall clock (do not wait for next tick).
+  scheduleTriggerGtdArming(state);
 
   if (state?.trading && !isReplayWorkspace() && window.SchedulePlacements?.applyLivePlacementStats) {
     window.SchedulePlacements.applyLivePlacementStats(
@@ -5630,6 +5666,8 @@ function setTriggerRunMode(triggerId, mode) {
   if (triggerCreateEditingId && String(triggerCreateEditingId) === String(triggerId)) {
     syncTriggerStatsPanel();
   }
+  invalidateTriggerGtdArmKeys(triggerId);
+  scheduleTriggerGtdArming(windowState);
 }
 
 /** When Allow trade turns Off, every Trade card falls back to Demo. */
@@ -5654,6 +5692,7 @@ function forceTradeTriggersToDemo(reason = "Allow trade off") {
     source: "client",
     message: `${ids.length} trigger card${ids.length === 1 ? "" : "s"} moved Trade → Demo (${reason})`,
   });
+  scheduleTriggerGtdArming(windowState);
   return ids.length;
 }
 
@@ -5668,6 +5707,8 @@ function setTriggerPaused(triggerId, paused) {
   if (triggerCreateEditingId && String(triggerCreateEditingId) === String(triggerId)) {
     syncTriggerStatsPanel();
   }
+  invalidateTriggerGtdArmKeys(triggerId);
+  scheduleTriggerGtdArming(windowState);
 }
 
 function emptyTriggerDemoStats() {
@@ -6543,6 +6584,8 @@ function submitTriggerCreate() {
   renderTriggersList();
   closeTriggerCreateModal();
   void persistUserTrigger(trigger);
+  invalidateTriggerGtdArmKeys(trigger.id);
+  scheduleTriggerGtdArming(windowState);
 }
 
 function syncTriggerCreateColorDraft() {
@@ -6696,7 +6739,10 @@ window.fillTriggerCardStatsRow = fillTriggerCardStatsRow;
 window.fetchTriggerLiveStats = fetchTriggerLiveStats;
 
 function bindTriggerCreateModal() {
-  void loadUserTriggers().then(() => renderTriggersList());
+  void loadUserTriggers().then(() => {
+    renderTriggersList();
+    scheduleTriggerGtdArming(windowState);
+  });
   $("triggers-create-btn")?.addEventListener("click", () => {
     openTriggerCreateModal();
   });
@@ -10001,6 +10047,35 @@ function isInManipulationArea(state, areaStart, areaEnd) {
   return frac >= areaStart && frac <= areaEnd;
 }
 
+/** Apply-window bounds in unix seconds for a trigger (wall-clock arming). */
+function triggerApplyBoundsSec(state, areaStart, areaEnd) {
+  const ws = state?.windowStart;
+  const we = state?.windowEnd;
+  if (ws == null || we == null || !Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) {
+    return null;
+  }
+  const area = normalizeTriggerWindowArea(areaStart, areaEnd);
+  const dur = we - ws;
+  return {
+    windowStart: ws,
+    windowEnd: we,
+    startSec: ws + area.start * dur,
+    endSec: ws + area.end * dur,
+  };
+}
+
+/**
+ * True when wall clock is inside the trigger Apply window.
+ * Used for Buy GTD so rests arm at Apply/window start without waiting for a quote/tick.
+ */
+function isInTriggerApplyAreaNow(state, areaStart, areaEnd) {
+  const bounds = triggerApplyBoundsSec(state, areaStart, areaEnd);
+  if (!bounds) return false;
+  const nowSec = Date.now() / 1000;
+  if (nowSec < bounds.windowStart || nowSec >= bounds.windowEnd) return false;
+  return nowSec >= bounds.startSec && nowSec <= bounds.endSec;
+}
+
 /** Per-trigger runtime: watching start→end pattern, or open TP/SL position. */
 const triggerRuntimeById = new Map();
 /**
@@ -10451,7 +10526,9 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   });
 
   if (rt.runMode === "trade") {
-    void postTriggerLiveStatsEvent(trigger.id, result, pnlUsd, reason);
+    // Trade stats come from server position-card settlement (same as phases) — do not
+    // post guessed P/L from client flat/held heuristics.
+    void fetchTriggerLiveStats(trigger.id).then(() => updateTriggerCardStats(trigger.id));
   } else {
     recordTriggerDemoStats(trigger.id, result, pnlUsd, reason);
   }
@@ -10672,6 +10749,7 @@ async function openTriggerPosition(trigger, rt, state, side) {
       shares: buyShares,
       orderType: buyOrderType === "FAK" ? "FAK" : "FOK",
       maxPrice: maxAskCents / 100,
+      triggerId: String(trigger.id || ""),
       // TP offset 100 = disabled — do not rest a GTD take-profit sell.
       sellOrderType:
         isTriggerExitDisabled(rt.takeProfitCents) && sellOrderType === "GTD"
@@ -10731,7 +10809,11 @@ async function forceTriggerMarketSell(trigger, rt, state, reason) {
   if (rt.runMode === "trade") {
     if (!isTriggerTradeArmed()) return;
     rt.orderInFlight = true;
-    const result = await placeTriggerTradeOrder(rt.side, "sell", { orderType: sellType });
+    const result = await placeTriggerTradeOrder(rt.side, "sell", {
+      orderType: sellType,
+      triggerId: String(trigger.id || ""),
+      triggerExitReason: reason === "tp" || reason === "sl" ? reason : undefined,
+    });
     rt.orderInFlight = false;
     if (result.skipped) return;
     if (!result.ok) {
@@ -10824,6 +10906,127 @@ function triggerUsesBuyGtd(trigger) {
 }
 
 let triggerGtdSyncInFlight = false;
+/** @type {{ state: any, desires: any[] } | null} */
+let triggerGtdSyncPending = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let triggerGtdArmTimer = null;
+/** Window start this arming schedule is keyed to. */
+let triggerGtdArmWindowStart = null;
+/** Apply-start keys already flushed this window: `${triggerId}:${applyStartSec}`. */
+const triggerGtdArmedApplyKeys = new Set();
+
+function clearTriggerGtdArmTimer() {
+  if (triggerGtdArmTimer != null) {
+    clearTimeout(triggerGtdArmTimer);
+    triggerGtdArmTimer = null;
+  }
+}
+
+/** Allow a trigger to re-arm GTD after Trade/Active changes in the same window. */
+function invalidateTriggerGtdArmKeys(triggerId) {
+  if (!triggerId) {
+    triggerGtdArmedApplyKeys.clear();
+    return;
+  }
+  const prefix = `${String(triggerId)}:`;
+  for (const key of [...triggerGtdArmedApplyKeys]) {
+    if (key.startsWith(prefix)) triggerGtdArmedApplyKeys.delete(key);
+  }
+}
+
+/** Build Trade GTD desires for triggers currently inside Apply (wall clock). */
+function collectTradeGtdDesires(state) {
+  const desires = [];
+  if (!state || !Array.isArray(userTriggers)) return desires;
+  for (const trigger of userTriggers) {
+    const id = String(trigger?.id || "");
+    if (!id) continue;
+    if (trigger.paused !== false) continue;
+    if (trigger.runMode !== "trade") continue;
+    if (!triggerUsesBuyGtd(trigger)) continue;
+    if (
+      !isInTriggerApplyAreaNow(state, trigger.windowArea?.start, trigger.windowArea?.end)
+    ) {
+      continue;
+    }
+    const sides = triggerGtdDesiredSides(trigger, state);
+    if (!sides.length) continue;
+    desires.push({
+      triggerId: id,
+      sides,
+      priceCents: clampTriggerCents(trigger.startPriceCents ?? 50),
+      shares: normalizeTriggerBuyShares(trigger.buyShares),
+      sellOrderType: normalizeTriggerSellOrderType(trigger.sellOrderType),
+      takeProfitCents: clampTriggerOffsetCents(trigger.takeProfitCents ?? 10, 10),
+    });
+  }
+  return desires;
+}
+
+/**
+ * Arm Buy GTD rests on Apply/window start by wall clock (no tick wait).
+ * Schedules a timer when Apply starts later in the window.
+ * Flushes once per trigger Apply-start per market window (ticks still reconcile).
+ */
+function scheduleTriggerGtdArming(state = windowState) {
+  clearTriggerGtdArmTimer();
+  if (!state || !isPredictionTriggerHost()) return;
+  if (!Array.isArray(userTriggers) || userTriggers.length === 0) return;
+
+  const ws = state.windowStart;
+  if (ws !== triggerGtdArmWindowStart) {
+    triggerGtdArmWindowStart = ws ?? null;
+    triggerGtdArmedApplyKeys.clear();
+  }
+
+  const nowMs = Date.now();
+  let earliestFutureMs = Infinity;
+  let anyTradeGtd = false;
+  const pendingArmKeys = [];
+
+  for (const trigger of userTriggers) {
+    if (trigger.paused !== false) continue;
+    if (trigger.runMode !== "trade") continue;
+    if (!triggerUsesBuyGtd(trigger)) continue;
+    anyTradeGtd = true;
+    const id = String(trigger.id || "");
+    const bounds = triggerApplyBoundsSec(
+      state,
+      trigger.windowArea?.start,
+      trigger.windowArea?.end,
+    );
+    if (!bounds || !id) continue;
+    const startMs = bounds.startSec * 1000;
+    const endMs = Math.min(bounds.endSec, bounds.windowEnd) * 1000;
+    const armKey = `${id}:${bounds.startSec}`;
+    if (nowMs >= startMs && nowMs <= endMs) {
+      if (!triggerGtdArmedApplyKeys.has(armKey)) pendingArmKeys.push(armKey);
+    } else if (nowMs < startMs) {
+      earliestFutureMs = Math.min(earliestFutureMs, startMs);
+    }
+  }
+
+  if (!anyTradeGtd) return;
+
+  if (!isTriggerTradeArmed()) {
+    void flushTriggerGtdSync(state, []);
+    return;
+  }
+
+  // Mark armed only after Allow trade is on, so turning it on mid-window still places.
+  if (pendingArmKeys.length > 0) {
+    for (const key of pendingArmKeys) triggerGtdArmedApplyKeys.add(key);
+    void flushTriggerGtdSync(state, collectTradeGtdDesires(state));
+  }
+
+  if (earliestFutureMs < Infinity) {
+    const delay = Math.max(0, earliestFutureMs - Date.now());
+    triggerGtdArmTimer = setTimeout(() => {
+      triggerGtdArmTimer = null;
+      scheduleTriggerGtdArming(windowState);
+    }, delay);
+  }
+}
 
 async function openTriggerPositionFromFill(trigger, rt, state, side, fillPrice, fillShares) {
   if (rt.orderInFlight || rt.phase === "open" || rt.phase === "opening") return;
@@ -10861,7 +11064,10 @@ async function openTriggerPositionFromFill(trigger, rt, state, side, fillPrice, 
 }
 
 async function flushTriggerGtdSync(state, desires) {
-  if (triggerGtdSyncInFlight) return;
+  if (triggerGtdSyncInFlight) {
+    triggerGtdSyncPending = { state, desires };
+    return;
+  }
   triggerGtdSyncInFlight = true;
   try {
     const result = await postTriggerGtdSync(desires);
@@ -10884,6 +11090,11 @@ async function flushTriggerGtdSync(state, desires) {
     }
   } finally {
     triggerGtdSyncInFlight = false;
+    if (triggerGtdSyncPending) {
+      const pending = triggerGtdSyncPending;
+      triggerGtdSyncPending = null;
+      void flushTriggerGtdSync(pending.state, pending.desires);
+    }
   }
 }
 
@@ -10951,7 +11162,10 @@ function tickUserTriggers(state) {
       trigger.windowArea?.start,
       trigger.windowArea?.end,
     );
-    const inArea = isInManipulationArea(state, area.start, area.end);
+    // Buy GTD uses wall clock so Apply/window start does not wait on lastTickMs.
+    const inArea = buyGtd
+      ? isInTriggerApplyAreaNow(state, area.start, area.end)
+      : isInManipulationArea(state, area.start, area.end);
     if (!inArea) {
       if (rt.phase === "watching") {
         rt.phase = "idle";
@@ -11460,6 +11674,8 @@ function bindTradeToggles() {
     const config = await pushTradingConfig(patch);
     applyTradingConfigToUi(coalesceTradingConfig(config, patch) ?? patch);
     if (windowState) drawPriceChart(windowState);
+    if (startTradingInput.checked) invalidateTriggerGtdArmKeys();
+    scheduleTriggerGtdArming(windowState);
     appendLogEntry({
       level: "info",
       source: "client",

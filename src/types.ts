@@ -475,6 +475,10 @@ export interface TradingPositionCard {
    */
   /** manual = quote-box; auto = phase; trigger = Market Trigger Trade (schedule-attributable). */
   source?: "manual" | "auto" | "trigger";
+  /** Market Trigger id when source is trigger — Trade card stats follow this card's settlement. */
+  triggerId?: string;
+  /** Exit path for trigger sells: tp / sl (held uses window-end via status win/loss). */
+  triggerExitReason?: "tp" | "sl";
 }
 
 /** Live real-trade aggregates for a schedule placement card. */
