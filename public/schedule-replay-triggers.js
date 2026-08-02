@@ -121,8 +121,12 @@
   function formatPnl(pnlUsd) {
     const n = Number(pnlUsd);
     if (!Number.isFinite(n)) return "—";
-    const sign = n > 0 ? "+" : "";
-    return `${sign}$${n.toFixed(2)}`;
+    const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+    const abs = Math.abs(n).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${sign}$${abs}`;
   }
 
   function listForRun() {
@@ -297,6 +301,10 @@
       menuWrap.appendChild(menuBtn);
       header.append(title, menuWrap);
 
+      const stack = document.createElement("div");
+      stack.className = "schedule-trigger-card-stack trigger-card-stats";
+      stack.setAttribute("aria-label", "Replay trigger stats");
+
       const controls = document.createElement("div");
       controls.className = "trigger-card-controls";
       const pauseWrap = document.createElement("div");
@@ -325,34 +333,59 @@
       }
       controls.appendChild(pauseWrap);
 
-      const statsRow = document.createElement("div");
-      statsRow.className = "trigger-card-stats";
-      statsRow.innerHTML =
-        '<div class="trigger-card-stats-exits">' +
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
-        "</div>" +
-        '<div class="trigger-card-stats-main">' +
+      const refreshBtn = document.createElement("button");
+      refreshBtn.type = "button";
+      refreshBtn.className = "trigger-card-stats-reset";
+      refreshBtn.title = "Refresh stats";
+      refreshBtn.setAttribute("aria-label", "Refresh stats");
+      refreshBtn.disabled = listLocked;
+      refreshBtn.innerHTML =
+        '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
+        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
+        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
+        "</svg>";
+
+      const exits = document.createElement("div");
+      exits.className = "trigger-card-stats-exits";
+      exits.innerHTML =
+        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>';
+
+      const main = document.createElement("div");
+      main.className = "trigger-card-stats-main";
+      main.innerHTML =
         '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>' +
-        "</div>";
-      const successEl = statsRow.querySelector('[data-stat="success"]');
-      const blueEl = statsRow.querySelector('[data-stat="blue"]');
-      const failEl = statsRow.querySelector('[data-stat="fail"]');
-      const slEl = statsRow.querySelector('[data-stat="stopLoss"]');
-      const pnlEl = statsRow.querySelector('[data-stat="pnl"]');
-      if (successEl) successEl.textContent = String(stats.success);
-      if (blueEl) blueEl.textContent = String(stats.blue ?? 0);
-      if (failEl) failEl.textContent = String(stats.fail);
-      if (slEl) slEl.textContent = String(stats.stopLoss);
-      if (pnlEl) {
-        pnlEl.textContent = formatPnl(stats.pnlUsd);
-        pnlEl.classList.toggle("is-pos", stats.pnlUsd > 0);
-        pnlEl.classList.toggle("is-neg", stats.pnlUsd < 0);
-      }
+        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>';
 
-      card.append(header, controls, statsRow);
+      stack.append(controls, refreshBtn, exits, main);
+
+      const applyStats = (next) => {
+        const s = normalizeStats(next);
+        const successEl = stack.querySelector('[data-stat="success"]');
+        const blueEl = stack.querySelector('[data-stat="blue"]');
+        const failEl = stack.querySelector('[data-stat="fail"]');
+        const slEl = stack.querySelector('[data-stat="stopLoss"]');
+        const pnlEl = stack.querySelector('[data-stat="pnl"]');
+        if (successEl) successEl.textContent = String(s.success);
+        if (blueEl) blueEl.textContent = String(s.blue ?? 0);
+        if (failEl) failEl.textContent = String(s.fail);
+        if (slEl) slEl.textContent = String(s.stopLoss);
+        if (pnlEl) {
+          pnlEl.textContent = formatPnl(s.pnlUsd);
+          pnlEl.classList.toggle("is-pos", s.pnlUsd > 0);
+          pnlEl.classList.toggle("is-neg", s.pnlUsd < 0);
+        }
+      };
+      applyStats(stats);
+      refreshBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (refreshBtn.disabled) return;
+        applyStats(runStatsById[id] || trigger.replayStats);
+      });
+
+      card.append(header, stack);
       list.appendChild(card);
     }
   }

@@ -66,6 +66,7 @@ import {
   getTriggerLiveStats,
   recordTriggerLiveStatsEvent,
 } from "./db/trigger-live-stats-repository.js";
+import { ensureTriggerModeTimelineIndexes } from "./db/trigger-mode-timeline-repository.js";
 import {
   deleteUserTrigger,
   listUserTriggers,
@@ -101,6 +102,7 @@ import { startArchiveScheduler, stopArchiveScheduler } from "./archive-service.j
 import {
   backtestSchedulePlacements,
   buildPlacementPlayPayload,
+  parseSyntheticHourPlacement,
   type PlacementBacktestStats,
 } from "./schedule-backtest-service.js";
 import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
@@ -1969,6 +1971,7 @@ async function runPlacementPlay(
     latencyMs?: number;
     fillSuccessPct?: number;
     phaseSetup?: unknown;
+    triggers?: unknown[] | null;
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
@@ -1983,14 +1986,17 @@ async function runPlacementPlay(
     } | null;
   },
 ) {
-  const placement = await getSchedulePlacementById(userId, placementId, "replay");
+  const seriesHint =
+    typeof input.series === "string" && input.series.trim() ? input.series.trim() : "";
+  let placement = await getSchedulePlacementById(userId, placementId, "replay");
+  if (!placement) {
+    placement = parseSyntheticHourPlacement(placementId, seriesHint);
+  }
   if (!placement) {
     return { status: 404 as const, body: { error: "Placement not found" } };
   }
   // Prefer the placement's own series so Open matches the card, not a stale selector.
-  const series =
-    String(placement.series ?? "").trim() ||
-    (typeof input.series === "string" && input.series.trim() ? input.series.trim() : "");
+  const series = String(placement.series ?? "").trim() || seriesHint;
   const market = await getMarket(series);
   if (!market) {
     return { status: 404 as const, body: { error: "Market not found" } };
@@ -2004,11 +2010,13 @@ async function runPlacementPlay(
       ? Math.max(0, Math.min(100, input.fillSuccessPct))
       : 100;
   const phaseSetup = normalizePhaseSetup(input.phaseSetup as never) ?? undefined;
+  const hasTriggers = Array.isArray(input.triggers) && input.triggers.length > 0;
   const payload = await buildPlacementPlayPayload(userId, market, placement, {
     latencyMs,
     fillSuccessPct,
     phaseSetup: phaseSetup ?? null,
-    prediction: input.prediction === null ? null : input.prediction,
+    prediction: hasTriggers ? null : input.prediction === null ? null : input.prediction,
+    triggers: input.triggers,
   });
   return { status: 200 as const, body: payload };
 }
@@ -2018,6 +2026,7 @@ function parsePlayRequestBody(req: express.Request): {
   latencyMs?: number;
   fillSuccessPct?: number;
   phaseSetup?: unknown;
+  triggers?: unknown[] | null;
   prediction?: {
     sensitivitySec?: number;
     maxQuoteCents?: number;
@@ -2055,11 +2064,13 @@ function parsePlayRequestBody(req: express.Request): {
         ? body.prediction
         : undefined
     : undefined;
+  const triggers = Array.isArray(body.triggers) ? body.triggers : undefined;
   return {
     series,
     latencyMs: Number.isFinite(latencyRaw) ? latencyRaw : undefined,
     fillSuccessPct: Number.isFinite(fillRaw) ? fillRaw : undefined,
     phaseSetup,
+    triggers,
     prediction,
   };
 }
@@ -2092,6 +2103,7 @@ app.post("/api/schedule-placements/:id/play", async (req, res) => {
             fillSuccessPct: parsed.fillSuccessPct,
             setup: parsed.phaseSetup,
             prediction: parsed.prediction,
+            triggers: parsed.triggers,
           }),
         },
       );
@@ -2331,6 +2343,23 @@ app.get("/api/schedule-placement-stats", async (req, res) => {
   }
 });
 
+/** Trigger Trade UTC weekday×hour slot stats for the current ISO week (Live engine). */
+app.get("/api/schedule-hour-stats", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const engine = await liveTradingRegistry.ensureLoaded(userId);
+    const slots = await engine.getHourSlotStats();
+    res.json({ slots });
+  } catch (err) {
+    const message = String(err);
+    if (message.includes("MONGODB_URI")) {
+      res.status(503).json({ error: message });
+      return;
+    }
+    res.status(500).json({ error: message });
+  }
+});
+
 app.get("/api/schedule-placement-stats/stream", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -2494,6 +2523,7 @@ async function main(): Promise<void> {
   try {
     await ensureUserIndexes();
     await ensureSessionIndexes();
+    await ensureTriggerModeTimelineIndexes();
     await ensureDefaultUser();
     await ensureWalletRegistryReady();
     await maybeBootstrapDefaultPassword();

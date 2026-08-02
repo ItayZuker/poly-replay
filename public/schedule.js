@@ -103,34 +103,19 @@
     return { day, hour, hourSlot: now.getUTCHours() };
   }
 
-  function findActivePlacement() {
-    const { day, hour } = getUtcScheduleClock();
-    return (
-      placements.find(
-        (p) =>
-          p.day === day &&
-          hour >= p.startHour &&
-          hour < p.startHour + p.durationHours,
-      ) ?? null
-    );
-  }
-
   /** Last highlight key — avoid restarting pulse (causes visible border flicker). */
   let lastNowHighlightKey = "";
 
   /**
    * Now highlights:
-   * - Schedule view: UTC hour + active setup card (slots behind card do not pulse)
-   * - Heatmap view: UTC hour + heatmap hour slot
+   * - UTC hour label
+   * - Current day×hour cell (Schedule stats + Heatmap) — pulsing red frame
    * Animations share one wall-clock phase via --schedule-pulse-delay on :root.
    */
   function syncNowHighlights() {
     const { day, hourSlot } = getUtcScheduleClock();
-    const active = findActivePlacement();
     const onSchedule = isScheduleView();
-    const onHeatmap = isSchedulePage() && !onSchedule;
-    const activeId = onSchedule && active ? active._id : "";
-    const highlightKey = `${isSchedulePage() ? 1 : 0}|${onSchedule ? 1 : 0}|${day}|${hourSlot}|${activeId}`;
+    const highlightKey = `${isSchedulePage() ? 1 : 0}|${onSchedule ? 1 : 0}|${day}|${hourSlot}`;
 
     document.querySelectorAll(".schedule-utc-hour").forEach((el) => {
       el.classList.toggle(
@@ -144,16 +129,9 @@
       col.querySelectorAll(".schedule-hour-slot").forEach((slot) => {
         slot.classList.toggle(
           "is-now",
-          onHeatmap && isToday && Number(slot.dataset.hour) === hourSlot,
+          isSchedulePage() && isToday && Number(slot.dataset.hour) === hourSlot,
         );
       });
-    });
-
-    document.querySelectorAll(".schedule-placement-card").forEach((card) => {
-      card.classList.toggle(
-        "is-live",
-        onSchedule && active != null && card.dataset.placementId === active._id,
-      );
     });
 
     // Only resync animation phase when the live target changes. Restarting every
@@ -169,9 +147,7 @@
     } else {
       // Cards rebuilt with is-live but lost is-pulse-synced — restore without restart.
       document
-        .querySelectorAll(
-          ".schedule-utc-hour.is-now, .schedule-hour-slot.is-now, .schedule-placement-card.is-live",
-        )
+        .querySelectorAll(".schedule-utc-hour.is-now, .schedule-hour-slot.is-now")
         .forEach((el) => el.classList.add("is-pulse-synced"));
     }
   }
@@ -179,7 +155,7 @@
   /** Restart pulse animations so every active highlight shares the same phase. */
   function restartPulseAnimations() {
     const els = document.querySelectorAll(
-      ".schedule-utc-hour.is-now, .schedule-hour-slot.is-now, .schedule-placement-card.is-live",
+      ".schedule-utc-hour.is-now, .schedule-hour-slot.is-now",
     );
     els.forEach((el) => el.classList.remove("is-pulse-synced"));
     // Force style recalc so removing the class actually stops the animation.
@@ -531,54 +507,23 @@
     document.querySelectorAll(".schedule-day-column").forEach((column) => {
       const day = column.dataset.day;
       const header = column.querySelector(".schedule-day-header");
-      const title = header?.querySelector(".schedule-day-title");
-      if (!day || !header || !title || header.querySelector(".schedule-day-clear-button")) return;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "schedule-day-clear-button";
-      button.setAttribute("aria-label", `Clear ${title.textContent || day}`);
-      button.title = `Clear ${title.textContent || day}`;
-      const trash = document.createElement("span");
-      trash.className = "schedule-day-clear-icon";
-      trash.setAttribute("aria-hidden", "true");
-      trash.innerHTML =
-        '<svg viewBox="0 0 16 16"><path d="M3 4.5h10M6 2.5h4l.5 2H5.5l.5-2ZM4.5 4.5l.6 9h5.8l.6-9M6.7 6.5v5M9.3 6.5v5" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      button.append(trash, title);
-      // Delay clear so a double-click can highlight the column instead of wiping it.
-      let clearClickTimer = null;
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (clearClickTimer != null) {
-          window.clearTimeout(clearClickTimer);
-          clearClickTimer = null;
-          return;
-        }
-        clearClickTimer = window.setTimeout(() => {
-          clearClickTimer = null;
-          void clearDay(day);
-        }, 280);
-      });
-      button.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (clearClickTimer != null) {
-          window.clearTimeout(clearClickTimer);
-          clearClickTimer = null;
-        }
-        toggleDayColumnFrames(day);
-      });
+      if (!day || !header || header.dataset.dayHeaderBound === "1") return;
+      header.dataset.dayHeaderBound = "1";
+      // Remove legacy Clear (Can) control if still present from an older session.
+      header.querySelector(".schedule-day-clear-button")?.remove();
+      if (!header.querySelector(".schedule-day-header-stats")) {
+        const host = document.createElement("div");
+        host.className = "schedule-day-header-stats";
+        host.setAttribute("aria-label", "Day totals");
+        header.appendChild(host);
+      }
       header.addEventListener("dblclick", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (clearClickTimer != null) {
-          window.clearTimeout(clearClickTimer);
-          clearClickTimer = null;
-        }
         toggleDayColumnFrames(day);
       });
-      header.insertBefore(button, header.firstChild);
     });
+    updateDayHeaderPnls();
   }
 
   /** Double-click day header: frame all cards in the column (or unframe if all already framed). */
@@ -687,7 +632,11 @@
   function formatPlacementPnl(pnl, _hasData) {
     const n = pnl != null && Number.isFinite(Number(pnl)) ? Number(pnl) : 0;
     const sign = n >= 0 ? "+" : "-";
-    return `${sign}$${Math.abs(n).toFixed(2)}`;
+    const abs = Math.abs(n).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${sign}$${abs}`;
   }
 
   function pnlSignClass(pnl, _hasData, _includeNeutral = false) {
@@ -1034,31 +983,32 @@
     card.classList.toggle("is-stats-muted", cardStatsMuted(placementId));
   }
 
-  function dayColumnPnl(day) {
-    const dayPlacements = placements.filter((p) => p.day === day);
-    if (dayPlacements.length === 0) return { hasData: false, pnl: 0 };
-
-    let total = 0;
-    let hasAny = false;
-    for (const placement of dayPlacements) {
-      if (!cardShowsStats(placement._id)) continue;
-      const stats = placementStats.get(placement._id);
-      if (stats?.hasData !== true) continue;
-      hasAny = true;
-      total += stats.pnl ?? 0;
+  function dayColumnTotals(day) {
+    if (typeof window.ScheduleHourSlots?.dayTotals === "function") {
+      return window.ScheduleHourSlots.dayTotals(day);
     }
-    return { hasData: hasAny, pnl: total };
+    return { hasData: false, pnl: 0, green: 0, red: 0, blue: 0, gray: 0 };
   }
 
   function updateDayHeaderPnls() {
+    const includeGray = isReplayWorkspace();
     for (const day of DAYS) {
       const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
-      if (!col) continue;
-      const pnlEl = col.querySelector(".schedule-day-pnl");
-      if (!pnlEl) continue;
-      const { hasData, pnl } = dayColumnPnl(day);
+      const host = col?.querySelector(".schedule-day-header-stats");
+      if (!host) continue;
+      const { hasData, pnl, green, red, blue, gray } = dayColumnTotals(day);
+      host.replaceChildren();
+      const dots = document.createElement("div");
+      dots.className = "schedule-placement-stats-dots";
+      appendStatItem(dots, "green", green ?? 0, hasData);
+      appendStatItem(dots, "red", red ?? 0, hasData);
+      appendStatItem(dots, "blue", blue ?? 0, hasData);
+      if (includeGray) appendStatItem(dots, "gray", gray ?? 0, hasData);
+      const pnlEl = document.createElement("div");
+      pnlEl.className = "schedule-placement-pnl";
       pnlEl.textContent = formatPlacementPnl(pnl, hasData);
-      setPnlSignClass(pnlEl, pnl, hasData);
+      setPnlSignClass(pnlEl, pnl, hasData, true);
+      host.append(dots, pnlEl);
     }
   }
 
@@ -1136,26 +1086,10 @@
   }
 
   function weekTotals() {
-    let totalPnl = 0;
-    let green = 0;
-    let red = 0;
-    let blue = 0;
-    let gray = 0;
-    let hasAny = false;
-
-    for (const placement of placements) {
-      if (!cardShowsStats(placement._id)) continue;
-      const stats = placementStats.get(placement._id);
-      if (stats?.hasData !== true) continue;
-      hasAny = true;
-      totalPnl += stats.pnl ?? 0;
-      green += stats.green ?? 0;
-      red += stats.red ?? 0;
-      blue += stats.blue ?? 0;
-      gray += stats.gray ?? 0;
+    if (typeof window.ScheduleHourSlots?.totals === "function") {
+      return window.ScheduleHourSlots.totals();
     }
-
-    return { hasData: hasAny, pnl: totalPnl, green, red, blue, gray };
+    return { hasData: false, pnl: 0, green: 0, red: 0, blue: 0, gray: 0 };
   }
 
   const SUMMARY_RANGE_STORAGE_KEY = "poly-real:header-stats-range";
@@ -1364,29 +1298,13 @@
     if (demoLastWindow !== undefined) {
       ingestDemoLastWindow(demoLastWindow, trading);
     }
-    if (Array.isArray(statsList)) {
-      let changed = false;
-      for (const stats of statsList) {
-        if (!stats?.placementId) continue;
-        if (stats.locked === true || stats.hasData === true) {
-          lockedPlacementIds.add(stats.placementId);
-        }
-        const prev = placementStats.get(stats.placementId);
-        if (!shouldApplyPlacementStats(prev, stats)) continue;
-        placementStats.set(stats.placementId, {
-          ...stats,
-          locked:
-            stats.locked === true ||
-            stats.hasData === true ||
-            lockedPlacementIds.has(stats.placementId),
-        });
-        changed = true;
-      }
-      if (changed) applyCardStatsStates();
-    }
+    // Hour cells are the Live Schedule board (Trigger Trade aggregates).
+    void window.ScheduleHourSlots?.refreshLive?.();
     if (sessionTotals) applyLiveSessionTotals(sessionTotals);
     else if (headerSummaryRange === "live") {
       renderHeaderSummaryTotals(liveRangeTotals());
+    } else if (headerSummaryRange === "schedule") {
+      renderHeaderSummaryTotals(weekTotals());
     }
   }
 
@@ -2439,7 +2357,6 @@
             (stats?.red ?? 0) +
             (stats?.blue ?? 0) +
             (stats?.gray ?? 0);
-          const setupDoc = window.getScheduleSetupById?.(placement.setupId);
           window.SchedulePlay?.open?.(placement._id, {
             windowCountHint: hint,
             latencyMs: readReplayLatencyMs(),
@@ -2447,7 +2364,7 @@
             prediction: null,
             triggers: window.ScheduleReplayTriggers?.listForRun?.() ?? [],
             series: placement.series || selectedSeries(),
-            setup: setupDoc?.setup ?? null,
+            setup: null,
           });
         });
         menu.appendChild(playMenuBtn);
@@ -3320,6 +3237,9 @@
     statsPendingIds.clear();
     statsBatchFetching = false;
     syncPlacementsDom([]);
+    if (!isReplayWorkspace() || activeReplayStats.size === 0) {
+      window.ScheduleHourSlots?.clearAll?.();
+    }
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
     syncNowHighlights();
@@ -3327,32 +3247,42 @@
 
   function restoreActiveReplayStatsToBoard() {
     if (!isReplayWorkspace() || activeReplayStats.size === 0) return;
-    for (const placement of placements) {
-      const stats = activeReplayStats.get(placement._id);
-      if (stats) placementStats.set(placement._id, { ...stats });
+    // Rebuild synthetic hour placements so ids resolve after workspace toggle.
+    if (
+      !placements.length &&
+      typeof window.ScheduleHourSlots?.buildTriggerOnlyReplayBoard === "function"
+    ) {
+      placements = window.ScheduleHourSlots.buildTriggerOnlyReplayBoard(selectedSeries()).placements;
+    }
+    for (const [placementId, stats] of activeReplayStats) {
+      placementStats.set(placementId, { ...stats });
+      window.ScheduleHourSlots?.applyReplayPlacementStat?.(stats);
     }
     applyCardStatsStates();
+    window.ScheduleHourSlots?.paint?.();
   }
 
   async function onWorkspaceModeChanged(mode) {
     // Keep a running Replay alive across Live ↔ Simulator toggles.
     const expectedMode = mode || workspaceMode();
     clearWorkspaceBoard();
-    await loadPlacements({
-      reloadStats: expectedMode !== "replay",
-      expectedMode,
-    });
-    if (isReplayWorkspace()) {
+    placements = [];
+    if (expectedMode === "replay") {
       setHeaderSummaryRange("schedule");
       lockedPlacementIds.clear();
       restoreActiveReplayStatsToBoard();
       syncReplayPredictionTotalsUi();
       syncReplayPredictionAreaUi();
       if (replayRunning) showHeaderStatsProgressIndeterminate();
+      else hideHeaderStatsProgress();
+      window.ScheduleHourSlots?.paint?.();
     } else {
       hideHeaderStatsProgress();
+      window.ScheduleHourSlots?.clearAll?.();
+      void window.ScheduleHourSlots?.refreshLive?.();
     }
     syncHeaderSummaryControls();
+    updateDayHeaderPnls();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
     syncNowHighlights();
@@ -3421,7 +3351,9 @@
     // Update the visible board only while Simulator is active.
     if (!isReplayWorkspace()) return;
     placementStats.set(stats.placementId, { ...next });
+    window.ScheduleHourSlots?.applyReplayPlacementStat?.(next);
     applyCardStatsStates();
+    updateDayHeaderPnls();
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
     syncReplayPredictionTotalsUi();
@@ -4209,11 +4141,25 @@
 
   async function runReplay() {
     if (!isReplayWorkspace() || replayRunning) return;
-    if (placements.length === 0) {
+    const triggers = window.ScheduleReplayTriggers?.listForRun?.() ?? [];
+    if (!triggers.length) {
       window.appendLogEntry?.({
         level: "warn",
         source: "client",
-        message: "Place setup cards on the Replay schedule before pressing Run",
+        message: "Add and Activate at least one Replay Trigger before pressing Run",
+      });
+      return;
+    }
+
+    const board =
+      typeof window.ScheduleHourSlots?.buildTriggerOnlyReplayBoard === "function"
+        ? window.ScheduleHourSlots.buildTriggerOnlyReplayBoard(selectedSeries())
+        : null;
+    if (!board?.placements?.length) {
+      window.appendLogEntry?.({
+        level: "warn",
+        source: "client",
+        message: "Could not build hour-slot Replay board",
       });
       return;
     }
@@ -4223,7 +4169,6 @@
     replayStopReason = null;
     const latencyMs = readReplayLatencyMs();
     const fillSuccessPct = readReplayFillSuccessPct();
-    const triggers = window.ScheduleReplayTriggers?.listForRun?.() ?? [];
     replayRunLockedLatencyMs = latencyMs;
     replayRunLockedFillSuccessPct = fillSuccessPct;
     replayRunLockedPrediction = null;
@@ -4235,28 +4180,31 @@
     placementStats.clear();
     lockedPlacementIds.clear();
     activeReplayStats.clear();
+    // Reset hour cells to zeros + spinners (setReplayRunning clears stats).
+    window.ScheduleHourSlots?.setReplayRunning?.(true);
     resetReplayPredictionTotalsUi();
     applyCardStatsStates();
+    updateWeekHeaderSummary();
+    updateHighlightedHeaderSummary();
     showHeaderStatsProgressIndeterminate();
     const dayOrder = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
-    const orderedPlacements = [...placements].sort((a, b) => {
+    const orderedPlacements = [...board.placements].sort((a, b) => {
       const dayDiff = (dayOrder[a.day] ?? 99) - (dayOrder[b.day] ?? 99);
       if (dayDiff !== 0) return dayDiff;
       if (a.startHour !== b.startHour) return a.startHour - b.startHour;
       return String(a._id).localeCompare(String(b._id));
     });
+    // Keep in-memory placements aligned so Open Replay / locks can resolve hour ids.
+    placements = orderedPlacements;
     activeReplayPlacementIds = new Set(orderedPlacements.map((p) => p._id));
     const first = orderedPlacements[0];
     window.appendLogEntry?.({
       level: "info",
       source: "client",
-      message: `Replay started for ${orderedPlacements.length} card(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, ${triggers.length} trigger(s); applying setups to recorded windows…`,
+      message: `Replay started for ${orderedPlacements.length} hour slot(s) — top-left first (${first.day} @ ${first.startHour}h), latency ${latencyMs} ms, fill success ${fillSuccessPct}%, ${triggers.length} trigger(s)…`,
     });
 
-    const setupIds = [...new Set(orderedPlacements.map((p) => p.setupId).filter(Boolean))];
-    const setups = setupIds
-      .map((id) => window.getScheduleSetupById?.(id))
-      .filter(Boolean);
+    const setups = board.setups;
 
     let gotDoneEvent = false;
     try {
@@ -4403,6 +4351,7 @@
         clearReplayLoadingOnly();
         syncReplayPredictionTotalsUi();
       }
+      window.ScheduleHourSlots?.setReplayRunning?.(false);
     }
   }
 
@@ -4428,9 +4377,53 @@
     clearHeaderFillPreview();
     moveDragState = null;
     document.body.classList.remove("is-schedule-moving");
-    // Do not re-render placements or setups — view switch is CSS-only.
+    // Toggle hour-slot Trigger stats vs heatmap metric cells.
+    window.ScheduleHourSlots?.syncView?.();
+    updateDayHeaderPnls();
     updateHighlightedHeaderSummary();
     syncNowHighlights();
+  }
+
+  /** Open Replay popup for a synthetic hour cell (`hour:mon:14`). */
+  function openHourSlotReplay(day, hour) {
+    if (!isReplayWorkspace() || !isScheduleView()) return;
+    if (!DAYS.includes(day) || !Number.isFinite(hour) || hour < 0 || hour > 23) return;
+    const placementId = `hour:${day}:${hour}`;
+    const slot = window.ScheduleHourSlots?.getSlot?.(day, hour);
+    const hint =
+      (slot?.green ?? 0) +
+      (slot?.red ?? 0) +
+      (slot?.blue ?? 0) +
+      (slot?.gray ?? 0);
+    // All-zero stats → no replay windows for this hour; do not open the popup.
+    if (hint <= 0 || slot?.hasData !== true) return;
+    window.SchedulePlay?.open?.(placementId, {
+      windowCountHint: hint,
+      latencyMs: readReplayLatencyMs(),
+      fillSuccessPct: readReplayFillSuccessPct(),
+      prediction: null,
+      triggers: window.ScheduleReplayTriggers?.listForRun?.() ?? [],
+      series: selectedSeries(),
+      setup: null,
+    });
+  }
+
+  function bindHourSlotOpenReplay() {
+    const page = document.getElementById("page-schedule-heatmap");
+    if (!page || page.dataset.hourOpenBound === "1") return;
+    page.dataset.hourOpenBound = "1";
+    page.addEventListener("dblclick", (event) => {
+      if (!isReplayWorkspace() || !isScheduleView()) return;
+      const slot = event.target?.closest?.(".schedule-hour-slot");
+      if (!slot || !page.contains(slot)) return;
+      const col = slot.closest(".schedule-day-column");
+      const day = String(col?.dataset?.day || "").toLowerCase();
+      const hour = Number(slot.dataset.hour);
+      if (!DAYS.includes(day) || !Number.isFinite(hour)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openHourSlotReplay(day, hour);
+    });
   }
 
   function init() {
@@ -4443,8 +4436,10 @@
     bindWeekSummaryReset();
     bindHeaderSummaryRange();
     bindGlobalPointer();
+    bindHourSlotOpenReplay();
     initReplayLatencyInput();
     window.SchedulePlay?.init?.();
+    window.ScheduleHourSlots?.init?.();
     syncNowHighlights();
     syncHeaderSummaryControls();
     syncReplayRunButton();
@@ -4470,6 +4465,7 @@
     applyLiveSessionTotals,
     applyDemoLastWindow,
     syncHeaderSummaryControls,
+    updateDayHeaderPnls,
     setHeaderSummaryRange,
     syncReplayInputsFromLive,
     onSelectedSeriesChanged,

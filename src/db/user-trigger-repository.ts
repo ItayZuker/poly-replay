@@ -1,4 +1,8 @@
 import { getMongoClient, getMongoDbName } from "./mongo-client.js";
+import {
+  appendTriggerModeEvent,
+  seedTriggerModeTimelineIfEmpty,
+} from "./trigger-mode-timeline-repository.js";
 
 const COLLECTION = "triggers";
 
@@ -255,7 +259,18 @@ export async function listUserTriggers(userId: string): Promise<UserTriggerRecor
   await ensureIndexes();
   const c = await col();
   const docs = await c.find({ userId }).sort({ updatedAt: -1 }).toArray();
-  return docs.map(toClient).filter(Boolean);
+  const list = docs.map(toClient).filter(Boolean);
+  // Backfill Active/Paused timeline for triggers created before timeline existed.
+  await Promise.all(
+    list.map((t) =>
+      seedTriggerModeTimelineIfEmpty(userId, t.id, {
+        paused: t.paused,
+        runMode: t.runMode,
+        createdAtMs: createdAtMs(t),
+      }).catch(() => undefined),
+    ),
+  );
+  return list;
 }
 
 export async function getUserTrigger(
@@ -266,6 +281,32 @@ export async function getUserTrigger(
   const c = await col();
   const doc = await c.findOne({ userId, id: String(triggerId) });
   return doc ? toClient(doc) : null;
+}
+
+function createdAtMs(record: UserTriggerRecord): number {
+  const ms = Date.parse(record.createdAt);
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+async function syncTriggerModeTimeline(
+  userId: string,
+  next: UserTriggerRecord,
+  existing: UserTriggerRecord | null,
+): Promise<void> {
+  if (!existing) {
+    await seedTriggerModeTimelineIfEmpty(userId, next.id, {
+      paused: next.paused,
+      runMode: next.runMode,
+      createdAtMs: createdAtMs(next),
+    });
+    return;
+  }
+  if (existing.paused !== next.paused || existing.runMode !== next.runMode) {
+    await appendTriggerModeEvent(userId, next.id, {
+      paused: next.paused,
+      runMode: next.runMode,
+    });
+  }
 }
 
 export async function upsertUserTrigger(
@@ -286,6 +327,7 @@ export async function upsertUserTrigger(
     { $set: { ...next, userId } },
     { upsert: true },
   );
+  await syncTriggerModeTimeline(userId, next, existing).catch(() => undefined);
   return next;
 }
 

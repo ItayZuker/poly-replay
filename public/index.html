@@ -65,8 +65,8 @@
       display: flex !important;
       flex-direction: column;
     }
-    html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] #schedule-setups-list,
-    html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] .schedule-add-setup-wrap {
+    html[data-initial-page="schedule"] #schedule-setups-list,
+    html[data-initial-page="schedule"] .schedule-add-setup-wrap {
       display: none !important;
     }
     html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] #schedule-heatmap-panel {
@@ -448,7 +448,7 @@
                     </label>
                   </div>
                 </div>
-                <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade">
+                <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade" hidden>
                   <span class="wallet-control-label" id="auto-trade-label">Auto Trade · Off</span>
                   <span class="switch">
                     <input type="checkbox" id="auto-trade" />
@@ -907,7 +907,7 @@
       </div>
 
       <div id="page-schedule-heatmap" class="app-page app-page-schedule" hidden>
-        <aside class="panel schedule-setups-panel" aria-label="Saved trading setups">
+        <aside class="panel schedule-setups-panel" aria-label="Schedule triggers">
           <div class="schedule-setups-header">
             <div class="schedule-setups-toolbar">
               <div class="schedule-view-toggle" role="group" aria-label="Schedule view">
@@ -915,19 +915,8 @@
                 <button type="button" class="schedule-view-toggle-btn" data-schedule-view="heatmap">Heatmap</button>
               </div>
             </div>
-            <div class="schedule-add-setup-wrap">
-              <button type="button" id="schedule-add-setup-btn" class="schedule-add-setup-btn" title="Save current trading setup">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M12 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  <path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                </svg>
-                <span>Add setup</span>
-              </button>
-            </div>
           </div>
-          <div id="schedule-setups-list" class="schedule-setups-list">
-            <div class="schedule-setups-empty">Loading…</div>
-          </div>
+          <div id="schedule-setups-list" class="schedule-setups-list" hidden aria-hidden="true"></div>
           <div class="schedule-workspace-footer" id="schedule-workspace-footer">
             <div
               id="schedule-replay-panel"
@@ -938,7 +927,7 @@
                 type="button"
                 id="schedule-replay-run-btn"
                 class="schedule-replay-run-btn"
-                title="Run placed cards over recorded windows"
+                title="Run Active Replay Triggers over every UTC hour with recordings"
                 tabindex="-1"
               >
                 <span>Run</span>
@@ -1038,7 +1027,7 @@
                     aria-label="Replay trigger cards"
                   ></div>
                   <p class="schedule-replay-triggers-note" id="schedule-replay-triggers-note">
-                    Triggers apply on every simulated window. Cards show exit counts and P/L after a Run.
+                    Local Replay Triggers. <strong>Run</strong> fills every hour cell from recordings. Card stats update after a Run.
                   </p>
                 </div>
               </div>
@@ -1054,10 +1043,10 @@
               <div
                 id="schedule-live-triggers-list"
                 class="schedule-live-triggers-list"
-                aria-label="Trade-active Market Triggers"
+                aria-label="Market Triggers"
               ></div>
               <p class="schedule-live-triggers-note" id="schedule-live-triggers-note">
-                Market Triggers on <strong>Trade</strong> + <strong>Active</strong>. Stats match the Market card (all-time Trade). Fills count on Schedule cards and totals for the Live placement covering the window (Use Schedule not required).
+                <strong>Trade</strong> + <strong>Active</strong> Market Triggers only. Hour cells sum their Trade fills for the current UTC week.
               </p>
             </div>
             <div
@@ -1085,49 +1074,49 @@
             <div class="schedule-day-column" data-day="mon">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Mon</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
             <div class="schedule-day-column" data-day="tue">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Tue</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
             <div class="schedule-day-column" data-day="wed">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Wed</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
             <div class="schedule-day-column" data-day="thu">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Thu</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
             <div class="schedule-day-column" data-day="fri">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Fri</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
             <div class="schedule-day-column" data-day="sat">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Sat</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
             <div class="schedule-day-column" data-day="sun">
               <div class="schedule-day-header">
                 <span class="schedule-day-title">Sun</span>
-                <span class="schedule-day-pnl">—</span>
+                <div class="schedule-day-header-stats" aria-label="Day totals"></div>
               </div>
               <div class="schedule-day-body"></div>
             </div>
@@ -2049,6 +2038,7 @@
   <script src="/setup-editor.js?v=1.5.2"></script>
   <script src="/schedule-replay-triggers.js?v=1"></script>
   <script src="/schedule-live-triggers.js?v=1"></script>
+  <script src="/schedule-hour-slots.js?v=1"></script>
   <script src="/schedule.js?v=1.5.3"></script>
   <script src="/schedule-play.js?v=1.5.5"></script>
   <script src="/app.js?v=1.5.7"></script>

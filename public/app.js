@@ -7373,164 +7373,37 @@ function bindSetupSaveModal() {
   });
 }
 
-function renderScheduleSetupsList(setups, errorMessage) {
+function renderScheduleSetupsList(setups, _errorMessage) {
+  // Phase setups UI removed — left column is Triggers only.
   const list = $("schedule-setups-list");
-  if (!list) return;
-  list.innerHTML = "";
-
-  if (errorMessage) {
-    const err = document.createElement("div");
-    err.className = "schedule-setups-error";
-    err.textContent = errorMessage;
-    list.appendChild(err);
-    return;
+  if (list) {
+    list.innerHTML = "";
+    list.hidden = true;
+    list.setAttribute("aria-hidden", "true");
   }
-
-  if (!setups?.length) {
-    const empty = document.createElement("div");
-    empty.className = "schedule-setups-empty";
-    empty.textContent = isReplayWorkspace() ? "No replay setups yet" : "No saved setups";
-    list.appendChild(empty);
-    return;
-  }
-
-  for (const setup of setups) {
-    const item = document.createElement("div");
-    item.className = "schedule-setup-item";
-    item.dataset.setupId = setup._id;
-    applySetupColorStyle(item, setup.color);
-
-    const handle = document.createElement("div");
-    handle.className = "schedule-setup-drag-handle";
-    handle.setAttribute("aria-label", "Drag to reorder or place on schedule");
-    handle.title = "Drag to reorder or place on schedule";
-    handle.innerHTML =
-      '<svg viewBox="0 0 8 14" aria-hidden="true"><circle cx="2" cy="2" r="1.2" fill="currentColor"/><circle cx="6" cy="2" r="1.2" fill="currentColor"/><circle cx="2" cy="7" r="1.2" fill="currentColor"/><circle cx="6" cy="7" r="1.2" fill="currentColor"/><circle cx="2" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/></svg>';
-
-    const body = document.createElement("div");
-    body.className = "schedule-setup-item-body";
-
-    const header = document.createElement("div");
-    header.className = "schedule-setup-item-header";
-
-    const main = document.createElement("div");
-    main.className = "schedule-setup-item-main";
-
-    const title = document.createElement("div");
-    title.className = "schedule-setup-item-title";
-    const placementCounts = getSetupPlacementCounts();
-    title.textContent = formatSetupListTitle(setup.title, placementCounts[setup._id] ?? 0);
-    main.appendChild(title);
-
-    if (setup.description) {
-      const desc = document.createElement("div");
-      desc.className = "schedule-setup-item-desc";
-      desc.textContent = setup.description;
-      main.appendChild(desc);
-    }
-
-    const menuWrap = document.createElement("div");
-    menuWrap.className = "schedule-setup-menu-wrap";
-    const menuBtn = document.createElement("button");
-    menuBtn.type = "button";
-    menuBtn.className = "schedule-setup-menu-btn";
-    menuBtn.setAttribute("aria-label", "Setup options");
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.innerHTML = "&#8942;";
-    menuBtn.addEventListener("mousedown", (e) => e.stopPropagation());
-    menuBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (openSetupMenuId === setup._id) {
-        closeSetupMenus();
-        return;
-      }
-      closeSetupMenus();
-      openSetupMenuId = setup._id;
-      const menu = document.createElement("div");
-      menu.className = "schedule-setup-menu schedule-setup-menu-floating";
-      menu.setAttribute("role", "menu");
-
-      const editBtn = document.createElement("button");
-      editBtn.type = "button";
-      editBtn.className = "schedule-setup-menu-item";
-      editBtn.setAttribute("role", "menuitem");
-      editBtn.textContent = "Edit";
-      editBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        openSetupEditor(setup);
-      });
-
-      const duplicateBtn = document.createElement("button");
-      duplicateBtn.type = "button";
-      duplicateBtn.className = "schedule-setup-menu-item";
-      duplicateBtn.setAttribute("role", "menuitem");
-      duplicateBtn.textContent = "Duplicate";
-      duplicateBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        void duplicateTradingSetup(setup);
-      });
-
-      const applyBtn = document.createElement("button");
-      applyBtn.type = "button";
-      applyBtn.className = "schedule-setup-menu-item";
-      applyBtn.setAttribute("role", "menuitem");
-      applyBtn.textContent = "Apply to Simulator";
-      applyBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        void applySetupToSimulator(setup);
-      });
-
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "schedule-setup-menu-item schedule-setup-menu-item-danger";
-      deleteBtn.setAttribute("role", "menuitem");
-      deleteBtn.textContent = "Delete";
-      deleteBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        void deleteTradingSetup(setup);
-      });
-
-      menu.append(editBtn, duplicateBtn, applyBtn, deleteBtn);
-      document.body.appendChild(menu);
-      positionSetupMenu(menu, menuBtn);
-    });
-    menuWrap.appendChild(menuBtn);
-
-    header.append(main, menuWrap);
-    body.appendChild(header);
-    item.append(handle, body);
-    list.appendChild(item);
-  }
-
   if (window.SchedulePlacements) {
-    window.SchedulePlacements.onSetupsRendered(setups);
+    window.SchedulePlacements.onSetupsRendered(Array.isArray(setups) ? setups : []);
   }
 }
 
 async function loadScheduleSetups(options = {}) {
-  const list = $("schedule-setups-list");
-  if (!list) return;
   const expectedMode = options.expectedMode || getScheduleWorkspaceMode();
-
-  list.innerHTML = '<div class="schedule-setups-empty">Loading…</div>';
-
   try {
     const res = await fetch(withScheduleWorkspaceMode("/api/trading-setups"));
-    // Ignore stale responses if the user switched mode mid-flight.
     if (getScheduleWorkspaceMode() !== expectedMode) return;
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Failed to load setups (${res.status})`);
+      scheduleSetupsCache = [];
+      renderScheduleSetupsList([]);
+      return;
     }
     const setups = await res.json();
     if (getScheduleWorkspaceMode() !== expectedMode) return;
     scheduleSetupsCache = Array.isArray(setups) ? setups : [];
     renderScheduleSetupsList(scheduleSetupsCache);
-  } catch (err) {
+  } catch {
     if (getScheduleWorkspaceMode() !== expectedMode) return;
     scheduleSetupsCache = [];
-    renderScheduleSetupsList([], err.message || "Failed to load setups");
+    renderScheduleSetupsList([]);
   }
 }
 
@@ -8233,14 +8106,18 @@ function bindScheduleViewToggle() {
   const list = $("schedule-setups-list");
   const heatmapPanel = $("schedule-heatmap-panel");
   const buttons = document.querySelectorAll(".schedule-view-toggle-btn");
-  if (!list || !heatmapPanel || !buttons.length) return;
+  if (!heatmapPanel || !buttons.length) return;
 
   const showView = (view, options = {}) => {
     const next = view === "heatmap" ? "heatmap" : "schedule";
     const isSchedule = next === "schedule";
     const page = $("page-schedule-heatmap");
     page?.classList.toggle("is-heatmap-view", !isSchedule);
-    list.hidden = !isSchedule;
+    // Setups list is retired — keep it hidden in both views.
+    if (list) {
+      list.hidden = true;
+      list.setAttribute("aria-hidden", "true");
+    }
     heatmapPanel.hidden = isSchedule;
     for (const btn of buttons) {
       btn.classList.toggle("is-active", btn.dataset.scheduleView === next);
@@ -8252,6 +8129,7 @@ function bindScheduleViewToggle() {
       void loadHeatmap();
     }
     if (window.SchedulePlacements) window.SchedulePlacements.onViewChange();
+    else window.ScheduleHourSlots?.syncView?.();
   };
 
   for (const btn of buttons) {
@@ -8608,8 +8486,9 @@ function buildTradingConfigPatch(overrides = {}) {
   const predictionTrade =
     startTrading && manipulationDetector && Boolean(predictionTradeInput?.checked);
   return {
-    autoTrade: Boolean(autoTradeInput?.checked),
-    useSchedule: Boolean(useScheduleInput?.checked),
+    // Phase Auto Trade / Use Schedule removed — Triggers only.
+    autoTrade: false,
+    useSchedule: false,
     startTrading,
     manualOrderUnit,
     manualShares: normalizeManualAmount(sharesInput?.value, manualOrderUnit),
@@ -11496,8 +11375,9 @@ function applyTradingConfigToUi(config) {
   const shiftInput = $("prediction-shift");
   const riseInput = $("prediction-rise");
   const sensInput = $("manipulation-sensitivity");
-  if (autoTradeInput) autoTradeInput.checked = Boolean(config.autoTrade);
-  if (useScheduleInput) useScheduleInput.checked = Boolean(config.useSchedule);
+  // Phase Auto Trade / Use Schedule removed from the product.
+  if (autoTradeInput) autoTradeInput.checked = false;
+  if (useScheduleInput) useScheduleInput.checked = false;
   if (startTradingInput) startTradingInput.checked = Boolean(config.startTrading);
   if (!config.startTrading) {
     forceTradeTriggersToDemo("Allow trade off");

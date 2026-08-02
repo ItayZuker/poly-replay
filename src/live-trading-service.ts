@@ -65,6 +65,8 @@ import {
   type FillSuccessStats,
 } from "./db/fill-attempt-repository.js";
 import { recordTriggerLiveStatsForSettledCard } from "./db/trigger-live-stats-repository.js";
+import { listTriggerModeEvents } from "./db/trigger-mode-timeline-repository.js";
+import { computeScheduleHourSlotStats } from "./schedule-hour-stats.js";
 import { getRollingCutoffUtcSec } from "./heatmap-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
 import {
@@ -99,6 +101,7 @@ import type {
   TradingPositionCard,
   TradingPublicState,
   PlacementLiveStats,
+  ScheduleHourSlotStats,
   FillSuccessPublicStats,
 } from "./types.js";
 
@@ -1793,6 +1796,29 @@ export class LiveTradingService {
   /** Aggregate real-trade outcomes for schedule placement cards (last weekly run only). */
   getPlacementStats(placementIds: string[]): PlacementLiveStats[] {
     return placementIds.map((id) => this.statsForPlacement(id));
+  }
+
+  /**
+   * Trigger Trade → UTC weekday×hour slot stats for the current ISO week.
+   * Uses in-memory ledger/cards + Active/Paused (+ Trade/Demo) timeline.
+   */
+  async getHourSlotStats(): Promise<ScheduleHourSlotStats[]> {
+    const triggerIds = new Set<string>();
+    for (const card of this.positionCards) {
+      if (card.source === "trigger" && card.triggerId) triggerIds.add(card.triggerId);
+    }
+    for (const event of this.liveStatLedger.values()) {
+      const tid = event.card?.triggerId;
+      if (event.card?.source === "trigger" && tid) triggerIds.add(tid);
+    }
+    const timelineEvents = triggerIds.size
+      ? await listTriggerModeEvents(this.userId, [...triggerIds])
+      : [];
+    return computeScheduleHourSlotStats({
+      events: [...this.liveStatLedger.values()],
+      cards: this.positionCards,
+      timelineEvents,
+    });
   }
 
   /** True once the card has started at least one window — stays locked until removed. */
@@ -4215,12 +4241,10 @@ export class LiveTradingService {
         ? opts.triggerId.trim()
         : undefined;
     // Phase Auto Trade: placement only when Use Schedule is on.
-    // Trigger Trade: always attribute to the Live placement covering this UTC slot
-    // (even when Use Schedule is off — triggers do not depend on that switch).
+    // Trigger Trade: hour-slot stats via triggerId + mode timeline (no placementId).
     let resolvedPlacementId: string | undefined;
     if (source === "trigger") {
-      resolvedPlacementId =
-        opts?.placementId ?? (await this.resolveLivePlacementIdForTriggers());
+      resolvedPlacementId = undefined;
     } else if (source === "auto" && this.config.useSchedule) {
       resolvedPlacementId = opts?.placementId ?? this.scheduleContext?.placementId;
     }

@@ -1,16 +1,9 @@
 /**
- * Schedule Live workspace: mirror Market Triggers that are Trade + Active.
- * Stats use all-time Trade counters (same as Market Trade mode).
- * Definitions stay on Market; this list is read-only (Edit opens Market editor).
+ * Schedule Live workspace: Trade + Active Market Triggers only.
+ * No Demo/Pause badges (membership implies Trade + Active).
+ * Edit opens the Market trigger editor.
  */
 (function () {
-  function formatPnl(pnlUsd) {
-    const n = Number(pnlUsd);
-    if (!Number.isFinite(n)) return "$0.00";
-    const sign = n > 0 ? "+" : "";
-    return `${sign}$${n.toFixed(2)}`;
-  }
-
   function listTradeActive() {
     const list =
       typeof window.listMarketTriggersForSchedule === "function"
@@ -88,30 +81,43 @@
       menuWrap.appendChild(menuBtn);
       header.append(title, menuWrap);
 
-      const badge = document.createElement("div");
-      badge.className = "trigger-card-controls";
-      const mode = document.createElement("div");
-      mode.className = "trigger-run-mode trigger-pause-mode";
-      mode.setAttribute("role", "group");
-      mode.setAttribute("aria-label", "Trade Active");
-      const tradeBtn = document.createElement("button");
-      tradeBtn.type = "button";
-      tradeBtn.className = "trigger-run-mode-btn is-active";
-      tradeBtn.textContent = "Trade";
-      tradeBtn.disabled = true;
-      tradeBtn.title = "Trade mode (edit on Market to change)";
-      const activeBtn = document.createElement("button");
-      activeBtn.type = "button";
-      activeBtn.className = "trigger-run-mode-btn is-active";
-      activeBtn.textContent = "Active";
-      activeBtn.disabled = true;
-      activeBtn.title = "Active (edit on Market to pause)";
-      mode.append(tradeBtn, activeBtn);
-      badge.appendChild(mode);
-
       const statsRow = document.createElement("div");
       statsRow.className = "trigger-card-stats";
-      statsRow.innerHTML =
+      statsRow.setAttribute("aria-label", "Trade stats");
+
+      const refreshBtn = document.createElement("button");
+      refreshBtn.type = "button";
+      refreshBtn.className = "trigger-card-stats-reset";
+      refreshBtn.title = "Refresh Trade stats";
+      refreshBtn.setAttribute("aria-label", "Refresh Trade stats");
+      refreshBtn.innerHTML =
+        '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
+        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
+        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
+        "</svg>";
+      refreshBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (refreshBtn.disabled) return;
+        refreshBtn.disabled = true;
+        refreshBtn.classList.add("is-loading");
+        const done = () => {
+          refreshBtn.disabled = false;
+          refreshBtn.classList.remove("is-loading");
+          if (typeof window.fillTriggerCardStatsRow === "function") {
+            window.fillTriggerCardStatsRow(statsRow, trigger);
+          }
+        };
+        if (typeof window.fetchTriggerLiveStats === "function") {
+          void window.fetchTriggerLiveStats(id).then(done, done);
+        } else {
+          done();
+        }
+      });
+
+      const statsBody = document.createElement("div");
+      statsBody.className = "trigger-card-stats-body";
+      statsBody.innerHTML =
         '<div class="trigger-card-stats-exits">' +
         '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
         "</div>" +
@@ -121,8 +127,9 @@
         '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>' +
         "</div>";
+      statsRow.append(refreshBtn, statsBody);
 
-      card.append(header, badge, statsRow);
+      card.append(header, statsRow);
       listEl.appendChild(card);
 
       if (typeof window.fillTriggerCardStatsRow === "function") {
@@ -151,6 +158,11 @@
         ? window.findUserTrigger(id)
         : listTradeActive().find((t) => String(t.id) === id);
     if (!trigger || typeof window.fillTriggerCardStatsRow !== "function") return;
+    // Drop from list if no longer Trade + Active.
+    if (trigger.runMode !== "trade" || trigger.paused !== false) {
+      render();
+      return;
+    }
     window.fillTriggerCardStatsRow(statsRow, trigger);
   }
 

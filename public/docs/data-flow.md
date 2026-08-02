@@ -6,7 +6,7 @@
 
 | Channel | Direction | For |
 |---------|-----------|-----|
-| **REST** `/api/...` | Browser → server | Login, settings, toggles, setups, schedule, manual orders |
+| **REST** `/api/...` | Browser → server | Login, settings, toggles, triggers, schedule hour stats, manual orders |
 | **SSE** `/api/stream` | Server → browser | Quotes, window, trading state, log, heatmap, schedule |
 | **WebSocket** | Server ↔ exchanges | CLOB book + Chainlink (server only) |
 
@@ -36,21 +36,20 @@ Server -> SSE -> Browser
 
 ## Trading
 
-Auto-trade runs on the **server** each tick. The browser only sets toggles and can send **manual** orders.
+**Trigger Trade** (and optional Prediction Trade) run on the **server**. The browser sets toggles / trigger definitions and can send **manual** orders.
 
 | Control | Effect |
 |---------|--------|
-| **Auto Trade** | Server may trade on each tick with the active setup |
-| **Use Schedule** | Setup from current UTC cell — [Schedule](doc:schedule) |
 | **Allow trade** | Off = demo; on = real orders when the server can execute |
+| **Trigger Trade + Active** | Server may place Trigger orders on each tick — [Market](doc:market) |
 
-Without schedule, phases come from the graph setup — [Setups & phases](doc:setups-phases).
+Phase Auto Trade / Use Schedule are removed.
 
-## Setups and schedule
+## Triggers and schedule
 
-Saved over REST to the database (`trading_setups_real` / `schedual_setups_real` for **Live**; `trading_setups_replay` / `schedual_setups_replay` for **Replay**). The server picks the active **Live** UTC placement each tick. SSE keeps the schedule board updated.
+Market Triggers are saved over REST (`triggers` collection). Active/Paused and Demo/Trade changes append to `trigger_mode_timeline`. Live Schedule hour cells load via `GET /api/schedule-hour-stats` (current UTC ISO week; timeline-gated Trigger Trade aggregates).
 
-**Replay** runs via REST `POST /api/schedule-replay` (SSE response: `progress` / `placement` / `done` / `failure`). Body includes `latencyMs` and `fillSuccessPct` (0–100); the worker applies them in `SimulatorEngine` (latency delay, then a random roll per would-be fill). While each card finishes, the worker keeps that card’s window list + fill markers in memory. Card **Open** posts `POST /api/schedule-placements/:id/play` and returns that cached payload when present (same hits as the card); otherwise it re-simulates. When `SCHEDULE_REPLAY_SERVICE_URL` is set, that call is proxied to the recorder’s `/api/internal/schedule-placements/:id/play`. Open Replay’s graph and **PTB** / **Current** / **Gap** boxes load ticks via `GET /api/ticks` (`stream=chainlink`); on live that is proxied to the recorder’s `GET /api/internal/ticks` so Heroku can read the recorder’s `DATA_DIR`.
+**Replay** runs via REST `POST /api/schedule-replay` (SSE: `progress` / `placement` / `done` / `failure`) over synthetic 1-hour slots with Replay Triggers only. Body includes `latencyMs`, `fillSuccessPct`, and `triggers`. When `SCHEDULE_REPLAY_SERVICE_URL` is set, the run is proxied to the recorder. **Open Replay** uses `POST /api/schedule-placements/:id/play` with synthetic ids (`hour:mon:14`) plus `triggers` / latency / fill success; prefers in-memory windows from the last Run. Open Replay ticks use `GET /api/ticks` (proxied to the recorder when configured).
 
 Live **Fill success** (Market → Trade) tracks CLOB buy/sell outcomes over the rolling 7-day cutoff, broken down by **FAK / FOK / GTD**. Partial match = success. FAK/FOK count on fire/send; GTD counts only after the resting limit is touched while live (then success if any size matched, else miss). Strategy cancels with no touch stay out of the %.
 

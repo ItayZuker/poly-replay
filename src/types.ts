@@ -493,6 +493,18 @@ export interface PlacementLiveStats {
   locked: boolean;
 }
 
+/** Trigger Trade aggregates for one UTC weekday×hour slot (current ISO week). */
+export interface ScheduleHourSlotStats {
+  day: string; // mon..sun
+  hour: number; // 0-23
+  green: number;
+  red: number;
+  blue: number;
+  stopLoss: number;
+  pnl: number;
+  hasData: boolean;
+}
+
 /** Per CLOB order style inside Market → Trade fill success. */
 export interface FillSuccessKindPublicStats {
   attempts: number;
@@ -520,6 +532,11 @@ export interface TradingPublicState {
   positions: { up: LiveSidePosition | null; down: LiveSidePosition | null };
   positionCards: TradingPositionCard[];
   placementStats: PlacementLiveStats[];
+  /**
+   * Optional Trigger Trade hour-slot stats for the current UTC ISO week.
+   * Prefer GET /api/schedule-hour-stats; may be omitted from SSE snapshots.
+   */
+  hourSlotStats?: ScheduleHourSlotStats[];
   /** Settled real outcomes in the header Live range (after last header reset; includes trades without a schedule card). */
   sessionTotals: {
     green: number;
