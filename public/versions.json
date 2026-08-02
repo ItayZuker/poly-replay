@@ -1,6 +1,11 @@
 {
-  "current": "1.39.10",
+  "current": "1.39.11",
   "releases": [
+    {
+      "version": "1.39.11",
+      "releasedAt": "2026-08-02T19:11:14.901Z",
+      "notes": "Replay: Paused trigger cards keep stats across Runs; card reset clears Replay stats (available on Paused during Run). Header stats zero while switching Market/Live/Schedule. Live/Replay bar matches Schedule/Heatmap chrome; Market/Schedule toggle keeps width; remove Replay triggers note."
+    },
     {
       "version": "1.39.10",
       "releasedAt": "2026-08-02T18:10:16.843Z",
