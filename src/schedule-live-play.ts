@@ -235,25 +235,29 @@ export async function buildLiveHourPlayPayload(
       if (bucket === "none" && dots[0]) bucket = dots[0].bucket;
     }
 
-    let windowOutcome: WindowOutcome | undefined;
-    if (meta?.windowOutcome === "up" || meta?.windowOutcome === "down") {
-      windowOutcome = meta.windowOutcome;
-    } else {
-      const fromCard = winEvents.find(
-        (e) => e.card?.outcome === "up" || e.card?.outcome === "down",
-      )?.card?.outcome;
-      if (fromCard === "up" || fromCard === "down") windowOutcome = fromCard;
-    }
+    // Official settlement only from the recording (crypto-price / Gamma finalize).
+    const windowOutcome: WindowOutcome | undefined =
+      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
+        ? meta.windowOutcome
+        : undefined;
+    const prevCloseAsset =
+      meta?.prevCloseAsset != null && Number.isFinite(meta.prevCloseAsset)
+        ? Number(meta.prevCloseAsset)
+        : undefined;
+    const finalPrice =
+      meta?.assetPrice != null && Number.isFinite(meta.assetPrice)
+        ? Number(meta.assetPrice)
+        : undefined;
 
     // Skip empty windows with no recording meta and no trades.
     if (!meta && markers.length === 0) continue;
 
-    // Do not pass Mongo prevClose/assetPrice into the play payload — those fields were
-    // added recently and can disagree with Chainlink ticks (Open Replay hydrates from ticks).
     windows.push({
       windowStart,
       windowEnd,
       windowOutcome,
+      prevCloseAsset,
+      finalPrice,
       bucket,
       tradeDots,
       pnl,

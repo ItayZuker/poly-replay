@@ -69,6 +69,7 @@
   let transportEl = null;
   let transportPlayPanel = null;
   let transportHitsPanel = null;
+  let outcomeValueEl = null;
   let hitsStatsDotsEl = null;
   let hitsPnlEl = null;
   let hitsMarkersEl = null;
@@ -422,6 +423,7 @@
     transportEl = $("schedule-play-transport");
     transportPlayPanel = $("schedule-play-transport-play");
     transportHitsPanel = $("schedule-play-transport-hits");
+    outcomeValueEl = $("schedule-play-outcome-value");
     hitsStatsDotsEl = $("schedule-play-hits-stats")?.querySelector(".schedule-play-hits-stats-dots");
     hitsPnlEl = $("schedule-play-hits-pnl");
     hitsMarkersEl = $("schedule-play-hits-markers");
@@ -1493,7 +1495,23 @@
     syncListNavButtons();
   }
 
+  /** Official Polymarket Up/Down from the recording (`windowOutcome`), not inferred. */
+  function updateOfficialOutcome() {
+    if (!outcomeValueEl) return;
+    const win = selectedWindow();
+    const outcome =
+      win?.windowOutcome === "up" || win?.windowOutcome === "down" ? win.windowOutcome : null;
+    outcomeValueEl.classList.remove("is-up", "is-down");
+    if (!outcome) {
+      outcomeValueEl.textContent = "—";
+      return;
+    }
+    outcomeValueEl.textContent = outcome === "up" ? "UP" : "DOWN";
+    outcomeValueEl.classList.add(outcome === "up" ? "is-up" : "is-down");
+  }
+
   function updateMeta() {
+    updateOfficialOutcome();
     if (!metaEl) return;
     if (viewMode === "hits") {
       metaEl.textContent = "Hits · all windows overlaid by elapsed time & market price";
@@ -1547,7 +1565,7 @@
       return;
     }
 
-    // Ledger-only windows (trade exists, Chainlink recording missing) have no price line.
+    // Missing official settlement or empty tick path — no price line.
     if (!ticksLoading && priceHistory.length === 0) {
       hoverTargets = [];
       playChartLayout = null;
@@ -1560,13 +1578,24 @@
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("No Chainlink recording for this window", width / 2, height / 2 - 8);
-        ctx.font = "11px sans-serif";
-        ctx.fillStyle = "#6e7681";
-        const hitNote = windowHasAnyHit(win)
-          ? "Trade stats are from the live ledger — price ticks were not saved"
-          : "No price ticks on the recorder for this slot";
-        ctx.fillText(hitNote, width / 2, height / 2 + 12);
+        if (!hasOfficialSettlement(win)) {
+          ctx.fillText("No official settlement data for this window", width / 2, height / 2 - 8);
+          ctx.font = "11px sans-serif";
+          ctx.fillStyle = "#6e7681";
+          ctx.fillText(
+            "Recording is missing Polymarket outcome / open / close",
+            width / 2,
+            height / 2 + 12,
+          );
+        } else {
+          ctx.fillText("No Chainlink recording for this window", width / 2, height / 2 - 8);
+          ctx.font = "11px sans-serif";
+          ctx.fillStyle = "#6e7681";
+          const hitNote = windowHasAnyHit(win)
+            ? "Trade stats are from the live ledger — price ticks were not saved"
+            : "No price ticks on the recorder for this slot";
+          ctx.fillText(hitNote, width / 2, height / 2 + 12);
+        }
       }
       updateTimeUi(win);
       return;
@@ -1799,15 +1828,33 @@
     return null;
   }
 
+  /** Recording has official outcome + open/close (crypto-price / Gamma) — no inference. */
+  function hasOfficialSettlement(win) {
+    const outcome = win?.windowOutcome;
+    if (outcome !== "up" && outcome !== "down") return false;
+    const ptb = Number(win?.prevCloseAsset);
+    const close = Number(win?.finalPrice ?? win?.assetPrice);
+    return Number.isFinite(ptb) && Number.isFinite(close);
+  }
+
+  function officialClosePrice(win) {
+    const close = Number(win?.finalPrice ?? win?.assetPrice);
+    return Number.isFinite(close) ? close : null;
+  }
+
   /**
-   * Extend the last Chainlink mark to windowEnd so the scrubber reaches the end.
-   * Do not invent a settlement “mirror” tip — that flipped up/down between Live and
-   * Replay when outcomes/PTB disagreed, while the tick stream was the same.
+   * End tip = stored official close at windowEnd (real settlement stamp).
+   * Mid-window path stays Chainlink; if official close is missing, extend last tick in time only.
    */
   function withOfficialClose(history, win) {
     const endT = Number(win?.windowEnd);
     if (!Number.isFinite(endT)) return history || [];
     const pts = Array.isArray(history) ? history.filter((p) => Number(p.t) < endT - 1e-9) : [];
+    const officialClose = officialClosePrice(win);
+    if (officialClose != null) {
+      pts.push({ t: endT, price: officialClose });
+      return pts;
+    }
     const last = pts[pts.length - 1];
     if (!last || !Number.isFinite(last.price)) return pts;
     if (Math.abs(Number(last.t) - endT) > 1e-6) {
@@ -1852,42 +1899,66 @@
   }
 
   /**
-   * Align PTB / close with Chainlink ticks (source of truth for the price line).
-   * Always overwrite payload settlement marks — Live Mongo / Replay JSON can disagree
-   * with each other and with the tick file, which made Live vs Replay tips diverge.
+   * Keep official PTB / close from the play payload when present.
+   * Only fill gaps from Chainlink ticks when the recording lacked settlement prices.
    */
   function hydrateWindowSettlementFromTicks(win, ticks) {
     if (!win || !Array.isArray(ticks) || ticks.length === 0) return;
+    if (hasOfficialSettlement(win)) return;
     let tickPtb = null;
     let lastPrice = null;
     for (const tick of ticks) {
       const ptb = Number(tick?.prevCloseAsset);
-      if (Number.isFinite(ptb)) tickPtb = ptb; // prefer last tick's PTB
+      if (Number.isFinite(ptb)) tickPtb = ptb;
       const price = Number(tick?.assetPrice);
       if (Number.isFinite(price)) lastPrice = price;
     }
-    if (tickPtb != null) win.prevCloseAsset = tickPtb;
-    if (lastPrice != null) win.finalPrice = lastPrice;
+    if (tickPtb != null && !Number.isFinite(Number(win.prevCloseAsset))) {
+      win.prevCloseAsset = tickPtb;
+    }
+    if (lastPrice != null && !Number.isFinite(Number(win.finalPrice ?? win.assetPrice))) {
+      win.finalPrice = lastPrice;
+    }
   }
 
   function applyCachedSettlement(win, cached) {
     if (!win || !cached) return;
+    if (hasOfficialSettlement(win)) return;
     if (cached.ptb != null && Number.isFinite(cached.ptb)) win.prevCloseAsset = cached.ptb;
     if (cached.finalPrice != null && Number.isFinite(cached.finalPrice)) {
       win.finalPrice = cached.finalPrice;
     }
   }
 
-  /** Chainlink-only market price (no book fallback — keeps the line on the asset feed). */
+  /** Chainlink path + official close tip at windowEnd (when settlement fields exist). */
   async function loadTicks(windowStart, win) {
     const cacheKey = String(windowStart);
+    const officialPtb = Number(win?.prevCloseAsset);
+    const officialClose = officialClosePrice(win);
+    const officialOutcome =
+      win?.windowOutcome === "up" || win?.windowOutcome === "down" ? win.windowOutcome : null;
+
     if (tickCache.has(cacheKey)) {
       const cached = tickCache.get(cacheKey);
+      // Re-apply payload official fields (cache is per windowStart; payload is source of truth).
+      if (officialOutcome) win.windowOutcome = officialOutcome;
+      if (Number.isFinite(officialPtb)) win.prevCloseAsset = officialPtb;
+      if (officialClose != null) win.finalPrice = officialClose;
       applyCachedSettlement(win, cached);
+      // Rebuild tip if this session's official close differs from cached history tip.
+      if (officialClose != null && hasOfficialSettlement(win)) {
+        return withOfficialClose(
+          (cached.history || []).filter((p) => Number(p.t) < Number(win.windowEnd) - 1e-9),
+          win,
+        );
+      }
       return cached.history;
     }
 
     const ticks = await fetchTickStream(windowStart, "chainlink");
+    if (Number.isFinite(officialPtb)) win.prevCloseAsset = officialPtb;
+    if (officialClose != null) win.finalPrice = officialClose;
+    if (officialOutcome) win.windowOutcome = officialOutcome;
     hydrateWindowSettlementFromTicks(win, ticks);
 
     const history = withOfficialClose(
@@ -2217,6 +2288,20 @@
       return;
     }
 
+    if (!hasOfficialSettlement(win)) {
+      setTicksLoading(false);
+      setStatus("No official settlement data for this window");
+      drawFrame();
+      if (continueAutoPlay) {
+        if (index + 1 < windowCount()) {
+          void selectWindow(index + 1, { fromSlide: true, continueAutoPlay: true });
+        } else {
+          stopPlayback();
+        }
+      }
+      return;
+    }
+
     setStatus("Loading price…");
     setTicksLoading(true);
     drawFrame();
@@ -2246,7 +2331,7 @@
         if (continueAutoPlay) startPlayback();
       }
       const next = payload.windows[index + 1];
-      if (next) {
+      if (next && hasOfficialSettlement(next)) {
         if (!tickCache.has(String(next.windowStart))) {
           void loadTicks(next.windowStart, next).catch(() => {});
         }

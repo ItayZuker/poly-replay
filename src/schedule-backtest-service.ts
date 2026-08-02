@@ -981,6 +981,8 @@ export async function backtestSchedulePlacements(
     savedAt: w.savedAt,
     updatedAt: w.savedAt,
     windowOutcome: w.windowOutcome,
+    prevCloseAsset: w.prevCloseAsset,
+    assetPrice: w.assetPrice,
     ptbCrossings: w.ptbCrossings,
     rangeTop: w.rangeTop,
     rangeBottom: w.rangeBottom,
@@ -1397,7 +1399,10 @@ function enrichMarkersWithAssetPrice(
   });
 }
 
-/** Official close / outcome from local window JSON (Gamma finalize), with sim fallback. */
+/**
+ * Official close / PTB / outcome from the recording (crypto-price / Gamma finalize).
+ * No inferred outcomes and no mirrored closes — missing fields stay unset.
+ */
 async function playSettlementFields(
   market: MarketDocument,
   window: RecordedWindowDocument | undefined,
@@ -1410,26 +1415,14 @@ async function playSettlementFields(
   const local =
     window != null ? await getRecordedWindow(market, window.windowStart).catch(() => null) : null;
 
-  let windowOutcome: WindowOutcome | undefined =
-    result?.outcome === "up" || result?.outcome === "down"
-      ? result.outcome
+  const windowOutcome: WindowOutcome | undefined =
+    local?.windowOutcome === "up" || local?.windowOutcome === "down"
+      ? local.windowOutcome
       : window?.windowOutcome === "up" || window?.windowOutcome === "down"
         ? window.windowOutcome
-        : local?.windowOutcome === "up" || local?.windowOutcome === "down"
-          ? local.windowOutcome
+        : result?.outcome === "up" || result?.outcome === "down"
+          ? result.outcome
           : undefined;
-
-  // Infer from held Settlement when recorded outcome is missing.
-  if (
-    !windowOutcome &&
-    result?.plLabel === "Settlement" &&
-    (result.side === "up" || result.side === "down")
-  ) {
-    if (result.positionWon === true) windowOutcome = result.side;
-    else if (result.positionWon === false) {
-      windowOutcome = result.side === "up" ? "down" : "up";
-    }
-  }
 
   const prevCloseAssetRaw =
     local?.prevCloseAsset ?? window?.prevCloseAsset ?? result?.prevCloseAsset;
@@ -1438,26 +1431,9 @@ async function playSettlementFields(
       ? Number(prevCloseAssetRaw)
       : undefined;
 
-  let finalPriceRaw = local?.assetPrice ?? window?.assetPrice ?? result?.assetPrice;
-  let finalPrice =
+  const finalPriceRaw = local?.assetPrice ?? window?.assetPrice ?? result?.assetPrice;
+  const finalPrice =
     finalPriceRaw != null && Number.isFinite(finalPriceRaw) ? Number(finalPriceRaw) : undefined;
-
-  // Align close to Settlement vs PTB: keep if already on the correct side;
-  // otherwise mirror by |gap| (or a tiny ε) so Gap sign matches the outcome.
-  if (
-    finalPrice != null &&
-    prevCloseAsset != null &&
-    (windowOutcome === "up" || windowOutcome === "down")
-  ) {
-    const ptb = prevCloseAsset;
-    const eps = Math.max(1e-6, Math.abs(ptb) * 1e-10);
-    const mag = Math.abs(finalPrice - ptb) > 0 ? Math.abs(finalPrice - ptb) : eps;
-    if (windowOutcome === "up" && finalPrice <= ptb) {
-      finalPrice = ptb + mag;
-    } else if (windowOutcome === "down" && finalPrice >= ptb) {
-      finalPrice = ptb - mag;
-    }
-  }
 
   return {
     windowOutcome,
@@ -1707,6 +1683,8 @@ export async function buildPlacementPlayPayload(
     savedAt: w.savedAt,
     updatedAt: w.savedAt,
     windowOutcome: w.windowOutcome,
+    prevCloseAsset: w.prevCloseAsset,
+    assetPrice: w.assetPrice,
     ptbCrossings: w.ptbCrossings,
     rangeTop: w.rangeTop,
     rangeBottom: w.rangeBottom,

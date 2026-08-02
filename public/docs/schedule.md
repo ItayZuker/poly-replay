@@ -43,7 +43,7 @@ In **Live**, the left column lists **Trade + Active** Market Triggers only (no D
 
 **Run** simulates every UTC hour slot that has recordings (top-left first: Monday → Sunday, then earlier UTC hour). Results stream back **one hour at a time** into that cell. Trigger card stats accumulate as hours finish, and commit when the Run completes.
 
-**Open Replay:** in **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats to open the window list + scrubbable price chart for that UTC weekday×hour. Cells still at zeros do nothing.
+**Open Replay:** in **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats to open the window list + scrubbable price chart for that UTC weekday×hour. Cells still at zeros do nothing. Bottom transport shows play controls and the selected window’s **Official** Up/Down (Polymarket crypto-price / Gamma on the recording). The price line is Chainlink through the window; the **last point**, **Current**, **PTB**, and **Gap** at window end use the recording’s official open/close so they match Official (no invented tip). If the recording lacks official outcome + open/close, the chart shows **No official settlement data for this window**.
 
 | Workspace | What you see |
 |-----------|----------------|
