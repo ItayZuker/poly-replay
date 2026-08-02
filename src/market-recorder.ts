@@ -740,6 +740,8 @@ export class MarketRecorder {
         minAssetPrice: recordedDoc.minAssetPrice,
         maxAssetPrice: recordedDoc.maxAssetPrice,
         assetRange: recordedDoc.assetRange,
+        prevCloseAsset: recordedDoc.prevCloseAsset,
+        assetPrice: recordedDoc.assetPrice,
       }).catch((err) => {
         logService.warn(
           "recorder",

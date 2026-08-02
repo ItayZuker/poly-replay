@@ -248,9 +248,20 @@ export async function buildLiveHourPlayPayload(
     // Skip empty windows with no recording meta and no trades.
     if (!meta && markers.length === 0) continue;
 
+    const prevCloseAsset =
+      meta?.prevCloseAsset != null && Number.isFinite(meta.prevCloseAsset)
+        ? Number(meta.prevCloseAsset)
+        : undefined;
+    const finalPrice =
+      meta?.assetPrice != null && Number.isFinite(meta.assetPrice)
+        ? Number(meta.assetPrice)
+        : undefined;
+
     windows.push({
       windowStart,
       windowEnd,
+      ...(prevCloseAsset != null ? { prevCloseAsset } : {}),
+      ...(finalPrice != null ? { finalPrice } : {}),
       windowOutcome,
       bucket,
       tradeDots,

@@ -6330,11 +6330,13 @@ function syncTriggerStatsPanel() {
     const stats = replay?.replayStats || {
       success: 0,
       fail: 0,
+      blue: 0,
       takeProfit: 0,
       stopLoss: 0,
       pnlUsd: 0,
     };
     setText("trigger-stats-live-success", String(stats.success ?? 0));
+    setText("trigger-stats-live-blue", String(stats.blue ?? 0));
     setText("trigger-stats-live-fail", String(stats.fail ?? 0));
     setText("trigger-stats-live-take-profit", String(stats.takeProfit ?? 0));
     setText("trigger-stats-live-stop-loss", String(stats.stopLoss ?? 0));
@@ -6347,6 +6349,7 @@ function syncTriggerStatsPanel() {
   }
   if (!triggerCreateEditingId) {
     setText("trigger-stats-live-success", "—");
+    setText("trigger-stats-live-blue", "—");
     setText("trigger-stats-live-fail", "—");
     setText("trigger-stats-live-take-profit", "—");
     setText("trigger-stats-live-stop-loss", "—");
@@ -6363,12 +6366,14 @@ function syncTriggerStatsPanel() {
   const cached = triggerLiveStatsCache[String(triggerCreateEditingId)];
   if (cached) {
     setText("trigger-stats-live-success", String(cached.success));
+    setText("trigger-stats-live-blue", String(cached.blue ?? 0));
     setText("trigger-stats-live-fail", String(cached.fail));
     setText("trigger-stats-live-take-profit", String(cached.takeProfit));
     setText("trigger-stats-live-stop-loss", String(cached.stopLoss));
     setText("trigger-stats-live-pnl", formatTriggerStatsPnl(cached.pnlUsd));
   } else {
     setText("trigger-stats-live-success", "…");
+    setText("trigger-stats-live-blue", "…");
     setText("trigger-stats-live-fail", "…");
     setText("trigger-stats-live-take-profit", "…");
     setText("trigger-stats-live-stop-loss", "…");

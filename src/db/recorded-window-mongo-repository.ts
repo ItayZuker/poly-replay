@@ -18,6 +18,10 @@ export interface HeatmapRecordedWindow {
   minAssetPrice?: number;
   maxAssetPrice?: number;
   assetRange?: number;
+  /** Window open / PTB (for Open Replay metrics). */
+  prevCloseAsset?: number;
+  /** Last asset mark for the window (Open Replay close). */
+  assetPrice?: number;
 }
 
 type MongoRecordedWindowDoc = {
@@ -36,6 +40,8 @@ type MongoRecordedWindowDoc = {
   minAssetPrice?: number;
   maxAssetPrice?: number;
   assetRange?: number;
+  prevCloseAsset?: number;
+  assetPrice?: number;
   /** Legacy nested payload from older sim writers. */
   window?: {
     windowStart?: number;
@@ -50,6 +56,8 @@ type MongoRecordedWindowDoc = {
     minAssetPrice?: number;
     maxAssetPrice?: number;
     assetRange?: number;
+    prevCloseAsset?: number;
+    assetPrice?: number;
   };
 };
 
@@ -69,6 +77,8 @@ const HEATMAP_PROJECTION = {
   minAssetPrice: 1,
   maxAssetPrice: 1,
   assetRange: 1,
+  prevCloseAsset: 1,
+  assetPrice: 1,
   "window.windowStart": 1,
   "window.windowEnd": 1,
   "window.savedAt": 1,
@@ -81,6 +91,8 @@ const HEATMAP_PROJECTION = {
   "window.minAssetPrice": 1,
   "window.maxAssetPrice": 1,
   "window.assetRange": 1,
+  "window.prevCloseAsset": 1,
+  "window.assetPrice": 1,
 } as const;
 
 function seriesFromDoc(doc: MongoRecordedWindowDoc): string | null {
@@ -123,6 +135,8 @@ function normalizeDoc(doc: MongoRecordedWindowDoc): HeatmapRecordedWindow | null
   const minAssetPrice = doc.minAssetPrice ?? nested?.minAssetPrice;
   const maxAssetPrice = doc.maxAssetPrice ?? nested?.maxAssetPrice;
   const assetRange = doc.assetRange ?? nested?.assetRange;
+  const prevCloseAsset = doc.prevCloseAsset ?? nested?.prevCloseAsset;
+  const assetPrice = doc.assetPrice ?? nested?.assetPrice;
 
   if (ptbCrossings != null) out.ptbCrossings = ptbCrossings;
   if (rangeTop != null) out.rangeTop = rangeTop;
@@ -132,6 +146,8 @@ function normalizeDoc(doc: MongoRecordedWindowDoc): HeatmapRecordedWindow | null
   if (minAssetPrice != null && Number.isFinite(minAssetPrice)) out.minAssetPrice = minAssetPrice;
   if (maxAssetPrice != null && Number.isFinite(maxAssetPrice)) out.maxAssetPrice = maxAssetPrice;
   if (assetRange != null && Number.isFinite(assetRange)) out.assetRange = assetRange;
+  if (prevCloseAsset != null && Number.isFinite(prevCloseAsset)) out.prevCloseAsset = prevCloseAsset;
+  if (assetPrice != null && Number.isFinite(assetPrice)) out.assetPrice = assetPrice;
   if (windowOutcome === "up" || windowOutcome === "down") out.windowOutcome = windowOutcome;
 
   return out;
@@ -153,6 +169,8 @@ export async function upsertRecordedWindowSummary(
     minAssetPrice?: number;
     maxAssetPrice?: number;
     assetRange?: number;
+    prevCloseAsset?: number;
+    assetPrice?: number;
   },
 ): Promise<void> {
   const mongo = await getMongoClient();
@@ -176,6 +194,12 @@ export async function upsertRecordedWindowSummary(
   }
   if (window.assetRange != null && Number.isFinite(window.assetRange)) {
     $set.assetRange = window.assetRange;
+  }
+  if (window.prevCloseAsset != null && Number.isFinite(window.prevCloseAsset)) {
+    $set.prevCloseAsset = window.prevCloseAsset;
+  }
+  if (window.assetPrice != null && Number.isFinite(window.assetPrice)) {
+    $set.assetPrice = window.assetPrice;
   }
   if (window.windowOutcome === "up" || window.windowOutcome === "down") {
     $set.windowOutcome = window.windowOutcome;

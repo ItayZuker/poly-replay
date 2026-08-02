@@ -1852,15 +1852,52 @@
     return samples;
   }
 
+  /** Fill PTB / close on the window from Chainlink ticks when the play payload omitted them (Live Open). */
+  function hydrateWindowSettlementFromTicks(win, ticks) {
+    if (!win || !Array.isArray(ticks) || ticks.length === 0) return;
+    if (win.prevCloseAsset == null || !Number.isFinite(Number(win.prevCloseAsset))) {
+      for (const tick of ticks) {
+        const ptb = Number(tick?.prevCloseAsset);
+        if (Number.isFinite(ptb)) {
+          win.prevCloseAsset = ptb;
+          break;
+        }
+      }
+    }
+    if (win.finalPrice == null || !Number.isFinite(Number(win.finalPrice))) {
+      for (let i = ticks.length - 1; i >= 0; i -= 1) {
+        const price = Number(ticks[i]?.assetPrice);
+        if (Number.isFinite(price)) {
+          win.finalPrice = price;
+          break;
+        }
+      }
+    }
+  }
+
+  function tickCacheKeyForWindow(windowStart, win) {
+    const outcome = resolveMarketOutcome(win);
+    return `${windowStart}:${win?.prevCloseAsset ?? ""}:${win?.finalPrice ?? ""}:${outcome ?? ""}`;
+  }
+
   /** Chainlink-only market price (no book fallback — keeps the line on the asset feed). */
   async function loadTicks(windowStart, win) {
-    const outcome = resolveMarketOutcome(win);
-    const ptb = win?.prevCloseAsset;
-    const cacheKey = `${windowStart}:${ptb ?? ""}:${win?.finalPrice ?? ""}:${outcome ?? ""}`;
+    let cacheKey = tickCacheKeyForWindow(windowStart, win);
+    if (
+      tickCache.has(cacheKey) &&
+      win?.prevCloseAsset != null &&
+      Number.isFinite(Number(win.prevCloseAsset))
+    ) {
+      return tickCache.get(cacheKey);
+    }
+
+    const ticks = await fetchTickStream(windowStart, "chainlink");
+    hydrateWindowSettlementFromTicks(win, ticks);
+    cacheKey = tickCacheKeyForWindow(windowStart, win);
     if (tickCache.has(cacheKey)) return tickCache.get(cacheKey);
 
     const history = withOfficialClose(
-      ticksToPriceHistory(await fetchTickStream(windowStart, "chainlink"), ptb),
+      ticksToPriceHistory(ticks, win?.prevCloseAsset),
       win || { windowStart },
     );
 
