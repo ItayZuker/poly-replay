@@ -1,6 +1,11 @@
 {
-  "current": "1.39.8",
+  "current": "1.39.9",
   "releases": [
+    {
+      "version": "1.39.9",
+      "releasedAt": "2026-08-02T17:54:05.207Z",
+      "notes": "Market chart: remove leftover phase bands (P1/P2/P3) so the graph matches Trigger-only docs; Open Replay hits map no longer draws phase bars."
+    },
     {
       "version": "1.39.8",
       "releasedAt": "2026-08-02T17:33:49.442Z",
