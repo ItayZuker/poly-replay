@@ -517,27 +517,8 @@
         host.setAttribute("aria-label", "Day totals");
         header.appendChild(host);
       }
-      header.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleDayColumnFrames(day);
-      });
     });
     updateDayHeaderPnls();
-  }
-
-  /** Double-click day header: frame all cards in the column (or unframe if all already framed). */
-  function toggleDayColumnFrames(day) {
-    const dayPlacements = placements.filter((p) => p.day === day);
-    if (dayPlacements.length === 0) return;
-    const ids = dayPlacements.map((p) => p._id);
-    const allFramed = ids.every((id) => framedPlacementIds.has(id));
-    if (allFramed) {
-      for (const id of ids) framedPlacementIds.delete(id);
-    } else {
-      for (const id of ids) framedPlacementIds.add(id);
-    }
-    applyPlacementFrameStates();
   }
 
   function highlightedUtcHours() {
