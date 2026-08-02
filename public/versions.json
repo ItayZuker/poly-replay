@@ -1,6 +1,11 @@
 {
-  "current": "1.39.3",
+  "current": "1.39.4",
   "releases": [
+    {
+      "version": "1.39.4",
+      "releasedAt": "2026-08-02T11:32:44.033Z",
+      "notes": "Open Replay: price line from Chainlink ticks only (same Live/Replay); drop settlement mirror tip that caused opposite end spikes; ignore bad Mongo PTB."
+    },
     {
       "version": "1.39.3",
       "releasedAt": "2026-08-02T11:12:24.362Z",
