@@ -1436,13 +1436,24 @@
     syncHeaderProgress();
   }
 
+  function setTicksLoading(loading) {
+    ticksLoading = Boolean(loading);
+    syncChartLoadingOverlay(loading ? "Loading price…" : undefined);
+    syncHeaderProgress();
+  }
+
   function syncChartLoadingOverlay(label) {
     const overlay = $("schedule-play-chart-loading");
     if (!overlay) return;
+    const show = windowsLoading || ticksLoading;
     const labelEl = overlay.querySelector(".schedule-play-chart-loading-label");
-    if (labelEl && label) labelEl.textContent = label;
-    overlay.hidden = !windowsLoading;
-    overlay.setAttribute("aria-busy", windowsLoading ? "true" : "false");
+    if (labelEl) {
+      if (label) labelEl.textContent = label;
+      else if (windowsLoading) labelEl.textContent = "Loading windows…";
+      else if (ticksLoading) labelEl.textContent = "Loading price…";
+    }
+    overlay.hidden = !show;
+    overlay.setAttribute("aria-busy", show ? "true" : "false");
   }
 
   function syncViewToggleEnabled() {
@@ -1521,6 +1532,18 @@
           }
         }
       }
+      return;
+    }
+
+    // While ticks load, keep the canvas clear — the DOM spinner covers the chart.
+    if (ticksLoading && priceHistory.length === 0) {
+      hoverTargets = [];
+      playChartLayout = null;
+      hidePhaseHover();
+      hideHitTooltip();
+      const { ctx, width, height } = resizeCanvas();
+      if (ctx) ctx.clearRect(0, 0, width, height);
+      updateTimeUi(win);
       return;
     }
 
@@ -2219,10 +2242,9 @@
       return;
     }
 
-    drawFrame();
     setStatus("Loading price…");
-    ticksLoading = true;
-    syncHeaderProgress();
+    setTicksLoading(true);
+    drawFrame();
     const token = ++loadToken;
     try {
       const [history] = await Promise.all([
@@ -2230,13 +2252,12 @@
         loadBookQuotes(win.windowStart).catch(() => []),
       ]);
       if (token !== loadToken) return;
-      ticksLoading = false;
       priceHistory = history;
+      setTicksLoading(false);
       updateTransportEnabled();
       if (history.length === 0) {
         setStatus("No price ticks for this window");
         drawFrame();
-        syncHeaderProgress();
         if (continueAutoPlay) {
           if (index + 1 < windowCount()) {
             void selectWindow(index + 1, { fromSlide: true, continueAutoPlay: true });
@@ -2248,7 +2269,6 @@
         setStatus(`${history.length} price ticks`);
         drawFrame();
         if (continueAutoPlay) startPlayback();
-        else syncHeaderProgress();
       }
       const next = payload.windows[index + 1];
       if (next) {
@@ -2262,11 +2282,11 @@
       }
     } catch (err) {
       if (token !== loadToken) return;
-      ticksLoading = false;
       priceHistory = [];
+      setTicksLoading(false);
       updateTransportEnabled();
       setStatus(err?.message || "Failed to load ticks");
-      syncHeaderProgress();
+      drawFrame();
       if (continueAutoPlay) stopPlayback();
     }
   }
