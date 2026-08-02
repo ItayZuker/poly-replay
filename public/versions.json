@@ -1,6 +1,11 @@
 {
-  "current": "1.39.0",
+  "current": "1.39.1",
   "releases": [
+    {
+      "version": "1.39.1",
+      "releasedAt": "2026-08-02T10:44:21.165Z",
+      "notes": "Open Replay PTB/Gap from Chainlink ticks (and persist PTB on new recordings); Trigger Stats tab shows Held win; Success labeled as TP."
+    },
     {
       "version": "1.39.0",
       "releasedAt": "2026-08-02T09:01:08.247Z",
