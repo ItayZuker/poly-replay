@@ -47,7 +47,7 @@ In **Live**, the left column lists **Trade + Active** Market Triggers only (no D
 
 | Workspace | What you see |
 |-----------|----------------|
-| **Live** | This ISO week’s **recorded** windows for that hour that still have Chainlink ticks, with **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Ledger fills whose window was never recorded (or whose ticks are missing) are not listed. |
+| **Live** | This ISO week’s **recorded** windows for that hour that still have Chainlink ticks (checked on the recorder when Live proxies via `SCHEDULE_REPLAY_SERVICE_URL`), with **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Ledger fills whose window was never recorded (or whose ticks are missing) are not listed. |
 | **Replay** | Last **Run** results when available (Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with current Active triggers — only windows with Chainlink ticks. |
 
 Phase bands are not shown in either mode.

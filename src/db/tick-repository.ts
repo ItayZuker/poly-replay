@@ -118,6 +118,26 @@ export async function listChainlinkTicks(
     .sort((a, b) => a.tMs - b.tMs);
 }
 
+/** Which window starts have a non-empty Chainlink tick file (cheap disk check). */
+export async function windowsHavingChainlinkTicks(
+  market: MarketDocument,
+  windowStarts: number[],
+): Promise<number[]> {
+  const present: number[] = [];
+  await Promise.all(
+    windowStarts.map(async (windowStart) => {
+      if (!Number.isFinite(windowStart)) return;
+      try {
+        const st = await fs.stat(chainlinkTicksPath(market._id, windowStart));
+        if (st.isFile() && st.size > 0) present.push(windowStart);
+      } catch {
+        // missing / unreadable
+      }
+    }),
+  );
+  return present.sort((a, b) => a - b);
+}
+
 export async function countClobRawTicksForWindow(
   market: MarketDocument,
   windowStart: number,

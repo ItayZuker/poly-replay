@@ -4,9 +4,11 @@
  *
  * Windows without Chainlink tick files are omitted (same rule as Replay Run):
  * no price path ⇒ no Open Replay row (avoids empty charts / false review).
+ * On Live/Heroku, pass `windowsWithTicks` from the recorder worker — local DATA_DIR
+ * on the trading executor usually has no tick files.
  */
 import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
-import { listChainlinkTicks } from "./db/tick-repository.js";
+import { windowsHavingChainlinkTicks } from "./db/tick-repository.js";
 import { listTradingStatEvents, type TradingStatEvent } from "./db/trading-session-memory-repository.js";
 import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
 import { isFlatPriceWindow } from "./window-dynamics.js";
@@ -156,14 +158,6 @@ function tradeDotsFromEvent(event: TradingStatEvent): TradeDot[] {
   ];
 }
 
-async function windowHasChainlinkTicks(
-  market: MarketDocument,
-  windowStart: number,
-): Promise<boolean> {
-  const ticks = await listChainlinkTicks(market, windowStart, 1);
-  return ticks.length > 0;
-}
-
 /**
  * Build Open Replay payload for a Live Schedule hour cell (`hour:mon:14`).
  * Uses Mongo recorded_windows for this ISO week + live ledger markers.
@@ -173,7 +167,14 @@ export async function buildLiveHourPlayPayload(
   userId: string,
   market: MarketDocument,
   placementId: string,
-  options: { nowMs?: number } = {},
+  options: {
+    nowMs?: number;
+    /**
+     * Resolve which candidates still have Chainlink ticks.
+     * Live/Heroku should probe the recorder; default = local DATA_DIR.
+     */
+    resolveWindowsWithTicks?: (windowStarts: number[]) => Promise<number[]>;
+  } = {},
 ): Promise<PlacementPlayPayload | null> {
   const placement = parseSyntheticHourPlacement(placementId, market._id);
   if (!placement) return null;
@@ -219,17 +220,15 @@ export async function buildLiveHourPlayPayload(
     eventsByWindow.set(winStart, list);
   }
 
-  // Only recorded windows that still have Chainlink ticks on disk.
-  const tickFlags = await Promise.all(
-    slotWindows.map(async (meta) => ({
-      meta,
-      hasTicks: await windowHasChainlinkTicks(market, meta.windowStart),
-    })),
-  );
+  const candidateStarts = slotWindows.map((w) => w.windowStart);
+  const presentStarts = options.resolveWindowsWithTicks
+    ? await options.resolveWindowsWithTicks(candidateStarts)
+    : await windowsHavingChainlinkTicks(market, candidateStarts);
+  const tickSet = new Set(presentStarts);
 
   const windows: PlacementPlayWindowItem[] = [];
-  for (const { meta, hasTicks } of tickFlags) {
-    if (!hasTicks) continue;
+  for (const meta of slotWindows) {
+    if (!tickSet.has(meta.windowStart)) continue;
 
     const windowStart = meta.windowStart;
     const windowEnd = meta.windowEnd ?? windowStart + 300;

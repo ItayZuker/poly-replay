@@ -14,6 +14,7 @@ import {
   listChainlinkTicks,
   listClobBookTicks,
   listClobRawTicks,
+  windowsHavingChainlinkTicks,
 } from "./db/tick-repository.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
@@ -197,6 +198,7 @@ function isPublicAuthPath(req: express.Request): boolean {
     return true;
   }
   if (req.method === "GET" && req.path === "/api/internal/ticks") return true;
+  if (req.method === "POST" && req.path === "/api/internal/ticks/presence") return true;
   return false;
 }
 
@@ -1964,6 +1966,47 @@ function replayWorkerBaseUrl(): string | null {
   }
 }
 
+/** Ask the recorder which window starts still have Chainlink tick files. */
+async function fetchRemoteChainlinkPresence(
+  workerBase: string,
+  series: string,
+  windowStarts: number[],
+): Promise<number[] | null> {
+  if (windowStarts.length === 0) return [];
+  const remoteHeaders: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  if (SCHEDULE_REPLAY_WORKER_SECRET) {
+    remoteHeaders["x-replay-worker-secret"] = SCHEDULE_REPLAY_WORKER_SECRET;
+  }
+  try {
+    const remoteRes = await fetch(`${workerBase}/api/internal/ticks/presence`, {
+      method: "POST",
+      headers: remoteHeaders,
+      body: JSON.stringify({ series, windowStarts }),
+    });
+    const body = (await remoteRes.json().catch(() => ({}))) as {
+      present?: unknown;
+      error?: string;
+    };
+    if (!remoteRes.ok) {
+      logService.warn(
+        "replay",
+        `Recorder tick presence failed (${remoteRes.status}): ${body.error ?? remoteRes.statusText}`,
+      );
+      return null;
+    }
+    const present = Array.isArray(body.present)
+      ? body.present.map((n) => Number(n)).filter((n) => Number.isFinite(n))
+      : [];
+    return present;
+  } catch (err) {
+    logService.warn("replay", `Recorder tick presence error: ${String(err)}`);
+    return null;
+  }
+}
+
 async function runPlacementPlay(
   userId: string,
   placementId: string,
@@ -1992,6 +2035,7 @@ async function runPlacementPlay(
     typeof input.series === "string" && input.series.trim() ? input.series.trim() : "";
 
   // Live Schedule hour review: real ledger markers + Mongo windows (not proxied / re-sim).
+  // Tick-file presence is probed on the recorder when SCHEDULE_REPLAY_SERVICE_URL is set.
   if (input.live === true) {
     const synthetic = parseSyntheticHourPlacement(placementId, seriesHint);
     if (!synthetic) {
@@ -2002,7 +2046,17 @@ async function runPlacementPlay(
     if (!market) {
       return { status: 404 as const, body: { error: "Market not found" } };
     }
-    const payload = await buildLiveHourPlayPayload(userId, market, placementId);
+    const workerBase = replayWorkerBaseUrl();
+    const payload = await buildLiveHourPlayPayload(userId, market, placementId, {
+      resolveWindowsWithTicks: workerBase
+        ? async (windowStarts) => {
+            const remote = await fetchRemoteChainlinkPresence(workerBase, series, windowStarts);
+            if (remote != null) return remote;
+            // Fallback if recorder unreachable (local/dev dual-role).
+            return windowsHavingChainlinkTicks(market, windowStarts);
+          }
+        : undefined,
+    });
     if (!payload) {
       return { status: 404 as const, body: { error: "Hour slot not found" } };
     }
@@ -2472,6 +2526,37 @@ app.get("/api/internal/ticks", async (req, res) => {
   try {
     const result = await loadTicksPayload(req);
     res.status(result.status).json(result.body);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/**
+ * Recorder worker: which window starts still have Chainlink tick files.
+ * Used by Live Open Replay so trading executors (no DATA_DIR ticks) can filter windows.
+ */
+app.post("/api/internal/ticks/presence", async (req, res) => {
+  if (!assertReplayWorkerAuth(req)) {
+    res.status(401).json({ error: "Unauthorized replay worker request" });
+    return;
+  }
+  try {
+    const series = String(req.body?.series ?? req.query.series ?? "").trim();
+    if (!series) {
+      res.status(400).json({ error: "series is required" });
+      return;
+    }
+    const market = await getMarket(series);
+    if (!market) {
+      res.status(404).json({ error: "Market not found" });
+      return;
+    }
+    const raw = req.body?.windowStarts ?? req.body?.windows;
+    const windowStarts = Array.isArray(raw)
+      ? raw.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n))
+      : [];
+    const present = await windowsHavingChainlinkTicks(market, windowStarts);
+    res.status(200).json({ series, present });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
