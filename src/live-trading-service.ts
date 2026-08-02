@@ -16,7 +16,12 @@ import {
   type MarketOrderType,
 } from "./order-service.js";
 import { fetchCurrentUpDownMarket } from "./market-pair.js";
-import { getTradingClient, initTradingClient, refreshCollateralBalance } from "./trading-client.js";
+import {
+  getTradingClient,
+  initTradingClient,
+  isTradingClientReady,
+  refreshCollateralBalance,
+} from "./trading-client.js";
 import { SimulatorEngine } from "./simulator-engine.js";
 import { simulatorService, phaseSetupToSimSetup } from "./simulator-service.js";
 import { logService } from "./log-service.js";
@@ -5620,7 +5625,9 @@ class LiveTradingRegistry {
     const engine = this.get(userId);
     // Hydrate stats once; later ensureLoaded calls only refresh config.
     await engine.loadPersistedConfig({ hydrateStats: false });
-    if (isTradingExecutor()) {
+    // Connect once — skip full CLOB re-init when the client is already live
+    // (hour-stats / placement-stats hit this on every Schedule SSE refresh).
+    if (isTradingExecutor() && !isTradingClientReady(userId)) {
       try {
         await initTradingClient(userId);
       } catch {
@@ -5676,6 +5683,7 @@ class LiveTradingRegistry {
       await engine.loadPersistedConfig({ hydrateStats: false });
       if (isTradingExecutor() && user.wallet?.privateKeyEnc && user.wallet?.funderAddress) {
         try {
+          // Connected: balance refresh only. Disconnected: full connect (logged once).
           await initTradingClient(id, { reason: "poll" });
         } catch {
           /* logged in client */

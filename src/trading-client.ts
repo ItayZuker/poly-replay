@@ -83,6 +83,11 @@ export function isTradingConfigured(userId: string): boolean {
 
 export type TradingClientInitReason = "connect" | "poll" | "reconnect";
 
+export function isTradingClientReady(userId: string): boolean {
+  const slot = getSlot(userId);
+  return Boolean(slot.client && slot.status.connected);
+}
+
 export async function initTradingClient(
   userId: string,
   opts?: { reason?: TradingClientInitReason },
@@ -103,6 +108,21 @@ export async function initTradingClient(
   }
 
   const { privateKey, funderAddress, signatureType: sigTypeRaw } = creds;
+  const signatureType = parseSignatureType(sigTypeRaw);
+
+  // Reuse a live client for connect/poll. Wallet PATCH uses reconnect (clears slot first).
+  if (
+    reason !== "reconnect" &&
+    slot.client &&
+    slot.status.connected &&
+    slot.status.funderAddress === funderAddress &&
+    slot.status.signatureType === signatureType
+  ) {
+    if (reason === "poll") {
+      return refreshCollateralBalance(userId);
+    }
+    return getTradingAccountStatus(userId);
+  }
 
   try {
     const account = privateKeyToAccount(privateKey);
@@ -112,7 +132,6 @@ export async function initTradingClient(
       transport: http(),
     });
 
-    const signatureType = parseSignatureType(sigTypeRaw);
     const host = getClobHost();
     const chain = getChainId();
 
