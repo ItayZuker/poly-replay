@@ -1,6 +1,11 @@
 {
-  "current": "1.39.1",
+  "current": "1.39.2",
   "releases": [
+    {
+      "version": "1.39.2",
+      "releasedAt": "2026-08-02T11:05:48.491Z",
+      "notes": "Open Replay: spinner while price ticks load; empty-recording message only after load finishes."
+    },
     {
       "version": "1.39.1",
       "releasedAt": "2026-08-02T10:44:21.165Z",
