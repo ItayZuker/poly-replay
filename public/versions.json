@@ -1,6 +1,11 @@
 {
-  "current": "1.37.0",
+  "current": "1.37.1",
   "releases": [
+    {
+      "version": "1.37.1",
+      "releasedAt": "2026-08-02T05:22:28.642Z",
+      "notes": "Add script to audit/rebuild Market Trigger Trade stats from settled position cards (drops client-guessed totals)."
+    },
     {
       "version": "1.37.0",
       "releasedAt": "2026-08-02T05:08:29.749Z",
