@@ -1,6 +1,11 @@
 {
-  "current": "1.38.0",
+  "current": "1.39.0",
   "releases": [
+    {
+      "version": "1.39.0",
+      "releasedAt": "2026-08-02T09:01:08.247Z",
+      "notes": "Live Open Replay: double-click Live Schedule hour cells to review recorder ticks with real ledger buy/sell markers; held settlements no longer show fake Sell dots; clearer empty chart when Chainlink recording is missing; docs updated."
+    },
     {
       "version": "1.38.0",
       "releasedAt": "2026-08-02T07:54:11.545Z",
