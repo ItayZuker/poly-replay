@@ -135,8 +135,6 @@
   const SLOT_SPIN_COPIES = 5;
   const PHASE_HOVER_COLOR = "rgba(88, 166, 255, 0.16)";
   const PHASE_LINE_HIT_PX = 6;
-  const PHASE_BAND_COLOR = "rgba(110, 118, 129, 0.08)";
-  const PHASE_LINE_COLOR = "#6e7681";
 
   function $(id) {
     return document.getElementById(id);
@@ -1036,69 +1034,6 @@
     return { dots, maxDuration, markerCount };
   }
 
-  /** Phase bands + split bars on the targets map (same setup as play graph). */
-  function drawHitsPhaseBars(ctx, padding, plotW, plotH, maxDuration) {
-    const setup = playSetup();
-    if (!setup?.phaseSplit || plotW <= 0 || plotH <= 0) return;
-    const splits = setup.phaseSplit;
-    const bounds = [0, splits[0], splits[1], 1];
-    const xAtFrac = (frac) => padding.left + frac * plotW;
-
-    for (let i = 0; i < 3; i += 1) {
-      const x0 = xAtFrac(bounds[i]);
-      const x1 = xAtFrac(bounds[i + 1]);
-      const buyEnabled = setup.phases?.[i]?.buyEnabled !== false;
-      ctx.fillStyle = buyEnabled ? PHASE_BAND_COLOR : "rgba(110, 118, 129, 0.04)";
-      ctx.fillRect(x0, padding.top, Math.max(0, x1 - x0), plotH);
-      if (!buyEnabled) {
-        ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
-        ctx.fillRect(x0, padding.top, Math.max(0, x1 - x0), plotH);
-      }
-      ctx.fillStyle = buyEnabled ? "#6e7681" : "#484f58";
-      ctx.font = "10px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      const label = buyEnabled ? `P${i + 1}` : `P${i + 1} · no buy`;
-      ctx.fillText(label, (x0 + x1) / 2, padding.top + 4);
-    }
-
-    for (let i = 0; i < 2; i += 1) {
-      const x = xAtFrac(splits[i]);
-      const centerY = padding.top + plotH / 2;
-      ctx.strokeStyle = PHASE_LINE_COLOR;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(x, padding.top);
-      ctx.lineTo(x, padding.top + plotH);
-      ctx.stroke();
-
-      const timeLabel = formatClock(splits[i] * maxDuration);
-      ctx.fillStyle = PHASE_LINE_COLOR;
-      ctx.font = "10px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillText(timeLabel, x, padding.top + plotH + 4);
-
-      const triH = 6;
-      const triW = 5;
-      const gap = 3;
-      ctx.fillStyle = PHASE_LINE_COLOR;
-      ctx.beginPath();
-      ctx.moveTo(x - gap - triW, centerY);
-      ctx.lineTo(x - gap, centerY - triH / 2);
-      ctx.lineTo(x - gap, centerY + triH / 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(x + gap + triW, centerY);
-      ctx.lineTo(x + gap, centerY - triH / 2);
-      ctx.lineTo(x + gap, centerY + triH / 2);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-
   function drawHitsView() {
     if (!canvas) return;
     const { ctx, width, height } = resizeCanvas();
@@ -1127,8 +1062,6 @@
       ctx.lineTo(width - padding.right, y);
       ctx.stroke();
     }
-
-    drawHitsPhaseBars(ctx, padding, plotW, plotH, maxDuration);
 
     ctx.fillStyle = "#6e7681";
     ctx.font = "10px sans-serif";
@@ -1621,7 +1554,6 @@
 
     const layout = window.drawPriceChart(state, {
       canvas,
-      setupOverride: playSetup(),
       markersOverride: markers,
       revealUntil: until,
       hoverLine: null,
@@ -1632,6 +1564,8 @@
       predictionBands,
       // Legacy single-band key (first band) for older drawPriceChart callers.
       predictionBand: predictionBands[0] || null,
+      // Phase bands removed (Trigger-only Schedule / Open Replay).
+      phasesVisible: false,
     });
     playChartLayout = layout;
     updateTimeUi(win);

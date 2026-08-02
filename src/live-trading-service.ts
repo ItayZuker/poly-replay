@@ -2118,9 +2118,8 @@ export class LiveTradingService {
   }
 
   private shouldShowPhases(): boolean {
-    if (!this.config.autoTrade) return false;
-    if (this.config.useSchedule) return this.scheduleContext != null;
-    return true;
+    // Phase Auto Trade / chart setups are removed (Trigger-only). Keep false always.
+    return false;
   }
 
   private getDisplayPhaseSetup(): TradingPhaseSetup | null {

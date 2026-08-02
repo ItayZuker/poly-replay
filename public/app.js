@@ -2973,33 +2973,12 @@ function drawPriceChart(state, options = {}) {
   if (options.hoverLine !== undefined) overlayOpts.hoverLine = options.hoverLine;
   if (options.dragLine !== undefined) overlayOpts.dragLine = options.dragLine;
   const trading = state?.trading;
-  if (trading) {
-    const cfg = trading.config;
-    let phasesOn = Boolean(trading.phasesVisible);
-    if (!phasesOn && cfg?.autoTrade && !cfg.useSchedule) phasesOn = true;
-    if (!phasesOn && cfg?.autoTrade && trading.phaseSetup) phasesOn = true;
-    // Setup editor passes its own override + canvas; force phases on there.
-    if (options.setupOverride && options.canvas) phasesOn = true;
-    overlayOpts.phasesVisible = phasesOn;
-    overlayOpts.phasesEditable = trading.phasesEditable;
-    if (!options.setupOverride) {
-      // Prefer the editable local draft while phases can be dragged; otherwise the
-      // same trading.phaseSetup used for schedule/active setup overlay.
-      const editable = trading.phasesEditable !== false;
-      const localDraft =
-        editable && window.Simulator?.getLocalSetup ? window.Simulator.getLocalSetup() : null;
-      const setup =
-        localDraft ||
-        trading.phaseSetup ||
-        (cfg?.autoTrade && !cfg.useSchedule ? state.sim?.setup : null);
-      if (setup) overlayOpts.setupOverride = setup;
-    }
-    if (!Array.isArray(options.markersOverride) && Array.isArray(trading.markers)) {
-      overlayOpts.markersOverride = trading.markers;
-    }
-  } else if (options.setupOverride && options.canvas) {
-    // Open Replay / custom canvas: show phase bands with the setup override.
-    overlayOpts.phasesVisible = true;
+  // Market / Open Replay: phase bands removed (Trigger-only). Setup editor only.
+  const setupEditorPhases = Boolean(options.setupOverride && options.canvas);
+  overlayOpts.phasesVisible = setupEditorPhases;
+  overlayOpts.phasesEditable = setupEditorPhases && Boolean(trading?.phasesEditable);
+  if (trading && !Array.isArray(options.markersOverride) && Array.isArray(trading.markers)) {
+    overlayOpts.markersOverride = trading.markers;
   }
 
   const revealUntil =

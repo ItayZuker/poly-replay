@@ -360,13 +360,8 @@
   function phasesVisible(state, options = {}) {
     if (options.phasesVisible === false) return false;
     if (options.phasesVisible === true) return true;
-    const trading = state?.trading;
-    if (!trading) return options.phasesVisible !== false;
-    if (trading.phasesVisible) return true;
-    const cfg = trading.config;
-    // Auto Trade without schedule should always keep phases on the graph
-    if (cfg?.autoTrade && !cfg.useSchedule) return true;
-    if (cfg?.autoTrade && trading.phaseSetup) return true;
+    // Market / Open Replay: phases off unless the caller explicitly opts in
+    // (setup editor). Do not revive bands from legacy Auto Trade config.
     return false;
   }
 
