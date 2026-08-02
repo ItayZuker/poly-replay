@@ -28,6 +28,52 @@ type Stats = {
   pnlUsd: number;
 };
 
+/** String _id docs (Mongo driver defaults to ObjectId). */
+type TriggerDoc = {
+  _id?: unknown;
+  userId?: string;
+  id?: string;
+  name?: string;
+  createdAt?: string;
+};
+
+type TriggerStatsDoc = {
+  _id: string;
+  userId: string;
+  triggerId: string;
+  success: number;
+  fail: number;
+  blue: number;
+  takeProfit: number;
+  stopLoss: number;
+  pnlUsd: number;
+  updatedAt?: string;
+  rebuildBackupAt?: string;
+};
+
+type TriggerStatsCreditDoc = {
+  _id: string;
+  userId: string;
+  triggerId: string;
+  cardId: string;
+  result: "success" | "fail" | "blue";
+  pnlUsd: number;
+  exitReason: string | null;
+  createdAt: string;
+};
+
+type TradingStatEventDoc = {
+  _id?: unknown;
+  userId?: string;
+  cardId?: string;
+  status?: string;
+  green?: number;
+  red?: number;
+  blue?: number;
+  pnl?: number;
+  card?: Record<string, unknown>;
+};
+
 function emptyStats(): Stats {
   return { success: 0, fail: 0, blue: 0, takeProfit: 0, stopLoss: 0, pnlUsd: 0 };
 }
@@ -40,11 +86,11 @@ async function main(): Promise<void> {
   const client = new MongoClient(uri!);
   await client.connect();
   const db = client.db(dbName);
-  const triggersCol = db.collection("triggers");
-  const statsCol = db.collection("trigger_live_stats");
-  const creditsCol = db.collection("trigger_live_stats_credits");
-  const eventsCol = db.collection("trading_stat_events");
-  const backupCol = db.collection(
+  const triggersCol = db.collection<TriggerDoc>("triggers");
+  const statsCol = db.collection<TriggerStatsDoc>("trigger_live_stats");
+  const creditsCol = db.collection<TriggerStatsCreditDoc>("trigger_live_stats_credits");
+  const eventsCol = db.collection<TradingStatEventDoc>("trading_stat_events");
+  const backupCol = db.collection<TriggerStatsDoc>(
     `trigger_live_stats_rebuild_backup_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
   );
 
@@ -316,7 +362,6 @@ async function main(): Promise<void> {
       await statsCol.replaceOne(
         { _id: statsId },
         {
-          _id: statsId,
           userId: row.userId,
           triggerId: row.triggerId,
           success: row.after.success,

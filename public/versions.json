@@ -1,6 +1,11 @@
 {
-  "current": "1.37.1",
+  "current": "1.37.2",
   "releases": [
+    {
+      "version": "1.37.2",
+      "releasedAt": "2026-08-02T05:29:18.463Z",
+      "notes": "Fix Heroku build: type Mongo string _ids in trigger stats rebuild script."
+    },
     {
       "version": "1.37.1",
       "releasedAt": "2026-08-02T05:22:28.642Z",
