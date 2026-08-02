@@ -1,6 +1,11 @@
 {
-  "current": "1.39.6",
+  "current": "1.39.7",
   "releases": [
+    {
+      "version": "1.39.7",
+      "releasedAt": "2026-08-02T14:24:49.753Z",
+      "notes": "Replay / Open Replay: skip windows with no Chainlink ticks so missing recordings cannot produce false Run stats or empty charts with trade dots. Docs updated."
+    },
     {
       "version": "1.39.6",
       "releasedAt": "2026-08-02T12:57:58.368Z",
