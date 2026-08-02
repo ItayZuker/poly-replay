@@ -1800,43 +1800,19 @@
   }
 
   /**
-   * Place the official close on the Settlement side of PTB.
-   * If the stored close (or last tick) is on the wrong side / on PTB, mirror by |gap|
-   * (or a tiny ε) so the line tip and Gap sign match the outcome.
-   */
-  function closeOnOutcomeSide(close, lastPrice, ptb, outcome) {
-    if ((outcome !== "up" && outcome !== "down") || !Number.isFinite(ptb)) {
-      if (Number.isFinite(close)) return close;
-      if (Number.isFinite(lastPrice)) return lastPrice;
-      return null;
-    }
-    const eps = Math.max(1e-6, Math.abs(ptb) * 1e-10);
-    const base = Number.isFinite(close)
-      ? close
-      : Number.isFinite(lastPrice)
-        ? lastPrice
-        : ptb;
-    const mag = Math.abs(base - ptb) > 0 ? Math.abs(base - ptb) : eps;
-    if (outcome === "up") {
-      return base > ptb ? base : ptb + mag;
-    }
-    return base < ptb ? base : ptb - mag;
-  }
-
-  /**
-   * Append official close at windowEnd so the line end matches Settlement.
-   * Outcome wins over a contradictory finalPrice (e.g. last live tick stored as close).
+   * Extend the last Chainlink mark to windowEnd so the scrubber reaches the end.
+   * Do not invent a settlement “mirror” tip — that flipped up/down between Live and
+   * Replay when outcomes/PTB disagreed, while the tick stream was the same.
    */
   function withOfficialClose(history, win) {
     const endT = Number(win?.windowEnd);
     if (!Number.isFinite(endT)) return history || [];
     const pts = Array.isArray(history) ? history.filter((p) => Number(p.t) < endT - 1e-9) : [];
     const last = pts[pts.length - 1];
-    const ptb = Number(win?.prevCloseAsset);
-    const outcome = resolveMarketOutcome(win);
-    const close = closeOnOutcomeSide(Number(win?.finalPrice), last?.price, ptb, outcome);
-    if (!Number.isFinite(close)) return pts;
-    pts.push({ t: endT, price: close });
+    if (!last || !Number.isFinite(last.price)) return pts;
+    if (Math.abs(Number(last.t) - endT) > 1e-6) {
+      pts.push({ t: endT, price: last.price });
+    }
     return pts;
   }
 
@@ -1875,56 +1851,55 @@
     return samples;
   }
 
-  /** Fill PTB / close on the window from Chainlink ticks when the play payload omitted them (Live Open). */
+  /**
+   * Align PTB / close with Chainlink ticks (source of truth for the price line).
+   * Always overwrite payload settlement marks — Live Mongo / Replay JSON can disagree
+   * with each other and with the tick file, which made Live vs Replay tips diverge.
+   */
   function hydrateWindowSettlementFromTicks(win, ticks) {
     if (!win || !Array.isArray(ticks) || ticks.length === 0) return;
-    if (win.prevCloseAsset == null || !Number.isFinite(Number(win.prevCloseAsset))) {
-      for (const tick of ticks) {
-        const ptb = Number(tick?.prevCloseAsset);
-        if (Number.isFinite(ptb)) {
-          win.prevCloseAsset = ptb;
-          break;
-        }
-      }
+    let tickPtb = null;
+    let lastPrice = null;
+    for (const tick of ticks) {
+      const ptb = Number(tick?.prevCloseAsset);
+      if (Number.isFinite(ptb)) tickPtb = ptb; // prefer last tick's PTB
+      const price = Number(tick?.assetPrice);
+      if (Number.isFinite(price)) lastPrice = price;
     }
-    if (win.finalPrice == null || !Number.isFinite(Number(win.finalPrice))) {
-      for (let i = ticks.length - 1; i >= 0; i -= 1) {
-        const price = Number(ticks[i]?.assetPrice);
-        if (Number.isFinite(price)) {
-          win.finalPrice = price;
-          break;
-        }
-      }
-    }
+    if (tickPtb != null) win.prevCloseAsset = tickPtb;
+    if (lastPrice != null) win.finalPrice = lastPrice;
   }
 
-  function tickCacheKeyForWindow(windowStart, win) {
-    const outcome = resolveMarketOutcome(win);
-    return `${windowStart}:${win?.prevCloseAsset ?? ""}:${win?.finalPrice ?? ""}:${outcome ?? ""}`;
+  function applyCachedSettlement(win, cached) {
+    if (!win || !cached) return;
+    if (cached.ptb != null && Number.isFinite(cached.ptb)) win.prevCloseAsset = cached.ptb;
+    if (cached.finalPrice != null && Number.isFinite(cached.finalPrice)) {
+      win.finalPrice = cached.finalPrice;
+    }
   }
 
   /** Chainlink-only market price (no book fallback — keeps the line on the asset feed). */
   async function loadTicks(windowStart, win) {
-    let cacheKey = tickCacheKeyForWindow(windowStart, win);
-    if (
-      tickCache.has(cacheKey) &&
-      win?.prevCloseAsset != null &&
-      Number.isFinite(Number(win.prevCloseAsset))
-    ) {
-      return tickCache.get(cacheKey);
+    const cacheKey = String(windowStart);
+    if (tickCache.has(cacheKey)) {
+      const cached = tickCache.get(cacheKey);
+      applyCachedSettlement(win, cached);
+      return cached.history;
     }
 
     const ticks = await fetchTickStream(windowStart, "chainlink");
     hydrateWindowSettlementFromTicks(win, ticks);
-    cacheKey = tickCacheKeyForWindow(windowStart, win);
-    if (tickCache.has(cacheKey)) return tickCache.get(cacheKey);
 
     const history = withOfficialClose(
       ticksToPriceHistory(ticks, win?.prevCloseAsset),
       win || { windowStart },
     );
 
-    tickCache.set(cacheKey, history);
+    tickCache.set(cacheKey, {
+      history,
+      ptb: Number.isFinite(Number(win?.prevCloseAsset)) ? Number(win.prevCloseAsset) : null,
+      finalPrice: Number.isFinite(Number(win?.finalPrice)) ? Number(win.finalPrice) : null,
+    });
     return history;
   }
 
@@ -2272,8 +2247,7 @@
       }
       const next = payload.windows[index + 1];
       if (next) {
-        const nextTickKey = `${next.windowStart}:${next.prevCloseAsset ?? ""}:${next.finalPrice ?? ""}:${resolveMarketOutcome(next) ?? ""}`;
-        if (!tickCache.has(nextTickKey)) {
+        if (!tickCache.has(String(next.windowStart))) {
           void loadTicks(next.windowStart, next).catch(() => {});
         }
         if (!bookQuoteCache.has(next.windowStart)) {
