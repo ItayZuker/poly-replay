@@ -918,6 +918,7 @@
           </div>
           <div id="schedule-setups-list" class="schedule-setups-list" hidden aria-hidden="true"></div>
           <div class="schedule-workspace-footer" id="schedule-workspace-footer">
+            <div class="schedule-workspace-footer-body">
             <div
               id="schedule-replay-panel"
               class="schedule-replay-panel"
@@ -1026,9 +1027,6 @@
                     class="schedule-replay-triggers-list"
                     aria-label="Replay trigger cards"
                   ></div>
-                  <p class="schedule-replay-triggers-note" id="schedule-replay-triggers-note">
-                    Local Replay Triggers. <strong>Run</strong> fills every hour cell from recordings. Card stats update after a Run.
-                  </p>
                 </div>
               </div>
             </div>
@@ -1049,16 +1047,21 @@
                 <strong>Trade</strong> + <strong>Active</strong> Market Triggers only. Hour cells sum their Trade fills for the current UTC week.
               </p>
             </div>
-            <div
-              id="schedule-workspace-switcher"
-              class="schedule-workspace-switcher"
-              role="switch"
-              aria-checked="false"
-              aria-label="Schedule workspace"
-            >
-              <span class="schedule-workspace-switcher-handle" aria-hidden="true"></span>
-              <button type="button" class="schedule-workspace-switcher-opt is-active" data-schedule-workspace="live">Live</button>
-              <button type="button" class="schedule-workspace-switcher-opt" data-schedule-workspace="replay">Replay</button>
+            </div>
+            <div class="schedule-workspace-switcher-bar">
+              <div class="schedule-workspace-switcher-toolbar">
+                <div
+                  id="schedule-workspace-switcher"
+                  class="schedule-workspace-switcher"
+                  role="switch"
+                  aria-checked="false"
+                  aria-label="Schedule workspace"
+                >
+                  <span class="schedule-workspace-switcher-handle" aria-hidden="true"></span>
+                  <button type="button" class="schedule-workspace-switcher-opt is-active" data-schedule-workspace="live">Live</button>
+                  <button type="button" class="schedule-workspace-switcher-opt" data-schedule-workspace="replay">Replay</button>
+                </div>
+              </div>
             </div>
           </div>
           <div id="schedule-heatmap-panel" class="schedule-heatmap-panel" hidden></div>

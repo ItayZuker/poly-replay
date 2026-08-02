@@ -143,10 +143,20 @@
     const id = String(triggerId || "");
     const idx = replayTriggers.findIndex((t) => String(t?.id) === id);
     if (idx < 0) return;
+    const nextPaused = Boolean(paused);
+    // Pausing: lock in any current Run-buffer totals so a later Run cannot wipe them.
+    let replayStats = normalizeStats(replayTriggers[idx].replayStats);
+    if (nextPaused && Object.prototype.hasOwnProperty.call(runStatsById, id)) {
+      replayStats = normalizeStats(runStatsById[id]);
+    }
     replayTriggers[idx] = normalizeTrigger({
       ...replayTriggers[idx],
-      paused: Boolean(paused),
+      paused: nextPaused,
+      replayStats,
     });
+    if (nextPaused && Object.prototype.hasOwnProperty.call(runStatsById, id)) {
+      delete runStatsById[id];
+    }
     save();
     render();
     stopReplayForTriggerChange();
@@ -186,9 +196,25 @@
     return replayTriggers.find((t) => String(t.id) === id) || null;
   }
 
+  /**
+   * Zero in-run counters for Active triggers only.
+   * Paused cards keep their stats: flush any leftover Run-buffer totals onto the card
+   * first (e.g. after an early Stop), then leave them out of the new Run buffer.
+   */
   function resetRunStats() {
+    let pausedFlushed = false;
+    for (const t of replayTriggers) {
+      if (t?.paused !== true) continue;
+      const id = String(t.id);
+      if (!Object.prototype.hasOwnProperty.call(runStatsById, id)) continue;
+      t.replayStats = normalizeStats(runStatsById[id]);
+      pausedFlushed = true;
+    }
+    if (pausedFlushed) save();
+
     runStatsById = Object.create(null);
     for (const t of replayTriggers) {
+      if (t?.paused === true) continue;
       runStatsById[String(t.id)] = emptyStats();
     }
     render();
@@ -199,6 +225,9 @@
     for (const s of triggerStats) {
       const id = String(s?.triggerId || "");
       if (!id) continue;
+      // Skip paused cards (not in this Run).
+      const card = replayTriggers.find((t) => String(t?.id) === id);
+      if (card?.paused === true) continue;
       const cur = runStatsById[id] || emptyStats();
       cur.success += Math.max(0, Math.round(Number(s.success) || 0));
       cur.fail += Math.max(0, Math.round(Number(s.fail) || 0));
@@ -214,10 +243,32 @@
   function commitRunStatsToCards() {
     for (const t of replayTriggers) {
       const id = String(t.id);
-      t.replayStats = normalizeStats(runStatsById[id] || emptyStats());
+      // Paused cards were not in this Run — keep their previous card stats.
+      if (t.paused === true) continue;
+      if (!Object.prototype.hasOwnProperty.call(runStatsById, id)) continue;
+      t.replayStats = normalizeStats(runStatsById[id]);
     }
     save();
     render();
+  }
+
+  function resetCardStats(triggerId) {
+    const id = String(triggerId || "");
+    const idx = replayTriggers.findIndex((t) => String(t?.id) === id);
+    if (idx < 0) return false;
+    const paused = replayTriggers[idx]?.paused === true;
+    // During a Run, only Paused cards may reset (Active stats are accumulating).
+    if (listLocked && !paused) return false;
+    replayTriggers[idx] = normalizeTrigger({
+      ...replayTriggers[idx],
+      replayStats: emptyStats(),
+    });
+    if (Object.prototype.hasOwnProperty.call(runStatsById, id)) {
+      runStatsById[id] = emptyStats();
+    }
+    save();
+    render();
+    return true;
   }
 
   function closeMenus() {
@@ -238,7 +289,10 @@
     for (const trigger of replayTriggers) {
       const id = String(trigger.id);
       const paused = trigger.paused === true;
-      const stats = normalizeStats(runStatsById[id] || trigger.replayStats);
+      // Paused cards always show committed card stats (never the active Run buffer).
+      const stats = normalizeStats(
+        paused ? trigger.replayStats : (runStatsById[id] ?? trigger.replayStats),
+      );
       const card = document.createElement("div");
       card.className = "schedule-replay-trigger-card";
       if (paused) card.classList.add("is-paused");
@@ -333,13 +387,14 @@
       }
       controls.appendChild(pauseWrap);
 
-      const refreshBtn = document.createElement("button");
-      refreshBtn.type = "button";
-      refreshBtn.className = "trigger-card-stats-reset";
-      refreshBtn.title = "Refresh stats";
-      refreshBtn.setAttribute("aria-label", "Refresh stats");
-      refreshBtn.disabled = listLocked;
-      refreshBtn.innerHTML =
+      const resetBtn = document.createElement("button");
+      resetBtn.type = "button";
+      resetBtn.className = "trigger-card-stats-reset";
+      resetBtn.title = "Reset Replay stats";
+      resetBtn.setAttribute("aria-label", "Reset Replay stats");
+      // Active cards lock during Run; Paused cards can still clear their stats.
+      resetBtn.disabled = listLocked && !paused;
+      resetBtn.innerHTML =
         '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
         '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
         '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
@@ -360,7 +415,7 @@
         "</span>" +
         '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>';
 
-      stack.append(controls, refreshBtn, exits, main);
+      stack.append(controls, resetBtn, exits, main);
 
       const applyStats = (next) => {
         const s = normalizeStats(next);
@@ -381,11 +436,13 @@
         }
       };
       applyStats(stats);
-      refreshBtn.addEventListener("click", (e) => {
+      resetBtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (refreshBtn.disabled) return;
-        applyStats(runStatsById[id] || trigger.replayStats);
+        if (resetBtn.disabled) return;
+        const label = trigger.name || "Untitled trigger";
+        if (!window.confirm(`Reset Replay stats for "${label}"?`)) return;
+        resetCardStats(id);
       });
 
       card.append(header, stack);
@@ -431,6 +488,7 @@
     resetRunStats,
     accumulatePlacementTriggerStats,
     commitRunStatsToCards,
+    resetCardStats,
     setLocked,
   };
 })();

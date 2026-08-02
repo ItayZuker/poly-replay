@@ -1350,12 +1350,19 @@
     if (resetBtn) setPnlSignClass(resetBtn, pnl, hasData);
   }
 
-  async function fetchHeaderSummaryTotals() {
+  /**
+   * @param {{ paintImmediate?: boolean }} [options]
+   *   paintImmediate (default true): paint Live/Schedule/cached Market right away.
+   *   Use false while switching ranges so the header stays at zeros until ready.
+   */
+  async function fetchHeaderSummaryTotals(options = {}) {
+    const paintImmediate = options.paintImmediate !== false;
     const mode = headerSummaryRange;
 
     if (mode === "live") {
-      renderHeaderSummaryTotals(liveRangeTotals());
-      return liveRangeTotals();
+      const totals = liveRangeTotals();
+      renderHeaderSummaryTotals(totals);
+      return totals;
     }
     if (mode === "schedule") {
       const totals = scheduleTotals();
@@ -1366,7 +1373,7 @@
     // Market (default / unknown → treat as market all-time for selected series).
     const series = selectedSeries();
     const cached = headerMarketTotals[series];
-    if (cached) renderHeaderSummaryTotals(cached);
+    if (cached && paintImmediate) renderHeaderSummaryTotals(cached);
 
     // Coalesce concurrent fetches: SSE-driven refreshes fire every ~1.5s while the
     // browser's per-host connection pool is busy (SSE streams + polling), so requests
@@ -1469,25 +1476,18 @@
     syncHeaderSummaryResetButton();
   }
 
-  /** Paint the icon spinner, then load totals for the selected header range. */
+  /** Paint zeros + spinner, then load totals for the selected header range. */
   async function refreshHeaderSummaryWithLoader() {
     setHeaderSummaryLoading(true);
-    // Two frames so the spinner paints before sync Live/Schedule work.
+    // Clear previous range numbers immediately so Market/Live/Schedule never flash stale totals.
+    renderHeaderSummaryTotals(emptyTotals());
+    // Two frames so the spinner + zeros paint before sync Live/Schedule work.
     await new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
     try {
-      if (headerSummaryRange === "market") {
-        const series = selectedSeries();
-        const cached = headerMarketTotals[series];
-        if (cached) {
-          renderHeaderSummaryTotals(cached);
-          setHeaderSummaryLoading(false);
-          void fetchHeaderSummaryTotals();
-          return;
-        }
-      }
-      await fetchHeaderSummaryTotals();
+      // Do not paint cached Market mid-load — keep zeros until the fetch settles.
+      await fetchHeaderSummaryTotals({ paintImmediate: false });
     } finally {
       setHeaderSummaryLoading(false);
     }
