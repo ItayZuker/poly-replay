@@ -1,6 +1,11 @@
 {
-  "current": "1.39.5",
+  "current": "1.39.6",
   "releases": [
+    {
+      "version": "1.39.6",
+      "releasedAt": "2026-08-02T12:57:58.368Z",
+      "notes": "Fix: stop repeating Account connected in the live log; reuse the connected CLOB client instead of reconnecting on every Schedule stats refresh."
+    },
     {
       "version": "1.39.5",
       "releasedAt": "2026-08-02T12:33:14.963Z",
