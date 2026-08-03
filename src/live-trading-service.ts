@@ -4451,6 +4451,9 @@ export class LiveTradingService {
   /**
    * Slot may free only on: fully filled, confirm-cancelled, or window end (handled by caller).
    * Unknown / empty / unexpected status → keep blocking (no second place).
+   *
+   * Polymarket `unmatched` = after delay, no immediate match, order is still resting
+   * on the book — NOT cancelled. Treating it as cancel caused a second 100-share place.
    */
   private classifyTriggerRestDisposition(
     snap: { status: string; sizeMatched: number } | null,
@@ -4461,25 +4464,21 @@ export class LiveTradingService {
     const matched = Math.max(0, Number(snap.sizeMatched) || 0);
     const fullyFilled = matched + 1e-9 >= resting.shares;
 
-    // 1) Fully filled
+    // 1) Fully filled only (do not free on partial `matched` while size remains).
     if (fullyFilled) return "filled";
-    if (status === "matched" && matched > 1e-9) return "filled";
+    if (status === "matched" && fullyFilled) return "filled";
 
-    // 2) Confirm cancel / terminal dead (no remaining live order)
-    if (
-      status === "cancelled" ||
-      status === "canceled" ||
-      status === "expired" ||
-      status === "unmatched"
-    ) {
+    // 2) Confirm cancel / expired only — never `unmatched` (that is still on the book).
+    if (status === "cancelled" || status === "canceled" || status === "expired") {
       // Partial fill then cancel: fill already recorded; slot may free.
       return matched > 1e-9 ? "filled" : "cancel_confirmed";
     }
 
-    // Still working — including empty status (do not treat as gone).
+    // Still working — including empty status and post-delay resting (`unmatched`).
     if (
       status === "live" ||
       status === "delayed" ||
+      status === "unmatched" ||
       status === "open" ||
       status === ""
     ) {
@@ -4621,7 +4620,13 @@ export class LiveTradingService {
       await this.cancelTriggerSiblingRests(resting.triggerId, resting.side, state);
       resting.cancelPending = true;
       const status = String(snap.status || "").toLowerCase();
-      if (status === "live" || status === "delayed" || status === "open" || status === "") {
+      if (
+        status === "live" ||
+        status === "delayed" ||
+        status === "unmatched" ||
+        status === "open" ||
+        status === ""
+      ) {
         await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
       }
       this.notify();
@@ -4838,12 +4843,27 @@ export class LiveTradingService {
       if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
       if (this.positions.up || this.positions.down) break;
       if (this.predictionTradeHoldWindowKey === key) break;
-      // Any outstanding rest for this trigger (other side canceling, etc.) after a
-      // partial/matched fill — hold latch should cover; also block if matched ≥ Shares.
+      // Hard cap: never place again if this trigger already bought ≥ Shares this window
+      // (blocks double-place even if a rest was dropped early).
       const matchedForTrigger = [...this.triggerRestingBuys.values()]
         .filter((r) => r.triggerId === want.triggerId)
         .reduce((sum, r) => sum + r.sizeMatched, 0);
-      if (matchedForTrigger >= want.shares - 1e-9) continue;
+      const cardShares = this.positionCards
+        .filter(
+          (c) =>
+            c.source === "trigger" &&
+            c.triggerId === want.triggerId &&
+            c.windowKey === key &&
+            c.status === "open",
+        )
+        .reduce((sum, c) => sum + (Number(c.shares) || 0), 0);
+      if (matchedForTrigger + cardShares >= want.shares - 1e-9) {
+        logService.warn(
+          "trading",
+          `Trigger GTD cap — already filled ${matchedForTrigger + cardShares}/${want.shares} (${want.triggerId.slice(0, 8)})`,
+        );
+        continue;
+      }
 
       // Trigger GTD takes the slot — drop phase rests first.
       if (this.restingBuys.size > 0) {
