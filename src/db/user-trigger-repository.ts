@@ -44,7 +44,7 @@ export interface UserTriggerRecord {
   priceTrend: { dollars: number; bound: "min" | "max" };
   takeProfitCents: number;
   stopLossCents: number;
-  /** Buy placement: FOK default; GTD only when durationMs is 0 and startMode is price. */
+  /** Buy placement: FOK default; GTD only when durationMs is 0, startMode is price, and no gap. */
   buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: "FAK" | "FOK" | "GTD";
   windowArea: { start: number; end: number };
@@ -190,12 +190,21 @@ export function normalizeUserTriggerInput(
   })();
   const startMode: "range" | "price" =
     o.startMode === "price" || o.startMode === "change-side" ? "price" : "range";
+  const ptbGap = {
+    start: normalizeGapKind(gaps.start !== undefined ? gaps.start : existing?.ptbGap?.start),
+    end: normalizeGapKind(gaps.end !== undefined ? gaps.end : existing?.ptbGap?.end),
+  };
+  const hasPtbGap =
+    ptbGap.start === "positive" ||
+    ptbGap.start === "negative" ||
+    ptbGap.end === "positive" ||
+    ptbGap.end === "negative";
   const buyOrderTypeRaw =
     o.buyOrderType === "FAK" || o.buyOrderType === "FOK" || o.buyOrderType === "GTD"
       ? o.buyOrderType
       : existing?.buyOrderType || "FOK";
   const buyOrderType: "FAK" | "FOK" | "GTD" =
-    buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price")
+    buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price" && !hasPtbGap)
       ? "FOK"
       : buyOrderTypeRaw;
   return {
@@ -222,10 +231,7 @@ export function normalizeUserTriggerInput(
       start: normalizeRange(ranges.start ?? existing?.priceRanges?.start),
       end: normalizeRange(ranges.end ?? existing?.priceRanges?.end),
     },
-    ptbGap: {
-      start: normalizeGapKind(gaps.start !== undefined ? gaps.start : existing?.ptbGap?.start),
-      end: normalizeGapKind(gaps.end !== undefined ? gaps.end : existing?.ptbGap?.end),
-    },
+    ptbGap,
     gapSize: {
       start: normalizeGapSize(gapSize.start ?? existing?.gapSize?.start),
       end: normalizeGapSize(gapSize.end ?? existing?.gapSize?.end),

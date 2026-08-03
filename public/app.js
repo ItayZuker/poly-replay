@@ -5023,6 +5023,8 @@ function toggleTriggerPtbGap(edge, kind) {
   if (edge === "end" && isTriggerZeroDuration(triggerCreateDurationMs)) return;
   triggerCreatePtbGap[edge] = triggerCreatePtbGap[edge] === kind ? null : kind;
   renderTriggerPtbGapUi();
+  // Gap disables Buy GTD — coerce order type while the dialog is open.
+  syncTriggerCreateBuyOrderTypeUi();
 }
 
 function setTriggerCreatePriceTrendDollars(dollars) {
@@ -5333,14 +5335,30 @@ function normalizeTriggerSellOrderType(raw) {
   return "FAK";
 }
 
-function triggerBuyGtdAllowed(durationMs, startMode) {
-  return isTriggerZeroDuration(durationMs) && normalizeTriggerStartMode(startMode) === "price";
+/** True when any +/− Gap is set (start or end) — GTD is not allowed. */
+function triggerHasPtbGap(ptbGap) {
+  const start = ptbGap?.start;
+  const end = ptbGap?.end;
+  return (
+    start === "positive" ||
+    start === "negative" ||
+    end === "positive" ||
+    end === "negative"
+  );
 }
 
-function normalizeTriggerBuyOrderType(raw, durationMs, startMode) {
+function triggerBuyGtdAllowed(durationMs, startMode, ptbGap) {
+  return (
+    isTriggerZeroDuration(durationMs) &&
+    normalizeTriggerStartMode(startMode) === "price" &&
+    !triggerHasPtbGap(ptbGap)
+  );
+}
+
+function normalizeTriggerBuyOrderType(raw, durationMs, startMode, ptbGap) {
   if (raw === "FAK") return "FAK";
   if (raw === "GTD") {
-    return triggerBuyGtdAllowed(durationMs, startMode) ? "GTD" : "FOK";
+    return triggerBuyGtdAllowed(durationMs, startMode, ptbGap) ? "GTD" : "FOK";
   }
   return "FOK";
 }
@@ -5348,13 +5366,18 @@ function normalizeTriggerBuyOrderType(raw, durationMs, startMode) {
 function syncTriggerCreateBuyOrderTypeUi() {
   const el = $("trigger-buy-order-type");
   if (!el) return;
-  const gtdOk = triggerBuyGtdAllowed(triggerCreateDurationMs, triggerCreateStartMode);
+  const gtdOk = triggerBuyGtdAllowed(
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+    triggerCreatePtbGap,
+  );
   const gtdOpt = el.querySelector('option[value="GTD"]');
   if (gtdOpt) gtdOpt.disabled = !gtdOk;
   triggerCreateBuyOrderType = normalizeTriggerBuyOrderType(
     el.value || triggerCreateBuyOrderType,
     triggerCreateDurationMs,
     triggerCreateStartMode,
+    triggerCreatePtbGap,
   );
   if (el.value !== triggerCreateBuyOrderType) el.value = triggerCreateBuyOrderType;
   const note = $("trigger-buy-order-note");
@@ -5369,6 +5392,7 @@ function syncTriggerCreateBuyOrderTypeDraft() {
     el?.value ?? triggerCreateBuyOrderType,
     triggerCreateDurationMs,
     triggerCreateStartMode,
+    triggerCreatePtbGap,
   );
   syncTriggerCreateBuyOrderTypeUi();
 }
@@ -5378,6 +5402,7 @@ function applyTriggerBuyOrderTypeToInput(orderType) {
     orderType ?? "FOK",
     triggerCreateDurationMs,
     triggerCreateStartMode,
+    triggerCreatePtbGap,
   );
   const el = $("trigger-buy-order-type");
   if (el) el.value = triggerCreateBuyOrderType;
@@ -5411,6 +5436,7 @@ function normalizeTriggerRecord(raw) {
       raw.buyOrderType,
       raw.durationMs,
       raw.startMode,
+      raw.ptbGap,
     ),
     sellOrderType: normalizeTriggerSellOrderType(raw.sellOrderType),
     takeProfitCents: exits.takeProfitCents,
@@ -6436,6 +6462,7 @@ function buildTriggerFromCreateDraft() {
       triggerCreateBuyOrderType,
       triggerCreateDurationMs,
       startMode,
+      triggerCreatePtbGap,
     ),
     sellOrderType: normalizeTriggerSellOrderType(triggerCreateSellOrderType),
     windowArea: normalizeTriggerWindowArea(
@@ -10452,6 +10479,7 @@ async function openTriggerPosition(trigger, rt, state, side) {
       trigger.buyOrderType,
       trigger.durationMs,
       trigger.startMode,
+      trigger.ptbGap,
     );
     const result = await placeTriggerTradeOrder(side, "buy", {
       shares: buyShares,
@@ -10598,18 +10626,51 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
   await forceTriggerMarketSell(trigger, rt, state, reason);
 }
 
-/** GTD buy sides: no gap → both; + Gap → UP while gap ok; − Gap → DOWN while gap ok. */
+/**
+ * Locked GTD side per trigger for the current market window.
+ * No-gap GTD places exactly one resting order; side is chosen once then held.
+ * @type {Map<string, { windowStart: number, side: "up" | "down" }>}
+ */
+const triggerGtdLockedSideById = new Map();
+
+/** Pick one GTD side for no-gap: lower Ask (UP on tie / unknown). Locked for the window. */
 function triggerGtdDesiredSides(trigger, state) {
-  const kind = trigger?.ptbGap?.start;
-  if (kind !== "positive" && kind !== "negative") return ["up", "down"];
-  if (!triggerGapMatches(state, kind, trigger?.gapSize?.start)) return [];
-  return kind === "positive" ? ["up"] : ["down"];
+  // Gap set → GTD not allowed (normalize coerces to FOK); no desires.
+  if (triggerHasPtbGap(trigger?.ptbGap)) return [];
+  const id = String(trigger?.id || "");
+  if (!id) return [];
+  const windowStart = Number(state?.windowStart);
+  const locked = triggerGtdLockedSideById.get(id);
+  if (
+    locked &&
+    Number.isFinite(windowStart) &&
+    locked.windowStart === windowStart &&
+    (locked.side === "up" || locked.side === "down")
+  ) {
+    return [locked.side];
+  }
+  const upAsk = triggerAskPrice(state, "up");
+  const downAsk = triggerAskPrice(state, "down");
+  let side = "up";
+  if (Number.isFinite(upAsk) && Number.isFinite(downAsk)) {
+    side = upAsk <= downAsk ? "up" : "down";
+  } else if (Number.isFinite(downAsk) && !Number.isFinite(upAsk)) {
+    side = "down";
+  }
+  if (Number.isFinite(windowStart)) {
+    triggerGtdLockedSideById.set(id, { windowStart, side });
+  }
+  return [side];
 }
 
 function triggerUsesBuyGtd(trigger) {
   return (
-    normalizeTriggerBuyOrderType(trigger?.buyOrderType, trigger?.durationMs, trigger?.startMode) ===
-    "GTD"
+    normalizeTriggerBuyOrderType(
+      trigger?.buyOrderType,
+      trigger?.durationMs,
+      trigger?.startMode,
+      trigger?.ptbGap,
+    ) === "GTD"
   );
 }
 
@@ -10634,12 +10695,15 @@ function clearTriggerGtdArmTimer() {
 function invalidateTriggerGtdArmKeys(triggerId) {
   if (!triggerId) {
     triggerGtdArmedApplyKeys.clear();
+    triggerGtdLockedSideById.clear();
     return;
   }
-  const prefix = `${String(triggerId)}:`;
+  const id = String(triggerId);
+  const prefix = `${id}:`;
   for (const key of [...triggerGtdArmedApplyKeys]) {
     if (key.startsWith(prefix)) triggerGtdArmedApplyKeys.delete(key);
   }
+  triggerGtdLockedSideById.delete(id);
 }
 
 /** Build Trade GTD desires for triggers currently inside Apply (wall clock). */
@@ -10688,6 +10752,7 @@ function scheduleTriggerGtdArming(state = windowState) {
   if (ws !== triggerGtdArmWindowStart) {
     triggerGtdArmWindowStart = ws ?? null;
     triggerGtdArmedApplyKeys.clear();
+    triggerGtdLockedSideById.clear();
   }
 
   const nowMs = Date.now();

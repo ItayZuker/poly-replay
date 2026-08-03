@@ -1,6 +1,11 @@
 {
-  "current": "1.41.4",
+  "current": "1.41.5",
   "releases": [
+    {
+      "version": "1.41.5",
+      "releasedAt": "2026-08-03T11:54:44.610Z",
+      "notes": "Trigger Buy GTD: only with no Gap; one resting order per trigger per window (hard place latch). Gap forces FAK/FOK. Docs updated."
+    },
     {
       "version": "1.41.4",
       "releasedAt": "2026-08-03T11:30:25.002Z",

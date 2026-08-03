@@ -927,6 +927,11 @@ export class LiveTradingService {
    * rest on the same side while holding to settlement.
    */
   private triggerGtdHoldSessionById = new Map<string, string>();
+  /**
+   * After any Trigger GTD place attempt this window (success or fail), never
+   * place again for that triggerId until the window rolls — one resting order max.
+   */
+  private triggerGtdPlacedSessionById = new Map<string, string>();
   /** Serialize Trigger GTD sync so concurrent client posts cannot double-place. */
   private triggerGtdSyncChain: Promise<void> = Promise.resolve();
   /** After gap-filter cancel, delay before placing another resting GTD buy. */
@@ -2439,6 +2444,7 @@ export class LiveTradingService {
     this.manualBuyOverrideWindowKey = null;
     this.predictionTradeHoldWindowKey = null;
     this.triggerGtdHoldSessionById.clear();
+    this.triggerGtdPlacedSessionById.clear();
     this.buyBlockedWindowKey = null;
     this.pendingBuyConfirm = null;
     this.pendingBuyConfirmBackoffMs = 0;
@@ -4236,6 +4242,19 @@ export class LiveTradingService {
     );
   }
 
+  /** True after any GTD place attempt for this trigger in this window. */
+  private isTriggerGtdPlaced(triggerId: string, session: string): boolean {
+    const id = String(triggerId || "").trim();
+    if (!id || !session) return false;
+    return this.triggerGtdPlacedSessionById.get(id) === session;
+  }
+
+  private latchTriggerGtdPlaced(triggerId: string, session: string): void {
+    const id = String(triggerId || "").trim();
+    if (!id || !session) return;
+    this.triggerGtdPlacedSessionById.set(id, session);
+  }
+
   private async recordBuyFill(
     state: LiveWindowState,
     side: "up" | "down",
@@ -4841,6 +4860,14 @@ export class LiveTradingService {
       // Still tracking a rest (including cancel-pending) → never place a duplicate.
       if (this.triggerRestingBuys.has(rk)) continue;
       if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
+      // One resting-order attempt per trigger per window (success/fail irrelevant).
+      if (this.isTriggerGtdPlaced(want.triggerId, key)) {
+        logService.warn(
+          "trading",
+          `Trigger GTD latch — already placed this window (${want.triggerId.slice(0, 8)})`,
+        );
+        continue;
+      }
       if (this.positions.up || this.positions.down) break;
       if (this.predictionTradeHoldWindowKey === key) break;
       // Hard cap: never place again if this trigger already bought ≥ Shares this window
@@ -4862,6 +4889,7 @@ export class LiveTradingService {
           "trading",
           `Trigger GTD cap — already filled ${matchedForTrigger + cardShares}/${want.shares} (${want.triggerId.slice(0, 8)})`,
         );
+        this.latchTriggerGtdPlaced(want.triggerId, key);
         continue;
       }
 
@@ -4874,15 +4902,21 @@ export class LiveTradingService {
       this.orderInFlight = true;
       try {
         this.autoEngine.setExternalBuyPaused(true);
-        const result = await placeLimitGtdBuy(this.userId, {
-          series: state.series,
-          side: want.side,
-          size: want.shares,
-          price: limitPrice,
-          expirationSec: gtdExpirationUnix(windowEnd, nowSec),
-          state,
-          logTag: `trigger ${want.triggerId.slice(0, 8)}`,
-        });
+        let result: Awaited<ReturnType<typeof placeLimitGtdBuy>>;
+        try {
+          result = await placeLimitGtdBuy(this.userId, {
+            series: state.series,
+            side: want.side,
+            size: want.shares,
+            price: limitPrice,
+            expirationSec: gtdExpirationUnix(windowEnd, nowSec),
+            state,
+            logTag: `trigger ${want.triggerId.slice(0, 8)}`,
+          });
+        } finally {
+          // Latch after the place call — never a second attempt this window.
+          this.latchTriggerGtdPlaced(want.triggerId, key);
+        }
         if (!result.success || !result.orderId) {
           if (this.triggerRestingBuys.size === 0 && this.restingBuys.size === 0) {
             this.autoEngine.setExternalBuyPaused(false);

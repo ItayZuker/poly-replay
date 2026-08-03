@@ -179,14 +179,6 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     o.sellOrderType === "FOK" || o.sellOrderType === "GTD" ? o.sellOrderType : "FAK";
   const startMode: "range" | "price" =
     o.startMode === "price" || o.startMode === "change-side" ? "price" : "range";
-  const buyOrderTypeRaw =
-    o.buyOrderType === "FAK" || o.buyOrderType === "FOK" || o.buyOrderType === "GTD"
-      ? o.buyOrderType
-      : "FOK";
-  const buyOrderType: "FAK" | "FOK" | "GTD" =
-    buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price")
-      ? "FOK"
-      : buyOrderTypeRaw;
   const wa = o.windowArea && typeof o.windowArea === "object" ? (o.windowArea as Record<string, unknown>) : {};
   let areaStart = Number(wa.start);
   let areaEnd = Number(wa.end);
@@ -202,6 +194,18 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
   const gaps = o.ptbGap && typeof o.ptbGap === "object" ? (o.ptbGap as Record<string, unknown>) : {};
   const gapSize =
     o.gapSize && typeof o.gapSize === "object" ? (o.gapSize as Record<string, unknown>) : {};
+  const ptbGapStart =
+    gaps.start === "positive" || gaps.start === "negative" ? gaps.start : null;
+  const ptbGapEnd = gaps.end === "positive" || gaps.end === "negative" ? gaps.end : null;
+  const hasPtbGap = ptbGapStart != null || ptbGapEnd != null;
+  const buyOrderTypeRaw =
+    o.buyOrderType === "FAK" || o.buyOrderType === "FOK" || o.buyOrderType === "GTD"
+      ? o.buyOrderType
+      : "FOK";
+  const buyOrderType: "FAK" | "FOK" | "GTD" =
+    buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price" && !hasPtbGap)
+      ? "FOK"
+      : buyOrderTypeRaw;
   return {
     id,
     name: typeof o.name === "string" ? o.name : undefined,
@@ -412,15 +416,31 @@ function startConditionMet(def: ReplayTriggerDef, currentCents: number): boolean
   return inPriceRange(currentCents, def.priceRanges.start);
 }
 
-/** Buy GTD sides from start gap: none → both; + → UP; − → DOWN (only while gap matches). */
+/**
+ * Buy GTD: no gap → one side (lower Ask, UP on tie).
+ * Any gap → GTD not allowed (normalize coerces to FOK); empty sides.
+ */
 function gtdDesiredSides(
   def: ReplayTriggerDef,
   tick: ReplayTickDocument,
 ): Array<"up" | "down"> {
-  const kind = def.ptbGap.start;
-  if (kind !== "positive" && kind !== "negative") return ["up", "down"];
-  if (!gapMatches(tick, kind, def.gapSize.start)) return [];
-  return kind === "positive" ? ["up"] : ["down"];
+  const start = def.ptbGap.start;
+  const end = def.ptbGap.end;
+  if (
+    start === "positive" ||
+    start === "negative" ||
+    end === "positive" ||
+    end === "negative"
+  ) {
+    return [];
+  }
+  const upAsk = quoteCents(tick, "up", "buy");
+  const downAsk = quoteCents(tick, "down", "buy");
+  if (Number.isFinite(upAsk) && Number.isFinite(downAsk)) {
+    return upAsk <= downAsk ? ["up"] : ["down"];
+  }
+  if (Number.isFinite(downAsk) && !Number.isFinite(upAsk)) return ["down"];
+  return ["up"];
 }
 
 function endConditionMet(def: ReplayTriggerDef, startCents: number, endCents: number): boolean {

@@ -83,11 +83,20 @@
         })();
         const startMode =
           raw.startMode === "price" || raw.startMode === "change-side" ? "price" : "range";
+        const gaps =
+          raw.ptbGap && typeof raw.ptbGap === "object" ? raw.ptbGap : {};
+        const hasPtbGap =
+          gaps.start === "positive" ||
+          gaps.start === "negative" ||
+          gaps.end === "positive" ||
+          gaps.end === "negative";
         const rawType =
           raw.buyOrderType === "FAK" || raw.buyOrderType === "FOK" || raw.buyOrderType === "GTD"
             ? raw.buyOrderType
             : "FOK";
-        if (rawType === "GTD" && !(durationMs === 0 && startMode === "price")) return "FOK";
+        if (rawType === "GTD" && !(durationMs === 0 && startMode === "price" && !hasPtbGap)) {
+          return "FOK";
+        }
         return rawType;
       })(),
       replayStats: normalizeStats(raw.replayStats),
