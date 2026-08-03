@@ -5705,6 +5705,22 @@ body.is-row-resizing .panel-header-drag-handle {
   gap: 8px;
 }
 
+.position-card-side-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.position-card-demo-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .position-card-side {
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -7217,48 +7233,6 @@ body.is-trigger-price-dragging * {
 .trade-panel-actions .wallet-control-field {
   margin: 0;
   gap: 8px;
-}
-
-.positions-view-toggle {
-  display: flex;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-.positions-view-toggle-btn {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-  padding: 0 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-.positions-view-toggle-btn:hover:not(.is-active) {
-  color: var(--text);
-  background: rgba(88, 166, 255, 0.08);
-}
-
-.positions-view-toggle-btn.is-active {
-  background: var(--accent);
-  color: #fff;
-}
-
-.positions-view-toggle-btn + .positions-view-toggle-btn {
-  border-left: 1px solid var(--border);
-}
-
-.positions-view-toggle-btn.is-active + .positions-view-toggle-btn,
-.positions-view-toggle-btn + .positions-view-toggle-btn.is-active {
-  border-left-color: transparent;
 }
 
 .log-clear-btn {

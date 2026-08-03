@@ -1,6 +1,11 @@
 {
-  "current": "1.41.5",
+  "current": "1.42.0",
   "releases": [
+    {
+      "version": "1.42.0",
+      "releasedAt": "2026-08-03T12:16:26.835Z",
+      "notes": "Positions: remove Live/Demo toggle, Clear all cards, Demo label on demo bets (no Prediction cards). Trigger GTD latch only after CLOB accepts an order; stop latch log spam; keep rest on side flip. Docs updated."
+    },
     {
       "version": "1.41.5",
       "releasedAt": "2026-08-03T11:54:44.610Z",

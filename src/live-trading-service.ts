@@ -928,8 +928,9 @@ export class LiveTradingService {
    */
   private triggerGtdHoldSessionById = new Map<string, string>();
   /**
-   * After any Trigger GTD place attempt this window (success or fail), never
+   * After a Trigger GTD place is accepted this window (orderId returned), never
    * place again for that triggerId until the window rolls — one resting order max.
+   * Failed place attempts do not latch (so a miss can retry).
    */
   private triggerGtdPlacedSessionById = new Map<string, string>();
   /** Serialize Trigger GTD sync so concurrent client posts cannot double-place. */
@@ -4769,7 +4770,26 @@ export class LiveTradingService {
     }
 
     // Cancel rests that are no longer desired or at a different price/size.
+    // Once a trigger has placed this window, keep its rest even if the client
+    // flips desired side (cheaper-Ask lock) — latch forbids a replacement.
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      if (
+        resting.sessionKey === key &&
+        this.isTriggerGtdPlaced(resting.triggerId, key) &&
+        !this.isTriggerGtdHeld(resting.triggerId, key)
+      ) {
+        // Reclaim if a side-flip briefly marked cancel — do not drop the only rest.
+        if (resting.cancelPending && desireByKey.size > 0) {
+          const anyDesireForTrigger = [...desireByKey.values()].some(
+            (d) => d.triggerId === resting.triggerId,
+          );
+          if (anyDesireForTrigger) {
+            resting.cancelPending = false;
+            resting.cancelAttempts = 0;
+          }
+        }
+        if (!resting.cancelPending) continue;
+      }
       const want = desireByKey.get(rk);
       const limitPrice = want ? centsToPrice(want.priceCents) : NaN;
       const stale =
@@ -4860,12 +4880,14 @@ export class LiveTradingService {
       // Still tracking a rest (including cancel-pending) → never place a duplicate.
       if (this.triggerRestingBuys.has(rk)) continue;
       if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
-      // One resting-order attempt per trigger per window (success/fail irrelevant).
-      if (this.isTriggerGtdPlaced(want.triggerId, key)) {
-        logService.warn(
-          "trading",
-          `Trigger GTD latch — already placed this window (${want.triggerId.slice(0, 8)})`,
-        );
+      // Already accepted a resting GTD this window — never place again (silent).
+      if (this.isTriggerGtdPlaced(want.triggerId, key)) continue;
+      // Also block if we still track any rest for this trigger (any side).
+      const hasRestForTrigger = [...this.triggerRestingBuys.values()].some(
+        (r) => r.triggerId === want.triggerId && r.sessionKey === key,
+      );
+      if (hasRestForTrigger) {
+        this.latchTriggerGtdPlaced(want.triggerId, key);
         continue;
       }
       if (this.positions.up || this.positions.down) break;
@@ -4885,10 +4907,6 @@ export class LiveTradingService {
         )
         .reduce((sum, c) => sum + (Number(c.shares) || 0), 0);
       if (matchedForTrigger + cardShares >= want.shares - 1e-9) {
-        logService.warn(
-          "trading",
-          `Trigger GTD cap — already filled ${matchedForTrigger + cardShares}/${want.shares} (${want.triggerId.slice(0, 8)})`,
-        );
         this.latchTriggerGtdPlaced(want.triggerId, key);
         continue;
       }
@@ -4902,29 +4920,26 @@ export class LiveTradingService {
       this.orderInFlight = true;
       try {
         this.autoEngine.setExternalBuyPaused(true);
-        let result: Awaited<ReturnType<typeof placeLimitGtdBuy>>;
-        try {
-          result = await placeLimitGtdBuy(this.userId, {
-            series: state.series,
-            side: want.side,
-            size: want.shares,
-            price: limitPrice,
-            expirationSec: gtdExpirationUnix(windowEnd, nowSec),
-            state,
-            logTag: `trigger ${want.triggerId.slice(0, 8)}`,
-          });
-        } finally {
-          // Latch after the place call — never a second attempt this window.
-          this.latchTriggerGtdPlaced(want.triggerId, key);
-        }
+        const result = await placeLimitGtdBuy(this.userId, {
+          series: state.series,
+          side: want.side,
+          size: want.shares,
+          price: limitPrice,
+          expirationSec: gtdExpirationUnix(windowEnd, nowSec),
+          state,
+          logTag: `trigger ${want.triggerId.slice(0, 8)}`,
+        });
         if (!result.success || !result.orderId) {
           if (this.triggerRestingBuys.size === 0 && this.restingBuys.size === 0) {
             this.autoEngine.setExternalBuyPaused(false);
           }
           const err = result.error ?? "";
           if (err) logService.warn("trading", `Trigger GTD place failed (${want.side}): ${err}`);
+          // Do not latch on failure — allow retry until a rest is accepted.
           continue;
         }
+        // Accepted by CLOB — one resting order max for this trigger this window.
+        this.latchTriggerGtdPlaced(want.triggerId, key);
 
         const immediateFill =
           result.fillShares != null && result.fillPrice != null && result.fillShares > 0;

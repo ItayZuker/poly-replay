@@ -3251,6 +3251,10 @@ function renderPositionCard(card) {
   const sideLabel = isPrediction
     ? `Prediction ${(card.side || "").toUpperCase()}`
     : `Bet ${(card.side || "").toUpperCase()}`;
+  const demoPrefix =
+    isDemo && !isPrediction
+      ? `<span class="position-card-demo-label" title="Demo (Allow trade off)">Demo</span>`
+      : "";
   let statusHtml;
   if (isPrediction && status === "right") {
     statusHtml = `<span class="position-card-status is-icon" title="Right" aria-label="Prediction was right">${PREDICTION_ICON_CHECK}</span>`;
@@ -3270,7 +3274,7 @@ function renderPositionCard(card) {
   // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
   return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
-      <span class="position-card-side ${sideClass}">${sideLabel}</span>
+      <span class="position-card-side-wrap">${demoPrefix}<span class="position-card-side ${sideClass}">${sideLabel}</span></span>
       ${statusBlock}
     </div>
     ${detailHtml}
@@ -3280,16 +3284,47 @@ function renderPositionCard(card) {
 
 const DEMO_POSITION_CARDS_KEY = "poly-real:demo-position-cards";
 const PREDICTION_POSITION_CARDS_KEY = "poly-prediction-position-cards";
-const POSITIONS_VIEW_KEY = "poly-real:positions-view";
+const POSITIONS_HIDDEN_IDS_KEY = "poly-real:positions-hidden-ids";
 const APP_PAGE_KEY = "poly-real:app-page";
 const SCHEDULE_VIEW_KEY = "poly-real:schedule-view";
 
-let positionsView = "live";
 let demoPositionCards = [];
 /** @type {Array<Record<string, unknown>>} */
 let predictionPositionCards = [];
+/** Card ids hidden by Positions → Clear (session). New fills get new ids and still show. */
+let positionsHiddenIds = new Set();
 let lastPositionsFingerprint = "";
 let lastDemoLastWindowKey = null;
+
+function loadPositionsHiddenIds() {
+  try {
+    const raw = sessionStorage.getItem(POSITIONS_HIDDEN_IDS_KEY);
+    if (!raw) {
+      positionsHiddenIds = new Set();
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    positionsHiddenIds = new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    positionsHiddenIds = new Set();
+  }
+}
+
+function persistPositionsHiddenIds() {
+  try {
+    sessionStorage.setItem(
+      POSITIONS_HIDDEN_IDS_KEY,
+      JSON.stringify([...positionsHiddenIds].slice(-500)),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function isPositionCardHidden(card) {
+  const id = card?.id != null ? String(card.id) : "";
+  return Boolean(id && positionsHiddenIds.has(id));
+}
 
 function predictionPositionCardsStorageKey(series = selectedSeries) {
   return userScopedStorageKey(
@@ -3523,23 +3558,6 @@ function syncPredictionCardsFromRuntime() {
   refreshPositionsForPrediction();
 }
 
-function loadPositionsViewPref() {
-  try {
-    const saved = localStorage.getItem(POSITIONS_VIEW_KEY);
-    if (saved === "live" || saved === "demo") positionsView = saved;
-  } catch {
-    // ignore
-  }
-}
-
-function savePositionsViewPref() {
-  try {
-    localStorage.setItem(POSITIONS_VIEW_KEY, positionsView);
-  } catch {
-    // ignore
-  }
-}
-
 function loadAppPagePref() {
   try {
     const saved = localStorage.getItem(APP_PAGE_KEY);
@@ -3614,13 +3632,123 @@ function clearDemoPositionCards() {
     // ignore
   }
   lastPositionsFingerprint = "";
-  if (positionsView === "demo") updatePositionsPanel(windowState);
+  updatePositionsPanel(windowState);
 }
 
 window.clearDemoPositionCards = clearDemoPositionCards;
 
+/** Clear all Positions cards (live + demo). Prediction cards are not shown. */
+function clearAllPositionCards() {
+  const live = Array.isArray(windowState?.trading?.positionCards)
+    ? windowState.trading.positionCards
+    : [];
+  for (const card of live) {
+    if (card?.id != null) positionsHiddenIds.add(String(card.id));
+  }
+  for (const card of demoPositionCards) {
+    if (card?.id != null) positionsHiddenIds.add(String(card.id));
+  }
+  persistPositionsHiddenIds();
+  clearDemoPositionCards();
+  // Also wipe Prediction card store (no longer shown in Positions).
+  predictionPositionCards = [];
+  try {
+    localStorage.removeItem(predictionPositionCardsStorageKey());
+  } catch {
+    // ignore
+  }
+  lastPositionsFingerprint = "";
+  updatePositionsPanel(windowState);
+}
+
 function demoCardId(windowKey, side) {
   return `demo:${windowKey}:${side}`;
+}
+
+function triggerDemoPositionCardId(triggerId, windowStart, side) {
+  return `demo:trigger:${triggerId}:${windowStart}:${side}`;
+}
+
+/** Mirror a Trigger Demo open into Positions (same card shape as live, Demo label). */
+function upsertTriggerDemoPositionOpen(trigger, rt, state, side) {
+  if (!trigger?.id || rt?.runMode === "trade") return;
+  const windowStart = Number(state?.windowStart);
+  if (!Number.isFinite(windowStart)) return;
+  const shares = Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares);
+  const buyPrice = Number(rt.entryPrice);
+  if (!Number.isFinite(buyPrice)) return;
+  const series = state?.series || selectedSeries;
+  const id = triggerDemoPositionCardId(trigger.id, windowStart, side);
+  // Cleared cards stay hidden; new id each window/side so later hits still show.
+  positionsHiddenIds.delete(id);
+  upsertDemoPositionCard({
+    id,
+    windowKey: `${series}:${windowStart}`,
+    series,
+    side,
+    shares,
+    buyPrice,
+    buyCost: shares * buyPrice,
+    buyFees: 0,
+    buyAt: Math.floor(Date.now() / 1000),
+    status: "open",
+    confirmed: true,
+    demo: true,
+    source: "trigger",
+    triggerId: String(trigger.id),
+  });
+  lastPositionsFingerprint = "";
+  updatePositionsPanel(windowState || state);
+}
+
+function upsertTriggerDemoPositionSettle(trigger, rt, exitPrice, reason, opts = {}) {
+  if (!trigger?.id || rt?.runMode === "trade") return;
+  const side = rt.side === "down" ? "down" : rt.side === "up" ? "up" : null;
+  if (!side) return;
+  const windowStart = Number(windowState?.windowStart);
+  if (!Number.isFinite(windowStart)) return;
+  const shares = Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares);
+  const buyPrice = Number(rt.entryPrice);
+  const exit = Number(exitPrice);
+  if (!Number.isFinite(buyPrice) || !Number.isFinite(exit)) return;
+  const series = windowState?.series || selectedSeries;
+  const id = triggerDemoPositionCardId(trigger.id, windowStart, side);
+  const existing = demoPositionCards.find((c) => c.id === id);
+  const buyAt =
+    existing?.buyAt != null && Number.isFinite(Number(existing.buyAt))
+      ? Number(existing.buyAt)
+      : Math.floor(Date.now() / 1000);
+  const pnlUsd = (exit - buyPrice) * shares;
+  let status = "sold";
+  let outcome;
+  if (reason === "window-end") {
+    status = opts.heldWon === true ? "win" : "loss";
+    outcome = opts.heldWon === true ? side : side === "up" ? "down" : "up";
+  }
+  upsertDemoPositionCard({
+    id,
+    windowKey: `${series}:${windowStart}`,
+    series,
+    side,
+    shares,
+    buyPrice,
+    buyCost: shares * buyPrice,
+    buyFees: 0,
+    buyAt,
+    status,
+    sellPrice: exit,
+    sellProceeds: shares * exit,
+    sellFees: 0,
+    soldAt: Math.floor(Date.now() / 1000),
+    outcome,
+    pl: pnlUsd,
+    confirmed: true,
+    demo: true,
+    source: "trigger",
+    triggerId: String(trigger.id),
+  });
+  lastPositionsFingerprint = "";
+  updatePositionsPanel(windowState);
 }
 
 function shouldUpdateDemoPositionCards(trading) {
@@ -3738,34 +3866,27 @@ function ingestDemoPositionCards(state) {
 }
 
 function positionsFingerprint(cards) {
-  if (!Array.isArray(cards) || cards.length === 0) return `${positionsView}:`;
+  if (!Array.isArray(cards) || cards.length === 0) return "positions:";
   return (
-    `${positionsView}:` +
+    "positions:" +
     cards
       .map(
         (c) =>
-          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}`,
+          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}:${c.demo ? 1 : 0}`,
       )
       .join("|")
   );
 }
 
-function shouldShowPredictionCardsInPositions() {
-  // Live always includes Prediction cards. Demo includes them while Prediction is On.
-  if (positionsView === "live") return true;
-  return Boolean($("manipulation-detector")?.checked);
-}
-
-function mergePredictionCardsIntoPositions(tradeCards, series) {
-  const trades = Array.isArray(tradeCards)
-    ? tradeCards.filter((c) => !c?.series || c.series === series)
-    : [];
-  if (!shouldShowPredictionCardsInPositions()) {
-    return trades.slice(0, MAX_POSITION_CARDS);
-  }
-  const preds = predictionPositionCards.filter((c) => !c?.series || c.series === series);
-  if (preds.length === 0) return trades.slice(0, MAX_POSITION_CARDS);
-  return [...preds, ...trades]
+/** Merge live trade cards + demo cards (no Prediction). Newest buyAt first. */
+function mergePositionsCards(liveCards, series) {
+  const live = (Array.isArray(liveCards) ? liveCards : [])
+    .filter((c) => c && (!c.series || c.series === series) && !isPositionCardHidden(c))
+    .map((c) => ({ ...c, demo: false }));
+  const demo = demoPositionCards.filter(
+    (c) => c && (!c.series || c.series === series) && !isPositionCardHidden(c),
+  );
+  return [...demo, ...live]
     .sort((a, b) => {
       const ta = Number(a?.buyAt);
       const tb = Number(b?.buyAt);
@@ -3811,21 +3932,17 @@ function updatePositionsPanel(state) {
   ingestDemoPositionCards(state);
 
   const series = selectedSeries;
-  const rawCards =
-    positionsView === "demo"
-      ? demoPositionCards
-      : state?.trading?.positionCards;
-  const cards = mergePredictionCardsIntoPositions(rawCards, series);
+  const cards = mergePositionsCards(state?.trading?.positionCards, series);
 
   const fingerprint = positionsFingerprint(cards);
   if (fingerprint === lastPositionsFingerprint) return;
   lastPositionsFingerprint = fingerprint;
-  if (positionsView === "live") refreshTradeTriggerStatsFromPositions(state);
+  refreshTradeTriggerStatsFromPositions(state);
 
   if (cards.length === 0) {
     list.innerHTML = "";
     empty.hidden = false;
-    empty.textContent = positionsView === "demo" ? "No demo positions yet" : "No positions yet";
+    empty.textContent = "No positions yet";
     syncPositionsScrollable();
     return;
   }
@@ -3835,27 +3952,12 @@ function updatePositionsPanel(state) {
   syncPositionsScrollable();
 }
 
-function syncPositionsViewControls() {
-  document.querySelectorAll(".positions-view-toggle-btn").forEach((btn) => {
-    btn.classList.toggle("is-active", btn.dataset.positionsView === positionsView);
-  });
-}
-
-function bindPositionsViewSelect() {
-  const buttons = document.querySelectorAll(".positions-view-toggle-btn");
-  if (buttons.length === 0) return;
-  if (buttons[0].dataset.bound === "1") return;
-  buttons.forEach((btn) => {
-    btn.dataset.bound = "1";
-    btn.addEventListener("click", () => {
-      const next = btn.dataset.positionsView === "demo" ? "demo" : "live";
-      if (next === positionsView) return;
-      positionsView = next;
-      savePositionsViewPref();
-      syncPositionsViewControls();
-      lastPositionsFingerprint = "";
-      updatePositionsPanel(windowState);
-    });
+function bindPositionsClear() {
+  const btn = $("positions-clear");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", () => {
+    clearAllPositionCards();
   });
 }
 
@@ -10266,6 +10368,7 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
     void fetchTriggerLiveStats(trigger.id).then(() => updateTriggerCardStats(trigger.id));
   } else {
     recordTriggerDemoStats(trigger.id, result, pnlUsd, reason);
+    upsertTriggerDemoPositionSettle(trigger, rt, exit, reason, opts);
   }
 
   const liveSide = rt.side === "down" ? "down" : rt.side === "up" ? "up" : null;
@@ -10531,6 +10634,9 @@ async function openTriggerPosition(trigger, rt, state, side) {
     price: rt.entryPrice,
     shares: rt.entryShares,
   });
+  if (runMode !== "trade") {
+    upsertTriggerDemoPositionOpen(trigger, rt, state, side);
+  }
   if (windowState) drawPriceChart(windowState);
 }
 
@@ -10649,9 +10755,11 @@ function triggerGtdDesiredSides(trigger, state) {
   ) {
     return [locked.side];
   }
+  // Lock immediately (even before asks) so tick-to-tick Ask flips cannot
+  // cancel/replace the one resting order with the other side.
+  let side = "up";
   const upAsk = triggerAskPrice(state, "up");
   const downAsk = triggerAskPrice(state, "down");
-  let side = "up";
   if (Number.isFinite(upAsk) && Number.isFinite(downAsk)) {
     side = upAsk <= downAsk ? "up" : "down";
   } else if (Number.isFinite(downAsk) && !Number.isFinite(upAsk)) {
@@ -11708,10 +11816,9 @@ function bindPageToggle() {
 }
 
 async function init() {
-  loadPositionsViewPref();
+  loadPositionsHiddenIds();
   demoPositionCards = loadDemoPositionCards();
-  bindPositionsViewSelect();
-  syncPositionsViewControls();
+  bindPositionsClear();
   initSimulatorBoxScrollbars();
   initChart();
   initColumnSplitter();
