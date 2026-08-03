@@ -2943,6 +2943,21 @@ body.is-schedule-resizing {
   white-space: nowrap;
 }
 
+.schedule-hour-slot-stats.is-no-recordings {
+  justify-content: center;
+}
+
+.schedule-hour-slot-no-recordings {
+  width: 100%;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  color: var(--muted, #8b93a7);
+  white-space: nowrap;
+}
+
 .schedule-hour-slot .schedule-heatmap-row[hidden] {
   display: none !important;
 }

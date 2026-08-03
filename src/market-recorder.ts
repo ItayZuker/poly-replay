@@ -567,7 +567,8 @@ export class MarketRecorder {
   private async captureEndPrices(): Promise<void> {
     if (!this.activeWindow?.slug) return;
 
-    this.finalizing = true;
+    // Caller (rollClosedWindow) owns `finalizing` for the whole rollover so this
+    // wait cannot leave the recorder permanently stuck if finalize fails.
     try {
       const { asset, timeframe } = parseMarketSeries(this.market._id);
       const pair = await fetchMarketPairFromSlug(this.activeWindow.slug);
@@ -597,6 +598,33 @@ export class MarketRecorder {
       );
     } catch {
       // best effort
+    }
+  }
+
+  /**
+   * Close the active window after windowEnd: resolve official prices, then save.
+   * Always clears `finalizing` / active window so a throw cannot stall recording forever.
+   */
+  private async rollClosedWindow(): Promise<void> {
+    if (!this.activeWindow) return;
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (nowSec < this.activeWindow.windowEnd) return;
+
+    this.finalizing = true;
+    try {
+      await this.captureEndPrices();
+      await this.finalizeWindow();
+    } catch (err) {
+      logService.error(
+        "recorder",
+        `Window rollover failed (${this.market._id}): ${String(err)}`,
+      );
+    } finally {
+      // finalizeWindow normally clears this; belt-and-suspenders if it returned early
+      // or threw before its own finally.
+      if (this.finalizing || this.activeWindow) {
+        this.resetActiveWindow();
+      }
     }
   }
 
@@ -659,30 +687,32 @@ export class MarketRecorder {
     }
 
     this.finalizing = true;
-    finalizeWindowDynamics(this.activeWindow);
-
-    let record: WindowHitRecord = {
-      windowStart: this.activeWindow.windowStart,
-      windowEnd: this.activeWindow.windowEnd,
-      slug: this.activeWindow.slug,
-      question: this.activeWindow.question,
-      conditionId: this.activeWindow.conditionId,
-      assetPrice: this.activeWindow.assetPrice,
-      prevCloseAsset: this.activeWindow.prevCloseAsset,
-      assetGap: this.activeWindow.assetGap,
-      ptbCrossings: this.activeWindow.ptbCrossings,
-      minAssetPrice: this.activeWindow.minAssetPrice,
-      maxAssetPrice: this.activeWindow.maxAssetPrice,
-      assetRange: this.activeWindow.assetRange,
-      rangeTop: this.activeWindow.rangeTop,
-      rangeBottom: this.activeWindow.rangeBottom,
-      windowOutcome: this.activeWindow.windowOutcome,
-      yesPrice: this.activeWindow.yesPrice,
-      noPrice: this.activeWindow.noPrice,
-      savedAt: new Date().toISOString(),
-    };
-
     try {
+      // Must stay inside try — a throw here used to leave finalizing=true forever
+      // and block health recovery / new windows.
+      finalizeWindowDynamics(this.activeWindow);
+
+      let record: WindowHitRecord = {
+        windowStart: this.activeWindow.windowStart,
+        windowEnd: this.activeWindow.windowEnd,
+        slug: this.activeWindow.slug,
+        question: this.activeWindow.question,
+        conditionId: this.activeWindow.conditionId,
+        assetPrice: this.activeWindow.assetPrice,
+        prevCloseAsset: this.activeWindow.prevCloseAsset,
+        assetGap: this.activeWindow.assetGap,
+        ptbCrossings: this.activeWindow.ptbCrossings,
+        minAssetPrice: this.activeWindow.minAssetPrice,
+        maxAssetPrice: this.activeWindow.maxAssetPrice,
+        assetRange: this.activeWindow.assetRange,
+        rangeTop: this.activeWindow.rangeTop,
+        rangeBottom: this.activeWindow.rangeBottom,
+        windowOutcome: this.activeWindow.windowOutcome,
+        yesPrice: this.activeWindow.yesPrice,
+        noPrice: this.activeWindow.noPrice,
+        savedAt: new Date().toISOString(),
+      };
+
       await this.flushTicks();
 
       if (isFlatPriceWindow(record)) {
@@ -810,8 +840,7 @@ export class MarketRecorder {
     let rolling = false;
 
     if (this.activeWindow && nowSec >= this.activeWindow.windowEnd) {
-      await this.captureEndPrices();
-      await this.finalizeWindow();
+      await this.rollClosedWindow();
       rolling = true;
       this.windowFetchPending = true;
     } else if (this.activeWindow) {
@@ -884,8 +913,7 @@ export class MarketRecorder {
 
       if (this.activeWindow && this.activeWindow.windowStart !== windowStart) {
         if (nowSec >= this.activeWindow.windowEnd) {
-          await this.captureEndPrices();
-          await this.finalizeWindow();
+          await this.rollClosedWindow();
         } else if (this.activeWindow.slug) {
           try {
             pair = await fetchMarketPairFromSlug(this.activeWindow.slug);

@@ -83,6 +83,8 @@ async function setScheduleWorkspaceMode(nextMode, options = {}) {
     // ignore
   }
   syncScheduleWorkspaceUi();
+  // Swap hour-cell boards immediately (separate Live/Replay buffers) before any await.
+  window.SchedulePlacements?.prepareWorkspaceHourSlots?.(mode);
   if (options.reload === false) return;
 
   // Clear both panes immediately so Live cards never linger while Replay loads.

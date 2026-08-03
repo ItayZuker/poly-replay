@@ -2579,6 +2579,7 @@
             prediction: options.prediction ?? null,
             triggers: Array.isArray(options.triggers) ? options.triggers : undefined,
             live: options.live === true,
+            recordingsOnly: options.recordingsOnly === true,
           }),
         },
       );

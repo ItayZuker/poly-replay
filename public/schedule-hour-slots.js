@@ -1,18 +1,25 @@
 /**
  * Schedule week grid: every UTC weekday×hour cell shows Trigger Trade stats + P/L.
- * Live: GET /api/schedule-hour-stats (current ISO week).
- * Replay: filled from Run SSE (synthetic hour placements).
+ * Live and Replay keep separate in-memory boards so workspace toggles paint instantly
+ * without flashing the other mode’s stats.
+ * Live: GET /api/schedule-hour-stats (latest calendar day per slot).
+ * Replay: baseline gray = recorded window counts; Run SSE fills green/red/blue/gray.
  */
 (function () {
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
   /** @type {Map<string, object>} */
-  let slotStats = new Map();
+  let liveSlotStats = new Map();
+  /** @type {Map<string, object>} */
+  let replaySlotStats = new Map();
+  /** @type {Map<string, number>} recorded window counts (latest day per slot). */
+  let recordingCounts = new Map();
   let fetchTimer = null;
   let fetchInFlight = false;
+  let baselineFetchInFlight = false;
   /** True while Schedule Replay Run is in progress. */
   let replayRunning = false;
-  /** Slot keys that have received a result this run (spinner clears). */
+  /** Slot keys that have received a Replay Run result (spinner clears). */
   let replayResolvedKeys = new Set();
 
   function slotKey(day, hour) {
@@ -30,6 +37,7 @@
       stopLoss: 0,
       pnl: 0,
       hasData: false,
+      isBaseline: false,
     };
   }
 
@@ -42,18 +50,56 @@
     const gray = Math.max(0, Math.round(Number(raw.gray) || 0));
     const stopLoss = Math.max(0, Math.round(Number(raw.stopLoss) || 0));
     const pnl = Number(raw.pnl) || 0;
+    const isBaseline = raw.isBaseline === true;
     const hasData =
       raw.hasData === true || green + red + blue + gray > 0 || Math.abs(pnl) > 1e-9;
-    return { day, hour: Number(hour), green, red, blue, gray, stopLoss, pnl, hasData };
+    return {
+      day,
+      hour: Number(hour),
+      green,
+      red,
+      blue,
+      gray,
+      stopLoss,
+      pnl,
+      hasData,
+      isBaseline,
+    };
   }
 
-  function ensureAllEmpty() {
+  function isReplayWorkspace() {
+    return (
+      document.getElementById("page-schedule-heatmap")?.classList.contains("is-replay-workspace") ??
+      false
+    );
+  }
+
+  function isHeatmapView() {
+    return (
+      document.getElementById("page-schedule-heatmap")?.classList.contains("is-heatmap-view") ?? false
+    );
+  }
+
+  function selectedSeries() {
+    return window.getSelectedSeries?.() || "btc-5m";
+  }
+
+  /** Active board for the current workspace (Live vs Replay). */
+  function activeSlotStats() {
+    return isReplayWorkspace() ? replaySlotStats : liveSlotStats;
+  }
+
+  function ensureMapFilled(map) {
     for (const day of DAYS) {
       for (let hour = 0; hour < 24; hour++) {
         const key = slotKey(day, hour);
-        if (!slotStats.has(key)) slotStats.set(key, emptySlot(day, hour));
+        if (!map.has(key)) map.set(key, emptySlot(day, hour));
       }
     }
+  }
+
+  function ensureAllEmpty() {
+    ensureMapFilled(activeSlotStats());
   }
 
   function formatPnlAbs(n) {
@@ -108,17 +154,53 @@
     return wrap;
   }
 
-  function isReplayWorkspace() {
-    return (
-      document.getElementById("page-schedule-heatmap")?.classList.contains("is-replay-workspace") ??
-      false
+  function buildNoRecordingsDom() {
+    const wrap = document.createElement("div");
+    wrap.className = "schedule-hour-slot-stats is-no-recordings";
+    const label = document.createElement("div");
+    label.className = "schedule-hour-slot-no-recordings";
+    label.textContent = "No Recordings";
+    wrap.appendChild(label);
+    return wrap;
+  }
+
+  function recordingCountFor(day, hour) {
+    return recordingCounts.get(slotKey(day, hour)) ?? 0;
+  }
+
+  function baselineSlot(day, hour) {
+    const count = recordingCountFor(day, hour);
+    if (count <= 0) {
+      return { ...emptySlot(day, hour), isBaseline: true };
+    }
+    return normalizeSlot(
+      {
+        green: 0,
+        red: 0,
+        blue: 0,
+        gray: count,
+        stopLoss: 0,
+        pnl: 0,
+        hasData: true,
+        isBaseline: true,
+      },
+      day,
+      hour,
     );
   }
 
-  function isHeatmapView() {
-    return (
-      document.getElementById("page-schedule-heatmap")?.classList.contains("is-heatmap-view") ?? false
-    );
+  /** Apply recording-count baseline to Replay slots that are not Run-resolved. */
+  function applyBaselineToUnresolved() {
+    ensureMapFilled(replaySlotStats);
+    for (const day of DAYS) {
+      for (let hour = 0; hour < 24; hour++) {
+        const key = slotKey(day, hour);
+        if (replayResolvedKeys.has(key)) continue;
+        const prev = replaySlotStats.get(key);
+        if (prev && prev.hasData && !prev.isBaseline) continue;
+        replaySlotStats.set(key, baselineSlot(day, hour));
+      }
+    }
   }
 
   /** Strip Schedule Trigger stats / spinners from hour cells (Heatmap must stay untouched). */
@@ -129,7 +211,7 @@
       for (const el of col.querySelectorAll(".schedule-hour-slot")) {
         el.querySelector(".schedule-hour-slot-stats")?.remove();
         el.querySelector(".schedule-hour-slot-loading")?.remove();
-        el.classList.remove("has-slot-stats", "is-stats-loading");
+        el.classList.remove("has-slot-stats", "is-stats-loading", "is-no-recordings");
         const heatRow = el.querySelector(".schedule-heatmap-row");
         if (heatRow) heatRow.hidden = false;
       }
@@ -155,19 +237,42 @@
   }
 
   function slotShowsReplaySpinner(day, hour) {
-    return (
-      replayRunning &&
-      isReplayWorkspace() &&
-      !isHeatmapView() &&
-      !replayResolvedKeys.has(slotKey(day, hour))
-    );
+    if (!replayRunning || !isReplayWorkspace() || isHeatmapView()) return false;
+    if (replayResolvedKeys.has(slotKey(day, hour))) return false;
+    // No Recordings cells never spin — nothing to simulate.
+    if (recordingCountFor(day, hour) <= 0) return false;
+    return true;
+  }
+
+  /**
+   * Display model for a Replay cell:
+   * - Run result (resolved) → green/red/blue/gray from sim (gray = no-trigger windows)
+   * - Idle / pending Run → gray = recorded window count; empty slots → "No Recordings"
+   */
+  function displayStatsForSlot(day, hour, stats) {
+    const key = slotKey(day, hour);
+    const count = recordingCountFor(day, hour);
+    const resolved = replayResolvedKeys.has(key) || (stats.hasData === true && !stats.isBaseline);
+
+    if (resolved) {
+      if (!stats.hasData && count === 0) {
+        return { kind: "no-recordings" };
+      }
+      return { kind: "stats", stats };
+    }
+
+    if (count > 0) {
+      return { kind: "stats", stats: baselineSlot(day, hour) };
+    }
+    return { kind: "no-recordings" };
   }
 
   function paintSlotElement(el, day, hour) {
     // Replay / Live Schedule paints must never mutate Heatmap cells.
     if (isHeatmapView()) return;
 
-    const stats = slotStats.get(slotKey(day, hour)) || emptySlot(day, hour);
+    const map = activeSlotStats();
+    const stats = map.get(slotKey(day, hour)) || emptySlot(day, hour);
     el.querySelector(".schedule-hour-slot-stats")?.remove();
     el.querySelector(".schedule-hour-slot-loading")?.remove();
     const heatRow = el.querySelector(".schedule-heatmap-row");
@@ -175,22 +280,38 @@
 
     const loading = slotShowsReplaySpinner(day, hour);
     el.classList.toggle("is-stats-loading", loading);
-    // While spinning, always show zeros under the overlay (reset at Run start).
-    const display = loading ? emptySlot(day, hour) : stats;
-    el.classList.toggle("has-slot-stats", !loading && stats.hasData === true);
-    el.appendChild(buildStatsDom(display, isReplayWorkspace()));
+    el.classList.remove("is-no-recordings");
 
-    if (loading) {
-      const overlay = document.createElement("div");
-      overlay.className = "schedule-hour-slot-loading";
-      overlay.setAttribute("aria-label", "Simulating");
-      overlay.setAttribute("aria-busy", "true");
-      const spinner = document.createElement("span");
-      spinner.className = "schedule-hour-slot-spinner";
-      spinner.setAttribute("aria-hidden", "true");
-      overlay.appendChild(spinner);
-      el.appendChild(overlay);
+    if (isReplayWorkspace()) {
+      const display = displayStatsForSlot(day, hour, stats);
+      if (display.kind === "no-recordings") {
+        // Stay on "No Recordings" during Run — no spinner, no zeros flash.
+        el.classList.toggle("has-slot-stats", false);
+        el.classList.toggle("is-stats-loading", false);
+        el.classList.add("is-no-recordings");
+        el.appendChild(buildNoRecordingsDom());
+        return;
+      }
+      const show = display.stats;
+      el.classList.toggle("has-slot-stats", show.hasData === true);
+      // Pending Run: keep gray recording count visible under the spinner.
+      el.appendChild(buildStatsDom(show, true));
+      if (loading) {
+        const overlay = document.createElement("div");
+        overlay.className = "schedule-hour-slot-loading";
+        overlay.setAttribute("aria-label", "Simulating");
+        overlay.setAttribute("aria-busy", "true");
+        const spinner = document.createElement("span");
+        spinner.className = "schedule-hour-slot-spinner";
+        spinner.setAttribute("aria-hidden", "true");
+        overlay.appendChild(spinner);
+        el.appendChild(overlay);
+      }
+      return;
     }
+
+    el.classList.toggle("has-slot-stats", stats.hasData === true);
+    el.appendChild(buildStatsDom(stats, false));
   }
 
   function paint() {
@@ -207,37 +328,82 @@
     }
   }
 
+  /**
+   * Instant Live ↔ Replay board swap (call right after the workspace CSS class flips).
+   * Does not clear the other mode’s buffer.
+   */
+  function showActiveWorkspace() {
+    ensureMapFilled(liveSlotStats);
+    ensureMapFilled(replaySlotStats);
+    if (isReplayWorkspace() && !replayRunning) {
+      applyBaselineToUnresolved();
+    }
+    if (!isHeatmapView()) paint();
+    notifyDayHeaders();
+    window.SchedulePlacements?.syncHeaderSummaryControls?.();
+  }
+
   function setReplayRunning(on) {
     replayRunning = Boolean(on);
     if (replayRunning) {
       replayResolvedKeys = new Set();
-      // Reset every cell to zeros under the spinner when Run is clicked.
-      slotStats = new Map();
-      ensureAllEmpty();
+      // Clear prior Run results but keep recording-count baseline under spinners.
+      replaySlotStats = new Map();
+      ensureMapFilled(replaySlotStats);
+      applyBaselineToUnresolved();
+    } else {
+      applyBaselineToUnresolved();
     }
-    // Update Schedule board only — never touch Heatmap DOM mid-run.
     if (!isHeatmapView()) paint();
     notifyDayHeaders();
   }
 
+  /** Write Live hour stats (keeps updating even while Replay is visible). */
   function applySlots(list) {
-    ensureAllEmpty();
+    ensureMapFilled(liveSlotStats);
     if (Array.isArray(list)) {
       for (const raw of list) {
         const day = String(raw?.day || "").toLowerCase();
         const hour = Number(raw?.hour);
         if (!DAYS.includes(day) || !Number.isFinite(hour) || hour < 0 || hour > 23) continue;
-        slotStats.set(slotKey(day, hour), normalizeSlot(raw, day, hour));
+        liveSlotStats.set(slotKey(day, hour), normalizeSlot(raw, day, hour));
       }
     }
-    paint();
-    notifyDayHeaders();
-    window.SchedulePlacements?.syncHeaderSummaryControls?.();
+    // Only repaint when Live is the visible workspace.
+    if (!isReplayWorkspace() && !isHeatmapView()) {
+      paint();
+      notifyDayHeaders();
+      window.SchedulePlacements?.syncHeaderSummaryControls?.();
+    }
   }
 
+  /**
+   * Clear the active workspace board only.
+   * Does not wipe the other mode’s cached slots (toggle must stay instant).
+   */
   function clearAll() {
-    slotStats = new Map();
-    ensureAllEmpty();
+    if (isReplayWorkspace()) {
+      replaySlotStats = new Map();
+      replayResolvedKeys = new Set();
+      ensureMapFilled(replaySlotStats);
+      applyBaselineToUnresolved();
+    } else {
+      liveSlotStats = new Map();
+      ensureMapFilled(liveSlotStats);
+    }
+    if (!isHeatmapView()) paint();
+    notifyDayHeaders();
+  }
+
+  /** Series change: drop both boards so neither shows the previous market. */
+  function clearBothWorkspaces() {
+    liveSlotStats = new Map();
+    replaySlotStats = new Map();
+    replayResolvedKeys = new Set();
+    recordingCounts = new Map();
+    ensureMapFilled(liveSlotStats);
+    ensureMapFilled(replaySlotStats);
+    if (isReplayWorkspace() && !replayRunning) applyBaselineToUnresolved();
     if (!isHeatmapView()) paint();
     notifyDayHeaders();
   }
@@ -245,7 +411,6 @@
   function applyReplayPlacementStat(data) {
     if (!data) return;
     const id = String(data.placementId || data._id || "");
-    // Synthetic ids: hour:mon:14
     const m = /^hour:([a-z]+):(\d{1,2})$/i.exec(id);
     let day = data.day;
     let hour = data.startHour ?? data.hour;
@@ -256,7 +421,6 @@
     day = String(day || "").toLowerCase();
     hour = Number(hour);
     if (!DAYS.includes(day) || !Number.isFinite(hour)) return;
-    const prev = slotStats.get(slotKey(day, hour)) || emptySlot(day, hour);
     const next = normalizeSlot(
       {
         green: data.green,
@@ -266,27 +430,32 @@
         stopLoss: data.stopLoss,
         pnl: data.pnl,
         hasData: data.hasData !== false,
+        isBaseline: false,
       },
       day,
       hour,
     );
-    // Prefer incoming hasData during a run even if zeros.
-    if (data.hasData === true || next.hasData || prev.hasData) next.hasData = true;
+    if (data.hasData === true || next.hasData) next.hasData = true;
+    if (data.hasData === false) next.hasData = false;
     const key = slotKey(day, hour);
-    slotStats.set(key, next);
+    ensureMapFilled(replaySlotStats);
+    replaySlotStats.set(key, next);
     replayResolvedKeys.add(key);
-    // Keep Heatmap hour cells stable while Replay streams results in the background.
-    if (!isHeatmapView()) {
+    // Paint only when Replay is visible (Run can finish while user is on Live).
+    if (isReplayWorkspace() && !isHeatmapView()) {
       const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
       const el = col?.querySelector(`.schedule-hour-slot[data-hour="${hour}"]`);
       if (el) paintSlotElement(el, day, hour);
       else paint();
+      notifyDayHeaders();
     }
-    notifyDayHeaders();
   }
 
+  /**
+   * Fetch Live hour stats into the Live buffer.
+   * Always updates the buffer (even in Replay) so toggling back is instant / fresh.
+   */
   async function refreshLive() {
-    if (isReplayWorkspace()) return;
     if (fetchInFlight) {
       if (fetchTimer) clearTimeout(fetchTimer);
       fetchTimer = setTimeout(() => {
@@ -308,6 +477,54 @@
     }
   }
 
+  /**
+   * Load recorded window counts and seed Replay cells (gray = count, or No Recordings).
+   * Does not overwrite Run-resolved slots. Safe to call while Live is visible (buffer only).
+   */
+  async function refreshReplayBaseline(series) {
+    if (replayRunning) return;
+    if (baselineFetchInFlight) return;
+    baselineFetchInFlight = true;
+    try {
+      const s = series || selectedSeries();
+      const res = await fetch(
+        `/api/schedule-replay-slot-counts?series=${encodeURIComponent(s)}`,
+        { credentials: "same-origin" },
+      );
+      if (!res.ok) return;
+      const body = await res.json().catch(() => null);
+      const next = new Map();
+      if (Array.isArray(body?.slots)) {
+        for (const raw of body.slots) {
+          const day = String(raw?.day || "").toLowerCase();
+          const hour = Number(raw?.hour);
+          if (!DAYS.includes(day) || !Number.isFinite(hour)) continue;
+          next.set(slotKey(day, hour), Math.max(0, Math.round(Number(raw.windowCount) || 0)));
+        }
+      }
+      recordingCounts = next;
+      applyBaselineToUnresolved();
+      if (isReplayWorkspace() && !isHeatmapView()) {
+        paint();
+        notifyDayHeaders();
+        window.SchedulePlacements?.syncHeaderSummaryControls?.();
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      baselineFetchInFlight = false;
+    }
+  }
+
+  function effectiveSlotForTotals(day, hour) {
+    const map = activeSlotStats();
+    const stats = map.get(slotKey(day, hour)) || emptySlot(day, hour);
+    if (!isReplayWorkspace() || replayRunning) return stats;
+    const display = displayStatsForSlot(day, hour, stats);
+    if (display.kind === "no-recordings") return emptySlot(day, hour);
+    return display.stats;
+  }
+
   function totals() {
     ensureAllEmpty();
     let pnl = 0;
@@ -316,14 +533,17 @@
     let blue = 0;
     let gray = 0;
     let hasData = false;
-    for (const stats of slotStats.values()) {
-      if (!stats.hasData) continue;
-      hasData = true;
-      pnl += stats.pnl || 0;
-      green += stats.green || 0;
-      red += stats.red || 0;
-      blue += stats.blue || 0;
-      gray += stats.gray || 0;
+    for (const day of DAYS) {
+      for (let hour = 0; hour < 24; hour++) {
+        const stats = effectiveSlotForTotals(day, hour);
+        if (!stats.hasData) continue;
+        hasData = true;
+        pnl += stats.pnl || 0;
+        green += stats.green || 0;
+        red += stats.red || 0;
+        blue += stats.blue || 0;
+        gray += stats.gray || 0;
+      }
     }
     return { hasData, pnl, green, red, blue, gray };
   }
@@ -342,7 +562,7 @@
       return { hasData, pnl, green, red, blue, gray };
     }
     for (let hour = 0; hour < 24; hour++) {
-      const stats = slotStats.get(slotKey(d, hour)) || emptySlot(d, hour);
+      const stats = effectiveSlotForTotals(d, hour);
       if (!stats.hasData) continue;
       hasData = true;
       pnl += stats.pnl || 0;
@@ -359,7 +579,16 @@
   }
 
   function getSlot(day, hour) {
-    return slotStats.get(slotKey(day, hour)) || emptySlot(day, hour);
+    const map = activeSlotStats();
+    const stats = map.get(slotKey(day, hour)) || emptySlot(day, hour);
+    if (isReplayWorkspace() && !replayRunning) {
+      const display = displayStatsForSlot(day, hour, stats);
+      if (display.kind === "no-recordings") {
+        return { ...emptySlot(day, hour), noRecordings: true };
+      }
+      return display.stats;
+    }
+    return stats;
   }
 
   /** Build 168 synthetic 1h placements + a buy-disabled setup for trigger-only Replay. */
@@ -404,20 +633,26 @@
   }
 
   function init() {
-    ensureAllEmpty();
+    ensureMapFilled(liveSlotStats);
+    ensureMapFilled(replaySlotStats);
     syncView();
-    if (!isReplayWorkspace() && !isHeatmapView()) void refreshLive();
+    // Warm both buffers so the first Live ↔ Replay toggle has data ready.
+    void refreshLive();
+    void refreshReplayBaseline();
   }
 
   window.ScheduleHourSlots = {
     init,
     paint,
     syncView,
+    showActiveWorkspace,
     clearAll,
+    clearBothWorkspaces,
     applySlots,
     applyReplayPlacementStat,
     setReplayRunning,
     refreshLive,
+    refreshReplayBaseline,
     totals,
     dayTotals,
     getSlot,

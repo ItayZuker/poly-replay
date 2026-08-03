@@ -493,7 +493,7 @@ export interface PlacementLiveStats {
   locked: boolean;
 }
 
-/** Hour-slot aggregates for one UTC weekday×hour (current ISO week: Trigger + legacy phase). */
+/** Hour-slot aggregates for one UTC weekday×hour (latest calendar day for that slot: Trigger + legacy phase). */
 export interface ScheduleHourSlotStats {
   day: string; // mon..sun
   hour: number; // 0-23
@@ -533,7 +533,7 @@ export interface TradingPublicState {
   positionCards: TradingPositionCard[];
   placementStats: PlacementLiveStats[];
   /**
-   * Optional Trigger Trade hour-slot stats for the current UTC ISO week.
+   * Optional Trigger Trade hour-slot stats (latest calendar day per weekday×hour).
    * Prefer GET /api/schedule-hour-stats; may be omitted from SSE snapshots.
    */
   hourSlotStats?: ScheduleHourSlotStats[];

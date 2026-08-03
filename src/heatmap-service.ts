@@ -208,6 +208,43 @@ export function getHeatmapState(series?: string | null): HeatmapPublicState {
   return rebuildState(series);
 }
 
+export interface ReplaySlotWindowCount {
+  day: HeatmapDayId;
+  hour: number;
+  /** Recorded windows on the latest calendar day for this weekday×hour. */
+  windowCount: number;
+}
+
+/**
+ * Per UTC weekday×hour counts for Replay Schedule baseline (gray before Run).
+ * Uses the same latest-day-per-slot window set as Heatmap / Replay Run.
+ */
+export function getReplaySlotWindowCounts(series?: string | null): {
+  cutoffUtc: number;
+  slots: ReplaySlotWindowCount[];
+} {
+  pruneExpiredWindows();
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  const filter = series ? String(series).trim() : "";
+  const counts = new Map<string, number>();
+  for (const stored of activeStoredWindows(filter || undefined)) {
+    const key = bucketKey(stored.day, stored.hour);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const days: HeatmapDayId[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const slots: ReplaySlotWindowCount[] = [];
+  for (const day of days) {
+    for (let hour = 0; hour < 24; hour++) {
+      slots.push({
+        day,
+        hour,
+        windowCount: counts.get(bucketKey(day, hour)) ?? 0,
+      });
+    }
+  }
+  return { cutoffUtc, slots };
+}
+
 export function forgetRecordedWindow(series: string, windowStart: number): void {
   windowStore.delete(windowKey(series, windowStart));
 }

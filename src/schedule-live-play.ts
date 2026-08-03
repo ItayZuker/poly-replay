@@ -1,6 +1,10 @@
 /**
- * Live Schedule Open Replay: recorded windows for a UTC hour this ISO week,
+ * Live Schedule Open Replay: recorded windows for a UTC weekday×hour slot,
  * with buy/sell markers from real Trigger (and legacy phase) fills — not re-sim.
+ *
+ * Uses the latest calendar day for that slot (same override rule as Live hour
+ * stats): prefer the day that still has ledger fills; otherwise the latest
+ * recorded day. A new ISO week does not clear other days' Open Replay.
  *
  * Windows without Chainlink tick files are omitted (same rule as Replay Run):
  * no price path ⇒ no Open Replay row (avoids empty charts / false review).
@@ -10,13 +14,11 @@
 import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
 import { windowsHavingChainlinkTicks } from "./db/tick-repository.js";
 import { listTradingStatEvents, type TradingStatEvent } from "./db/trading-session-memory-repository.js";
-import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
+import { getWeekHistoryCutoffUtcSec, utcDayKeyFromWindowStart } from "./day-hour-slots.js";
 import { isFlatPriceWindow } from "./window-dynamics.js";
 import {
-  currentUtcIsoWeekKey,
   triggerTradeWindowMs,
-  utcIsoWeekKey,
-  type ScheduleHourDayId,
+  utcDayKeyFromMs,
 } from "./schedule-hour-stats.js";
 import {
   parseSyntheticHourPlacement,
@@ -160,7 +162,7 @@ function tradeDotsFromEvent(event: TradingStatEvent): TradeDot[] {
 
 /**
  * Build Open Replay payload for a Live Schedule hour cell (`hour:mon:14`).
- * Uses Mongo recorded_windows for this ISO week + live ledger markers.
+ * Uses Mongo recorded_windows for the active calendar day of that slot + ledger markers.
  * Omits windows with no Chainlink ticks (and ledger-only / orphan rows).
  */
 export async function buildLiveHourPlayPayload(
@@ -180,23 +182,21 @@ export async function buildLiveHourPlayPayload(
   if (!placement) return null;
 
   const nowMs = options.nowMs ?? Date.now();
-  const weekKey = currentUtcIsoWeekKey(nowMs);
   const day = placement.day;
   const startHour = placement.startHour;
   const series = market._id;
 
-  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  const cutoffUtc = getWeekHistoryCutoffUtcSec(new Date(nowMs));
   const listed = await listRecordedWindowsSince(cutoffUtc, series);
-  const slotWindows = listed
+  const slotWindowsAll = listed
     .filter((w) => !isFlatPriceWindow(w))
-    .filter((w) => utcIsoWeekKey(w.windowStart) === weekKey)
     .filter((w) => windowMatchesHourSlot(w.windowStart, day, startHour))
     .sort((a, b) => a.windowStart - b.windowStart);
 
   const events = (await listTradingStatEvents(userId, {})).filter(isLiveTradeEvent);
 
-  // Group events by window start (from windowKey, else buyAt floored to window).
-  const eventsByWindow = new Map<number, TradingStatEvent[]>();
+  type SlotEvent = { atMs: number; winStart: number; event: TradingStatEvent };
+  const slotEvents: SlotEvent[] = [];
 
   for (const event of events) {
     const atMs = triggerTradeWindowMs({
@@ -204,7 +204,7 @@ export async function buildLiveHourPlayPayload(
       windowKey: event.card?.windowKey,
     });
     if (!Number.isFinite(atMs)) continue;
-    if (utcIsoWeekKey(atMs / 1000) !== weekKey) continue;
+    if (atMs < cutoffUtc * 1000) continue;
     const slotDay = UTC_DAY_TO_ID[new Date(atMs).getUTCDay()] ?? "sun";
     if (slotDay !== day || new Date(atMs).getUTCHours() !== startHour) continue;
 
@@ -215,9 +215,34 @@ export async function buildLiveHourPlayPayload(
       winStart = buySec - (buySec % 300);
     }
     if (!Number.isFinite(winStart)) continue;
-    const list = eventsByWindow.get(winStart) ?? [];
-    list.push(event);
-    eventsByWindow.set(winStart, list);
+    slotEvents.push({ atMs, winStart, event });
+  }
+
+  // Prefer the calendar day that still drives Live hour-cell stats (ledger fills).
+  // If none, fall back to the latest recorded day for this weekday×hour.
+  let activeDayKey: string | null = null;
+  for (const row of slotEvents) {
+    const dayKey = utcDayKeyFromMs(row.atMs);
+    if (!activeDayKey || dayKey > activeDayKey) activeDayKey = dayKey;
+  }
+  if (!activeDayKey) {
+    for (const w of slotWindowsAll) {
+      const dayKey = utcDayKeyFromWindowStart(w.windowStart);
+      if (!activeDayKey || dayKey > activeDayKey) activeDayKey = dayKey;
+    }
+  }
+
+  const slotWindows = activeDayKey
+    ? slotWindowsAll.filter((w) => utcDayKeyFromWindowStart(w.windowStart) === activeDayKey)
+    : [];
+
+  // Group events by window start (from windowKey, else buyAt floored to window).
+  const eventsByWindow = new Map<number, TradingStatEvent[]>();
+  for (const row of slotEvents) {
+    if (activeDayKey && utcDayKeyFromMs(row.atMs) !== activeDayKey) continue;
+    const list = eventsByWindow.get(row.winStart) ?? [];
+    list.push(row.event);
+    eventsByWindow.set(row.winStart, list);
   }
 
   const candidateStarts = slotWindows.map((w) => w.windowStart);

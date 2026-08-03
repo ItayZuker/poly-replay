@@ -7,6 +7,8 @@
   const REPLAY_LATENCY_STORAGE_KEY = "poly-real:schedule-replay-latency-ms";
   const REPLAY_FILL_SUCCESS_STORAGE_KEY = "poly-real:schedule-replay-fill-success-pct";
   const REPLAY_PREDICTION_STORAGE_KEY = "poly-real:schedule-replay-prediction";
+  /** Last Replay Run hour-cell stats — survive refresh; cleared on next Run. */
+  const REPLAY_HOUR_STATS_STORAGE_BASE = "schedule-replay-hour-stats-v1";
   const DEFAULT_REPLAY_LATENCY_MS = 150;
   const DEFAULT_REPLAY_FILL_SUCCESS_PCT = 100;
   const DEFAULT_REPLAY_PREDICTION = {
@@ -717,6 +719,10 @@
     // Only track heatmap versions for any future cache keys — do not refetch
     // the active card on every heatmap ingest (that caused stats flicker).
     syncHeatmapSeriesVersions(state);
+    // Replay idle board: keep gray = recorded window counts in sync with Heatmap.
+    if (isReplayWorkspace() && !replayRunning) {
+      void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries());
+    }
   }
 
   function placementCacheKey(placement) {
@@ -1272,15 +1278,16 @@
   }
 
   function applyLivePlacementStats(statsList, sessionTotals, demoLastWindow, trading) {
-    if (isReplayWorkspace()) return;
+    // Always refresh the Live hour-cell buffer (even while Replay is open) so
+    // toggling back to Live is instant and up to date.
+    void window.ScheduleHourSlots?.refreshLive?.();
     if (sessionTotals) {
       liveSessionTotals = normalizeSessionTotals(sessionTotals);
     }
     if (demoLastWindow !== undefined) {
       ingestDemoLastWindow(demoLastWindow, trading);
     }
-    // Hour cells are the Live Schedule board (Trigger Trade aggregates).
-    void window.ScheduleHourSlots?.refreshLive?.();
+    if (isReplayWorkspace()) return;
     if (sessionTotals) applyLiveSessionTotals(sessionTotals);
     else if (headerSummaryRange === "live") {
       renderHeaderSummaryTotals(liveRangeTotals());
@@ -1517,8 +1524,23 @@
   }
 
   function onSelectedSeriesChanged() {
-    if (headerSummaryRange !== "market") return;
-    void refreshHeaderSummaryWithLoader();
+    if (headerSummaryRange === "market") {
+      void refreshHeaderSummaryWithLoader();
+    }
+    if (replayRunning) return;
+    loadPersistedReplayHourStats(selectedSeries());
+    window.ScheduleHourSlots?.clearBothWorkspaces?.();
+    if (isReplayWorkspace()) {
+      restoreActiveReplayStatsToBoard();
+      window.ScheduleHourSlots?.showActiveWorkspace?.();
+      void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries());
+    } else {
+      window.ScheduleHourSlots?.showActiveWorkspace?.();
+    }
+    void window.ScheduleHourSlots?.refreshLive?.();
+    updateDayHeaderPnls();
+    updateWeekHeaderSummary();
+    updateHighlightedHeaderSummary();
   }
 
   function emptyLiveStats(placementId) {
@@ -3218,9 +3240,8 @@
     statsPendingIds.clear();
     statsBatchFetching = false;
     syncPlacementsDom([]);
-    if (!isReplayWorkspace() || activeReplayStats.size === 0) {
-      window.ScheduleHourSlots?.clearAll?.();
-    }
+    // Do NOT clear hour-slot boards here — Live/Replay keep separate buffers and
+    // prepareWorkspaceHourSlots / showActiveWorkspace swap them without flicker.
     updateWeekHeaderSummary();
     updateHighlightedHeaderSummary();
     syncNowHighlights();
@@ -3243,6 +3264,31 @@
     window.ScheduleHourSlots?.paint?.();
   }
 
+  /**
+   * Paint the correct hour-cell board immediately after the Live/Replay CSS class
+   * flips — before async setup loads — so Live never flashes Replay (and vice versa).
+   */
+  function prepareWorkspaceHourSlots(mode) {
+    const expectedMode = mode || workspaceMode();
+    if (expectedMode === "replay") {
+      if (activeReplayStats.size === 0) {
+        loadPersistedReplayHourStats(selectedSeries());
+      }
+      restoreActiveReplayStatsToBoard();
+      window.ScheduleHourSlots?.showActiveWorkspace?.();
+      if (!replayRunning) {
+        void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries());
+      }
+    } else {
+      window.ScheduleHourSlots?.showActiveWorkspace?.();
+      void window.ScheduleHourSlots?.refreshLive?.();
+    }
+    updateDayHeaderPnls();
+    updateWeekHeaderSummary();
+    updateHighlightedHeaderSummary();
+    syncHeaderSummaryControls();
+  }
+
   async function onWorkspaceModeChanged(mode) {
     // Keep a running Replay alive across Live ↔ Simulator toggles.
     const expectedMode = mode || workspaceMode();
@@ -3251,15 +3297,20 @@
     if (expectedMode === "replay") {
       setHeaderSummaryRange("schedule");
       lockedPlacementIds.clear();
+      // Hour cells already painted by prepareWorkspaceHourSlots; re-assert buffer.
       restoreActiveReplayStatsToBoard();
+      window.ScheduleHourSlots?.showActiveWorkspace?.();
       syncReplayPredictionTotalsUi();
       syncReplayPredictionAreaUi();
       if (replayRunning) showHeaderStatsProgressIndeterminate();
       else hideHeaderStatsProgress();
-      window.ScheduleHourSlots?.paint?.();
+      if (!replayRunning) {
+        void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries());
+      }
     } else {
       hideHeaderStatsProgress();
-      window.ScheduleHourSlots?.clearAll?.();
+      // Keep Replay buffer intact; paint Live buffer and refresh in background.
+      window.ScheduleHourSlots?.showActiveWorkspace?.();
       void window.ScheduleHourSlots?.refreshLive?.();
     }
     syncHeaderSummaryControls();
@@ -3328,6 +3379,7 @@
       locked: false,
     };
     activeReplayStats.set(stats.placementId, next);
+    persistReplayHourStats(selectedSeries());
     window.ScheduleReplayTriggers?.accumulatePlacementTriggerStats?.(stats.triggerStats);
     // Update the visible board only while Simulator is active.
     if (!isReplayWorkspace()) return;
@@ -3360,6 +3412,7 @@
         locked: false,
       });
     }
+    persistReplayHourStats(selectedSeries());
     if (!isReplayWorkspace()) return;
     restoreActiveReplayStatsToBoard();
     updateWeekHeaderSummary();
@@ -3391,6 +3444,88 @@
   let activeReplayStats = new Map();
   /** Placement IDs included in the current Replay run. */
   let activeReplayPlacementIds = new Set();
+
+  function replayHourStatsStorageKey(series) {
+    const s = String(series || "").trim() || "btc-5m";
+    const base = `${REPLAY_HOUR_STATS_STORAGE_BASE}:${s}`;
+    return typeof window.userScopedStorageKey === "function"
+      ? window.userScopedStorageKey(base)
+      : `poly-real:${base}`;
+  }
+
+  function normalizePersistedReplayStat(raw, placementId) {
+    if (!raw || typeof raw !== "object") return null;
+    const id = String(raw.placementId || placementId || "").trim();
+    if (!id) return null;
+    return {
+      placementId: id,
+      hasData: raw.hasData === true,
+      green: Math.max(0, Math.round(Number(raw.green) || 0)),
+      red: Math.max(0, Math.round(Number(raw.red) || 0)),
+      blue: Math.max(0, Math.round(Number(raw.blue) || 0)),
+      gray: Math.max(0, Math.round(Number(raw.gray) || 0)),
+      pnl: Number.isFinite(Number(raw.pnl)) ? Number(raw.pnl) : 0,
+      predictionRight: Math.max(0, Math.round(Number(raw.predictionRight) || 0)),
+      predictionWrong: Math.max(0, Math.round(Number(raw.predictionWrong) || 0)),
+      locked: false,
+    };
+  }
+
+  /** Load last Run hour-cell stats for this series (page refresh). */
+  function loadPersistedReplayHourStats(series) {
+    activeReplayStats = new Map();
+    try {
+      const raw = localStorage.getItem(replayHourStatsStorageKey(series));
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed?.stats)
+        ? parsed.stats
+        : Array.isArray(parsed)
+          ? parsed
+          : [];
+      for (const row of list) {
+        const next = normalizePersistedReplayStat(row, row?.placementId);
+        if (next) activeReplayStats.set(next.placementId, next);
+      }
+    } catch {
+      activeReplayStats = new Map();
+    }
+  }
+
+  function persistReplayHourStats(series) {
+    const s = series || selectedSeries();
+    try {
+      if (activeReplayStats.size === 0) {
+        localStorage.removeItem(replayHourStatsStorageKey(s));
+        return;
+      }
+      const stats = [...activeReplayStats.values()].map((row) => ({
+        placementId: row.placementId,
+        hasData: row.hasData === true,
+        green: row.green ?? 0,
+        red: row.red ?? 0,
+        blue: row.blue ?? 0,
+        gray: row.gray ?? 0,
+        pnl: row.pnl ?? 0,
+        predictionRight: row.predictionRight ?? 0,
+        predictionWrong: row.predictionWrong ?? 0,
+      }));
+      localStorage.setItem(
+        replayHourStatsStorageKey(s),
+        JSON.stringify({ version: 1, series: s, savedAt: new Date().toISOString(), stats }),
+      );
+    } catch {
+      // ignore quota / private mode
+    }
+  }
+
+  function clearPersistedReplayHourStats(series) {
+    try {
+      localStorage.removeItem(replayHourStatsStorageKey(series || selectedSeries()));
+    } catch {
+      // ignore
+    }
+  }
 
   const REPLAY_SPIN_ICON =
     '<svg class="schedule-replay-spin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
@@ -4160,7 +4295,9 @@
     syncReplayRunButton();
     placementStats.clear();
     lockedPlacementIds.clear();
+    // New Run replaces prior Schedule stats (memory + persisted refresh snapshot).
     activeReplayStats.clear();
+    clearPersistedReplayHourStats(selectedSeries());
     // Reset hour cells to zeros + spinners (setReplayRunning clears stats).
     window.ScheduleHourSlots?.setReplayRunning?.(true);
     resetReplayPredictionTotalsUi();
@@ -4379,15 +4516,18 @@
     // All-zero stats → nothing to open.
     if (hint <= 0 || slot?.hasData !== true) return;
     const live = !isReplayWorkspace();
+    // Idle Replay board (gray = recording count): clean charts, no buy/sell hits.
+    const recordingsOnly = !live && slot?.isBaseline === true;
     window.SchedulePlay?.open?.(placementId, {
       windowCountHint: hint,
-      latencyMs: live ? 0 : readReplayLatencyMs(),
-      fillSuccessPct: live ? 100 : readReplayFillSuccessPct(),
+      latencyMs: live || recordingsOnly ? 0 : readReplayLatencyMs(),
+      fillSuccessPct: live || recordingsOnly ? 100 : readReplayFillSuccessPct(),
       prediction: null,
-      triggers: live ? [] : window.ScheduleReplayTriggers?.listForRun?.() ?? [],
+      triggers: live || recordingsOnly ? [] : window.ScheduleReplayTriggers?.listForRun?.() ?? [],
       series: selectedSeries(),
       setup: null,
       live,
+      recordingsOnly,
     });
   }
 
@@ -4423,6 +4563,14 @@
     initReplayLatencyInput();
     window.SchedulePlay?.init?.();
     window.ScheduleHourSlots?.init?.();
+    // Restore last Run hour cells after refresh (Run clears this; refresh must not).
+    loadPersistedReplayHourStats(selectedSeries());
+    if (isReplayWorkspace()) {
+      restoreActiveReplayStatsToBoard();
+      if (!replayRunning) {
+        void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries());
+      }
+    }
     syncNowHighlights();
     syncHeaderSummaryControls();
     syncReplayRunButton();
@@ -4437,6 +4585,7 @@
     onSetupsRendered,
     onViewChange,
     onWorkspaceModeChanged,
+    prepareWorkspaceHourSlots,
     clearWorkspaceBoard,
     runReplay,
     stopReplay,

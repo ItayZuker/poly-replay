@@ -3,7 +3,7 @@ import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.
 import { getTradingSetupById } from "./db/trading-setup-repository.js";
 import type { SchedulePlacementListItem } from "./db/schedule-placement-repository.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
-import { listChainlinkTicks } from "./db/tick-repository.js";
+import { listChainlinkTicks, windowsHavingChainlinkTicks } from "./db/tick-repository.js";
 import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
 import { selectLatestDayHourWindows } from "./day-hour-slots.js";
 import { defaultPhaseConfig, recordAskSamples } from "./phase-config.js";
@@ -1538,6 +1538,11 @@ export interface BuildPlacementPlayOptions {
   phaseSetup?: TradingPhaseSetup | null;
   /** When true, ignore last-Replay cache and re-simulate (fresh random fills). */
   forceResimulate?: boolean;
+  /**
+   * Replay idle / reset board: list recorded windows with ticks only —
+   * no buy/sell markers, no trigger re-sim, do not overwrite last-Run cache.
+   */
+  recordingsOnly?: boolean;
   /** Replay Prediction settings (same as Schedule Run). */
   prediction?: Partial<PredictionDetectorConfig> | null;
   /** Replay Triggers (when present, replace Prediction; phase buys stay muted). */
@@ -1577,6 +1582,115 @@ function stripPredictionFromPlayWindows(
   });
 }
 
+async function listSlotRecordedWindows(
+  series: string,
+  placement: SchedulePlacementListItem,
+): Promise<RecordedWindowDocument[]> {
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  const listed = await listRecordedWindowsSince(cutoffUtc, series);
+  const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
+    listed.filter((w) => !isFlatPriceWindow(w)),
+  ).map((w) => ({
+    _id: String(w.windowStart),
+    windowStart: w.windowStart,
+    windowEnd: w.windowEnd,
+    savedAt: w.savedAt,
+    updatedAt: w.savedAt,
+    windowOutcome: w.windowOutcome,
+    prevCloseAsset: w.prevCloseAsset,
+    assetPrice: w.assetPrice,
+    ptbCrossings: w.ptbCrossings,
+    rangeTop: w.rangeTop,
+    rangeBottom: w.rangeBottom,
+    uniqueTraders: w.uniqueTraders,
+    newWallets: w.newWallets,
+    minAssetPrice: w.minAssetPrice,
+    maxAssetPrice: w.maxAssetPrice,
+    assetRange: w.assetRange,
+    tickCount: 0,
+  }));
+  return allWindows.filter((w) =>
+    windowMatchesPlacementSlot(
+      w.windowStart,
+      placement.day,
+      placement.startHour,
+      placement.durationHours,
+    ),
+  );
+}
+
+/** Clean Open Replay: recordings + official settlement only (no trade markers). */
+async function buildRecordingsOnlyPlayPayload(
+  market: MarketDocument,
+  placement: SchedulePlacementListItem,
+  latencyMs: number,
+  fillSuccessPct: number,
+): Promise<PlacementPlayPayload> {
+  const series = market._id;
+  const phaseSetup = triggerOnlyPhaseSetup();
+  const empty: PlacementPlayPayload = {
+    placementId: placement._id,
+    setupId: placement.setupId,
+    title: placement.title,
+    day: placement.day,
+    startHour: placement.startHour,
+    durationHours: placement.durationHours,
+    setup: phaseSetup,
+    latencyMs,
+    fillSuccessPct,
+    triggerOnly: true,
+    windows: [],
+  };
+
+  const slotWindows = await listSlotRecordedWindows(series, placement);
+  if (slotWindows.length === 0) {
+    logService.info(
+      "replay",
+      `Open Replay ${placement._id}: recordings-only — no slot windows`,
+    );
+    return empty;
+  }
+
+  const present = new Set(
+    await windowsHavingChainlinkTicks(
+      market,
+      slotWindows.map((w) => w.windowStart),
+    ),
+  );
+  const windows: PlacementPlayWindowItem[] = [];
+  for (const window of slotWindows) {
+    if (!present.has(window.windowStart)) continue;
+    const settlement = await playSettlementFields(market, window, null);
+    windows.push({
+      windowStart: window.windowStart,
+      windowEnd: window.windowEnd,
+      prevCloseAsset: settlement.prevCloseAsset,
+      finalPrice: settlement.finalPrice,
+      windowOutcome: settlement.windowOutcome,
+      bucket: "none",
+      tradeDots: [],
+      pnl: 0,
+      plLabel: "No trade",
+      sold: false,
+      markers: [],
+      predictionSide: null,
+      predictionScore: null,
+      predictionScores: [],
+      predictionTriggers: [],
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
+    });
+  }
+  windows.sort((a, b) => a.windowStart - b.windowStart);
+
+  logService.info(
+    "replay",
+    `Open Replay ${placement._id}: recordings-only — ${windows.length}/${slotWindows.length} window(s) with ticks (no markers)`,
+  );
+
+  return { ...empty, windows };
+}
+
 /** Build window list + sim markers for the schedule Open Replay popup. */
 export async function buildPlacementPlayPayload(
   userId: string,
@@ -1591,6 +1705,11 @@ export async function buildPlacementPlayPayload(
     typeof rawFill === "number" && Number.isFinite(rawFill)
       ? Math.max(0, Math.min(100, rawFill))
       : 100;
+
+  if (options.recordingsOnly === true) {
+    return buildRecordingsOnlyPlayPayload(market, placement, latencyMs, fillSuccessPct);
+  }
+
   const triggers = normalizeReplayTriggerDefs(options.triggers);
   const triggerOnly = triggers.length > 0;
   // Triggers replace Prediction; also honor explicit prediction: null.
@@ -1686,43 +1805,12 @@ export async function buildPlacementPlayPayload(
     return empty;
   }
 
-  const cutoffUtc = getWeekHistoryCutoffUtcSec();
-  const listed = await listRecordedWindowsSince(cutoffUtc, series);
-  const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
-    listed.filter((w) => !isFlatPriceWindow(w)),
-  ).map((w) => ({
-    _id: String(w.windowStart),
-    windowStart: w.windowStart,
-    windowEnd: w.windowEnd,
-    savedAt: w.savedAt,
-    updatedAt: w.savedAt,
-    windowOutcome: w.windowOutcome,
-    prevCloseAsset: w.prevCloseAsset,
-    assetPrice: w.assetPrice,
-    ptbCrossings: w.ptbCrossings,
-    rangeTop: w.rangeTop,
-    rangeBottom: w.rangeBottom,
-    uniqueTraders: w.uniqueTraders,
-    newWallets: w.newWallets,
-    minAssetPrice: w.minAssetPrice,
-    maxAssetPrice: w.maxAssetPrice,
-    assetRange: w.assetRange,
-    tickCount: 0,
-  }));
-
-  const slotWindows = allWindows.filter((w) =>
-    windowMatchesPlacementSlot(
-      w.windowStart,
-      placement.day,
-      placement.startHour,
-      placement.durationHours,
-    ),
-  );
+  const slotWindows = await listSlotRecordedWindows(series, placement);
 
   if (slotWindows.length === 0) {
     logService.warn(
       "replay",
-      `Open Replay ${placement._id}: no slot windows (${placement.day} @ ${placement.startHour}h × ${placement.durationHours}h, series=${series}, pool=${allWindows.length})`,
+      `Open Replay ${placement._id}: no slot windows (${placement.day} @ ${placement.startHour}h × ${placement.durationHours}h, series=${series})`,
     );
     return { ...empty, setup: phaseSetup };
   }

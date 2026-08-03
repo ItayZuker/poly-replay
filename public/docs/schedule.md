@@ -14,10 +14,10 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 
 ## Schedule grid
 
-- Days × UTC hours — **all 7×24 cells always show** a stats line (green / red / blue dots) and **P/L** (`0` / `+$0.00` when empty)
-- Each cell aggregates outcomes for that UTC weekday×hour in the **current ISO week** (Live):
+- Days × UTC hours — **all 7×24 cells always show** a stats line (green / red / blue dots) and **P/L**, except Replay slots with no recordings (see below)
+- Each cell aggregates outcomes for that UTC weekday×hour from the **latest calendar day** that still has fills in the ~14-day history window (Live) — same override rule as Replay/Heatmap recordings. A new ISO week (Monday) does **not** wipe Tue–Sun; only that weekday×hour is replaced when it plays again:
   - **Trigger Trade** when the trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade+Active (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
-  - **Legacy phase / schedule-placement** fills still in this week’s ledger (from before Trigger-only Schedule). They stay on the board for the rest of the ISO week and clear only when that weekday×hour is in the **next** ISO week
+  - **Legacy phase / schedule-placement** fills still in the ledger (from before Trigger-only Schedule). They stay on the board until that weekday×hour is overridden by a newer day
 - Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). There is no per-day Clear control
 - Current UTC cell is highlighted
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. **Manual** quote-box buys count in Market/Live only — not on Schedule hour cells
@@ -30,10 +30,10 @@ Replay placements never send live orders. Live Trigger Trade requires **Allow tr
 |---|----------|------------|
 | Purpose | Real schedule for Trigger Trade | Test Replay Triggers on recordings |
 | Triggers | Market Triggers (Mongo) | Browser-local Replay Triggers |
-| Hour cells | Live Trigger Trade (timeline-gated) | Filled when you press **Run** |
+| Hour cells | Live Trigger Trade (timeline-gated) | Before **Run**: gray = recorded window count (or **No Recordings**); after **Run**: green/red/blue + gray = windows that did not trigger |
 | Header total | Same summary chrome | Totals update as replay results arrive |
 
-In **Live**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). In **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Latency** / **Fill Success** / **Triggers**, then the Live/Replay switcher. A blue border frames the whole screen in Replay.
+In **Live**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). In **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Latency** / **Fill Success** / **Triggers**, then the Live/Replay switcher. A blue border frames the whole screen in Replay. Switching Live ↔ Replay paints each workspace’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
 
 | Control | Meaning |
 |---------|---------|
@@ -41,14 +41,16 @@ In **Live**, the left column lists **Trade + Active** Market Triggers only (no D
 | **Fill Success (%)** | Chance each would-be fill succeeds after latency (random per attempt). **100%** = always fill when the book allows; **0%** = never. Prefills from live **Fill success** total % (last 7 days). Frozen for the duration of a **Run**. |
 | **Triggers** | Replay-only list (same create/edit dialog as Market **Triggers**). Each card shows **Title**, **Pause** / **Active**, reset, **Stop Loss**, and green/blue/red / P/L from the last **Run** that included that card. **Pause** skips that card on **Run** and keeps its previous stats; **Active** includes it and replaces its stats from the new Run. New cards start **Paused**. On **Run**, every **Active** trigger is applied on each simulated window (with Latency / Fill Success). The reset icon clears that card’s Replay stats (confirm first) — during a **Run** it stays available on **Paused** cards only. Pause/Active and edits stay frozen for the duration of a **Run**. |
 
-**Run** simulates every UTC hour slot that has recordings (top-left first: Monday → Sunday, then earlier UTC hour). Results stream back **one hour at a time** into that cell. **Active** Trigger card stats accumulate as hours finish and commit when the Run completes; **Paused** cards are left unchanged. Windows with **no Chainlink tick files** (or book-only / empty price path) are **skipped** — they do not count toward Run stats or gray “no trade” results.
+**Replay idle / reset board:** each hour cell’s gray count is the number of **recorded windows** for that UTC weekday×hour (latest calendar day in the ~14-day window). Slots with **zero** recordings show **No Recordings** instead of dots and P/L. Double-click Open Replay still requires a non-zero gray (or post-Run) count. On the idle board, Open Replay shows those recordings **without** buy/sell markers (clean charts).
+
+**Run** clears previous Replay Schedule hour-cell stats, then simulates every UTC hour slot that has recordings (top-left first: Monday → Sunday, then earlier UTC hour). While a slot is waiting, it keeps its gray **recorded window** count under a spinner until that hour’s results arrive; **No Recordings** cells stay labeled and do **not** spin. Results stream back **one hour at a time** — gray then means windows that ran with ticks but **did not trigger** a buy. Those hour-cell results are kept in the browser across **page refresh** until the next **Run**. **Active** Trigger card stats accumulate as hours finish and commit when the Run completes; **Paused** cards are left unchanged. Windows with **no Chainlink tick files** (or book-only / empty price path) are **skipped** — they do not count toward Run stats or gray “no trade” results.
 
 **Open Replay:** in **Schedule** (not Heatmap), **double-click** an hour cell that has non-zero stats to open the window list + scrubbable price chart for that UTC weekday×hour. Cells still at zeros do nothing. Bottom transport shows play controls and the selected window’s **Official** Up/Down (Polymarket crypto-price / Gamma on the recording). The price line is Chainlink through the window; the **last point**, **Current**, **PTB**, and **Gap** at window end use the recording’s official open/close so they match Official (no invented tip). If the recording lacks official outcome + open/close, the chart shows **No official settlement data for this window**. Windows without a mid-window Chainlink path are omitted from the list (not shown as empty charts with trade dots).
 
 | Workspace | What you see |
 |-----------|----------------|
-| **Live** | This ISO week’s **recorded** windows for that hour that still have Chainlink ticks (checked on the recorder when Live proxies via `SCHEDULE_REPLAY_SERVICE_URL`), with **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Ledger fills whose window was never recorded (or whose ticks are missing) are not listed. |
-| **Replay** | Last **Run** results when available (Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with current Active triggers — only windows with Chainlink ticks. |
+| **Live** | The **latest calendar day** for that weekday×hour (prefer the day that still drives the cell’s Live stats; otherwise the latest recording), with windows that still have Chainlink ticks (checked on the recorder when Live proxies via `SCHEDULE_REPLAY_SERVICE_URL`) and **actual** Trigger (and legacy phase) buy/sell markers from your live trade ledger. Ledger fills whose window was never recorded (or whose ticks are missing) are not listed. |
+| **Replay** | **Idle / reset** (gray = recording count): clean recordings only (no buy/sell markers). **After Run**: last **Run** results when available (Latency / Fill Success / Active Replay Triggers); otherwise re-simulates with current Active triggers — only windows with Chainlink ticks. |
 
 Phase bands are not shown in either mode.
 
@@ -60,7 +62,7 @@ Phase bands are not shown in either mode.
 | Held to settlement and market won that side | **Blue** |
 | Stop-loss / held loss / other loss | **Red** |
 
-Gray is Replay-only: windows that ran with ticks but never triggered a buy. In Replay, header totals and **Custom** also include gray when present.
+Gray is Replay-only: before a **Run**, recorded window count for the slot; after a **Run**, windows that ran with ticks but never triggered a buy. In Replay, header totals and **Custom** also include gray when present.
 
 Replay Trigger definitions are saved per signed-in user in the browser and are separate from Market Triggers. While a run is in progress, the button switches to **Stop**; **Latency**, **Fill Success**, and **Add Trigger** are disabled. Click **Stop** to cancel. Saving/deleting a Replay Trigger during a run also stops the run. Switching Live ↔ Replay does **not** stop a running job.
 
@@ -68,7 +70,7 @@ Replay uses the same simulation engine as demo Trigger trading. Window times/out
 
 **Bad recordings:** windows where the Chainlink/asset price is flat for the entire window are discarded (see prior behavior).
 
-**Week grid history (Replay + Heatmap):** each UTC weekday×hour keeps the **latest** recording for that slot. Hours not re-recorded yet still show last week’s data. Retention defaults to ~**14 days**.
+**Week grid history (Live stats + Replay + Heatmap):** each UTC weekday×hour keeps the **latest** day for that slot. Hours not re-traded / re-recorded yet still show last week’s data. Retention defaults to ~**14 days**.
 
 | Role | Env | Behavior |
 |------|-----|----------|

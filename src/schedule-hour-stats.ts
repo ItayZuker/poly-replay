@@ -1,6 +1,7 @@
 import type { TriggerModeTimelineEvent } from "./db/trigger-mode-timeline-repository.js";
 import { wasTriggerTradingActive } from "./db/trigger-mode-timeline-repository.js";
 import type { TradingStatEvent } from "./db/trading-session-memory-repository.js";
+import { getWeekHistoryCutoffUtcSec } from "./day-hour-slots.js";
 import type { ScheduleHourSlotStats, TradingPositionCard } from "./types.js";
 
 /** UTC weekday ids matching schedule placements (Mon-first grid order). */
@@ -23,6 +24,11 @@ export function utcIsoWeekKey(unixSec: number): string {
 
 export function currentUtcIsoWeekKey(nowMs = Date.now()): string {
   return utcIsoWeekKey(Math.floor(nowMs / 1000));
+}
+
+/** UTC calendar day key (YYYY-MM-DD) for a trade/window timestamp. */
+export function utcDayKeyFromMs(atMs: number): string {
+  return new Date(atMs).toISOString().slice(0, 10);
 }
 
 export function slotKeyFromMs(atMs: number): { day: ScheduleHourDayId; hour: number; key: string } | null {
@@ -166,7 +172,7 @@ function triggerIdOfEvent(event: TradingStatEvent): string | null {
 
 /**
  * Legacy phase / schedule-placement trades (pre Trigger-only Schedule).
- * Counted into the current ISO week hour cells until the next week rolls over.
+ * Counted into hour cells until that weekday×hour is overridden by a newer day.
  */
 function isLegacyPhaseTrade(card: Pick<TradingPositionCard, "source" | "placementId"> | null | undefined): boolean {
   if (!card) return false;
@@ -218,24 +224,36 @@ export interface ComputeHourSlotStatsInput {
   cards?: TradingPositionCard[];
   /** Full Active/Paused (+ Trade/Demo) timeline for relevant triggers. */
   timelineEvents: TriggerModeTimelineEvent[];
-  /** Restrict to this ISO week (YYYY-Www). Defaults to the current UTC ISO week. */
+  /**
+   * Optional ISO week (YYYY-Www) pin for tests/debug.
+   * When omitted (Live UI), each weekday×hour keeps the latest calendar day
+   * within the ~14 day history window — newer fills override only that slot.
+   */
   weekKey?: string;
   nowMs?: number;
 }
 
+type PendingSlotHit = {
+  slotKey: string;
+  dayKey: string;
+  contrib: SlotContrib;
+};
+
 /**
- * Aggregate settled outcomes into UTC weekday×hour slots for one ISO week:
+ * Aggregate settled outcomes into UTC weekday×hour slots:
  * - Trigger Trade (timeline-gated Trade+Active)
- * - Legacy phase / schedule-placement ("auto") trades still in this week’s ledger
+ * - Legacy phase / schedule-placement ("auto") trades still in the ledger
  *
- * Week filter is the only reset: when the UTC ISO week rolls, prior-week cells clear
- * as new-week trades start filling the same weekday×hour slots.
+ * Default: for each weekday×hour, only the latest UTC calendar day with fills
+ * counts (same override rule as Replay/Heatmap recordings). A new ISO week does
+ * not wipe Tue–Sun when Monday starts — those cells stay until that slot plays again.
  */
 export function computeScheduleHourSlotStats(
   input: ComputeHourSlotStatsInput,
 ): ScheduleHourSlotStats[] {
   const nowMs = input.nowMs ?? Date.now();
-  const weekKey = input.weekKey ?? currentUtcIsoWeekKey(nowMs);
+  const weekKey = input.weekKey;
+  const cutoffMs = getWeekHistoryCutoffUtcSec(new Date(nowMs)) * 1000;
   const byTrigger = groupTimelineByTrigger(input.timelineEvents);
   const slots = new Map<string, ScheduleHourSlotStats>();
   for (const day of SCHEDULE_HOUR_DAYS) {
@@ -246,25 +264,23 @@ export function computeScheduleHourSlotStats(
 
   const seenIdentities = new Set<string>();
   const seenCardIds = new Set<string>();
+  const pending: PendingSlotHit[] = [];
 
   const identityOf = (conditionId?: string, asset?: string, buyAt?: number): string | null => {
     if (!conditionId || !asset || buyAt == null || !Number.isFinite(buyAt)) return null;
     return `${conditionId}|${asset}|${buyAt}`;
   };
 
-  const add = (atMs: number, contrib: SlotContrib): void => {
-    const week = utcIsoWeekKey(atMs / 1000);
-    if (week !== weekKey) return;
+  const queue = (atMs: number, contrib: SlotContrib): void => {
+    if (atMs < cutoffMs) return;
+    if (weekKey != null && utcIsoWeekKey(atMs / 1000) !== weekKey) return;
     const slot = slotKeyFromMs(atMs);
     if (!slot) return;
-    const row = slots.get(slot.key);
-    if (!row) return;
-    row.green += contrib.green;
-    row.red += contrib.red;
-    row.blue += contrib.blue;
-    row.stopLoss += contrib.stopLoss;
-    row.pnl += contrib.pnl;
-    row.hasData = true;
+    pending.push({
+      slotKey: slot.key,
+      dayKey: utcDayKeyFromMs(atMs),
+      contrib,
+    });
   };
 
   const shouldCountCard = (card: TradingPositionCard, atMs: number): boolean => {
@@ -295,7 +311,7 @@ export function computeScheduleHourSlotStats(
       seenIdentities.add(id);
     }
     seenCardIds.add(card.id);
-    add(atMs, contrib);
+    queue(atMs, contrib);
   }
 
   for (const event of input.events) {
@@ -313,7 +329,25 @@ export function computeScheduleHourSlotStats(
       if (seenIdentities.has(id)) continue;
       seenIdentities.add(id);
     }
-    add(atMs, contrib);
+    queue(atMs, contrib);
+  }
+
+  const latestDayBySlot = new Map<string, string>();
+  for (const hit of pending) {
+    const prev = latestDayBySlot.get(hit.slotKey);
+    if (!prev || hit.dayKey > prev) latestDayBySlot.set(hit.slotKey, hit.dayKey);
+  }
+
+  for (const hit of pending) {
+    if (latestDayBySlot.get(hit.slotKey) !== hit.dayKey) continue;
+    const row = slots.get(hit.slotKey);
+    if (!row) continue;
+    row.green += hit.contrib.green;
+    row.red += hit.contrib.red;
+    row.blue += hit.contrib.blue;
+    row.stopLoss += hit.contrib.stopLoss;
+    row.pnl += hit.contrib.pnl;
+    row.hasData = true;
   }
 
   const out: ScheduleHourSlotStats[] = [];

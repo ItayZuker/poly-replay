@@ -78,6 +78,7 @@ import {
 import { closeMongoClient } from "./db/mongo-client.js";
 import {
   getHeatmapState,
+  getReplaySlotWindowCounts,
   loadAllHeatmapWindows,
   setHeatmapUpdateListener,
 } from "./heatmap-service.js";
@@ -1591,6 +1592,16 @@ app.get("/api/heatmap", (req, res) => {
   }
 });
 
+/** Replay Schedule: recorded window counts per UTC weekday×hour (latest day per slot). */
+app.get("/api/schedule-replay-slot-counts", (req, res) => {
+  try {
+    const series = parseSeriesParam(req);
+    res.json(getReplaySlotWindowCounts(series));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.get("/api/trader-wallets", async (req, res) => {
   try {
     const userId = requireUserId(req);
@@ -2017,6 +2028,8 @@ async function runPlacementPlay(
     phaseSetup?: unknown;
     triggers?: unknown[] | null;
     live?: boolean;
+    /** Idle Replay board: clean recordings, no buy/sell markers. */
+    recordingsOnly?: boolean;
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
@@ -2086,12 +2099,15 @@ async function runPlacementPlay(
       : 100;
   const phaseSetup = normalizePhaseSetup(input.phaseSetup as never) ?? undefined;
   const hasTriggers = Array.isArray(input.triggers) && input.triggers.length > 0;
+  const recordingsOnly = input.recordingsOnly === true;
   const payload = await buildPlacementPlayPayload(userId, market, placement, {
     latencyMs,
     fillSuccessPct,
     phaseSetup: phaseSetup ?? null,
-    prediction: hasTriggers ? null : input.prediction === null ? null : input.prediction,
-    triggers: input.triggers,
+    prediction: hasTriggers || recordingsOnly ? null : input.prediction === null ? null : input.prediction,
+    triggers: recordingsOnly ? [] : input.triggers,
+    recordingsOnly,
+    forceResimulate: recordingsOnly ? true : undefined,
   });
   return { status: 200 as const, body: payload };
 }
@@ -2103,6 +2119,7 @@ function parsePlayRequestBody(req: express.Request): {
   phaseSetup?: unknown;
   triggers?: unknown[] | null;
   live?: boolean;
+  recordingsOnly?: boolean;
   prediction?: {
     sensitivitySec?: number;
     maxQuoteCents?: number;
@@ -2142,6 +2159,8 @@ function parsePlayRequestBody(req: express.Request): {
     : undefined;
   const triggers = Array.isArray(body.triggers) ? body.triggers : undefined;
   const live = body.live === true || body.mode === "live" || q.live === "1";
+  const recordingsOnly =
+    body.recordingsOnly === true || body.mode === "recordings" || q.recordingsOnly === "1";
   return {
     series,
     latencyMs: Number.isFinite(latencyRaw) ? latencyRaw : undefined,
@@ -2149,6 +2168,7 @@ function parsePlayRequestBody(req: express.Request): {
     phaseSetup,
     triggers,
     live,
+    recordingsOnly,
     prediction,
   };
 }
@@ -2182,7 +2202,8 @@ app.post("/api/schedule-placements/:id/play", async (req, res) => {
             fillSuccessPct: parsed.fillSuccessPct,
             setup: parsed.phaseSetup,
             prediction: parsed.prediction,
-            triggers: parsed.triggers,
+            triggers: parsed.recordingsOnly ? [] : parsed.triggers,
+            recordingsOnly: parsed.recordingsOnly === true,
           }),
         },
       );
@@ -2422,7 +2443,7 @@ app.get("/api/schedule-placement-stats", async (req, res) => {
   }
 });
 
-/** Trigger Trade UTC weekday×hour slot stats for the current ISO week (Live engine). */
+/** Trigger Trade UTC weekday×hour slot stats (latest calendar day per slot; Live engine). */
 app.get("/api/schedule-hour-stats", async (req, res) => {
   try {
     const userId = requireUserId(req);

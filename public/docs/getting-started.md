@@ -23,7 +23,7 @@ On **Market**, keep **Allow trade** off. Create a **Trigger**, leave it on **Dem
 
 ## 5. Schedule
 
-Open **Schedule** — every UTC hour cell shows Trigger Trade stats for the current week. The left column lists your Market Triggers. Details: [Schedule](doc:schedule).
+Open **Schedule** — every UTC hour cell shows Trigger Trade stats for the latest day of that weekday×hour (other days stay until that slot plays again). The left column lists your Market Triggers. Details: [Schedule](doc:schedule).
 
 Optional: switch to **Replay**, add local Replay Triggers, set Latency / Fill Success, press **Run** to test over recordings.
 
