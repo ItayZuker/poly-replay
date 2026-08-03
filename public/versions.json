@@ -1,6 +1,11 @@
 {
-  "current": "1.39.11",
+  "current": "1.40.0",
   "releases": [
+    {
+      "version": "1.40.0",
+      "releasedAt": "2026-08-03T05:21:38.169Z",
+      "notes": "Live Schedule keeps latest day per weekday×hour (no week wipe). Replay: gray = recorded window counts / No Recordings; idle Open Replay is clean; Run keeps gray under spinner; stats persist across refresh; Live↔Replay boards no longer cross-flash. Recorder rollover cannot stick finalizing. Docs updated."
+    },
     {
       "version": "1.39.11",
       "releasedAt": "2026-08-02T19:11:14.901Z",
