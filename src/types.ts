@@ -384,25 +384,21 @@ export interface TradingConfig {
   /** Manual buy size (share count or USDC, depending on manualOrderUnit). */
   manualShares: number;
   manualOrderUnit: "shares" | "usdc";
-  /** Order type for manual quote Buy clicks. */
+  /** Legacy manual quote Buy order type (manual orders disabled). */
   manualBuyOrderType: "FAK" | "FOK";
-  /** Order type for manual quote Sell clicks. */
+  /** Legacy manual quote Sell order type (manual orders disabled). */
   manualSellOrderType: "FAK" | "FOK";
-  /** Client-side manipulation detector (visual flag only when predictionTrade is off). */
+  /** Client-side manipulation / prediction detector (sim scoring only). */
   manipulationDetector: boolean;
   /**
-   * When true (and Allow trade + Prediction are on), detector triggers place real
-   * Buy/Sell using predictionShares and prediction Buy/Sell order types.
+   * Always false — live Prediction Trade removed; only Trigger cards place orders.
    */
   predictionTrade: boolean;
-  /** Share count for Prediction Trade buys (sells use held shares). */
+  /** Legacy Prediction Trade share count (unused for live orders). */
   predictionShares: number;
-  /** Order type for Prediction Trade buys. */
+  /** Legacy Prediction Trade buy order type (unused for live orders). */
   predictionBuyOrderType: "FAK" | "FOK";
-  /**
-   * Order type for Prediction Trade sells.
-   * GTD: rest limit at buy + Profit prediction as soon as the Buy fills.
-   */
+  /** Legacy Prediction Trade sell order type (unused for live orders). */
   predictionSellOrderType: "FAK" | "FOK" | "GTD";
   /** Seconds the adverse UP/DOWN vs gap condition must hold. */
   manipulationSensitivitySec: number;

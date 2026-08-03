@@ -414,75 +414,22 @@
               </div>
             </div>
           </div>
-          <div id="trade-body" class="trade-panel-body is-collapsed">
-            <div class="wallet-summary-rows">
-              <div class="wallet-control-fields">
-                <div
-                  id="manual-order-types-field"
-                  class="wallet-control-field wallet-control-field--manual"
-                  aria-label="Manual Override order types"
-                >
-                  <span class="wallet-control-label">Manual Override</span>
-                  <div class="manual-order-type-controls">
-                    <label class="manual-order-type-field" for="manual-buy-order-type">
-                      <span class="manual-order-type-caption">Buy</span>
-                      <select
-                        id="manual-buy-order-type"
-                        class="wallet-order-unit"
-                        aria-label="Manual override buy order type"
-                      >
-                        <option value="FOK" selected>FOK</option>
-                        <option value="FAK">FAK</option>
-                      </select>
-                    </label>
-                    <label class="manual-order-type-field" for="manual-sell-order-type">
-                      <span class="manual-order-type-caption">Sell</span>
-                      <select
-                        id="manual-sell-order-type"
-                        class="wallet-order-unit"
-                        aria-label="Manual override sell order type"
-                      >
-                        <option value="FOK" selected>FOK</option>
-                        <option value="FAK">FAK</option>
-                      </select>
-                    </label>
-                  </div>
-                </div>
-                <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade" hidden>
-                  <span class="wallet-control-label" id="auto-trade-label">Auto Trade · Off</span>
-                  <span class="switch">
-                    <input type="checkbox" id="auto-trade" />
-                    <span class="switch-slider"></span>
-                  </span>
-                </label>
-                <div id="wallet-shares-field" class="wallet-control-field wallet-control-field--shares">
-                  <label class="wallet-control-label" for="manual-order-unit">Size</label>
-                  <div class="wallet-size-controls">
-                    <select id="manual-order-unit" class="wallet-order-unit" aria-label="Order size unit">
-                      <option value="shares">Shares</option>
-                      <option value="usdc">USDC</option>
-                    </select>
-                    <input
-                      type="number"
-                      id="manual-shares"
-                      class="wallet-shares-input"
-                      min="1"
-                      max="100000"
-                      step="1"
-                      value="10"
-                      aria-label="Order size amount"
-                    />
-                  </div>
-                </div>
-                <label id="wallet-use-schedule-field" class="wallet-control-field wallet-control-field--toggle" for="use-schedule" hidden>
-                  <span class="wallet-control-label" id="use-schedule-label">Use Schedule · Off</span>
-                  <span class="switch">
-                    <input type="checkbox" id="use-schedule" />
-                    <span class="switch-slider"></span>
-                  </span>
-                </label>
-              </div>
-            </div>
+          <!-- Manual Size / Manual Override removed — only Trigger cards place orders. -->
+          <div id="trade-body" class="trade-panel-body is-collapsed" hidden>
+            <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade" hidden>
+              <span class="wallet-control-label" id="auto-trade-label">Auto Trade · Off</span>
+              <span class="switch">
+                <input type="checkbox" id="auto-trade" />
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <label id="wallet-use-schedule-field" class="wallet-control-field wallet-control-field--toggle" for="use-schedule" hidden>
+              <span class="wallet-control-label" id="use-schedule-label">Use Schedule · Off</span>
+              <span class="switch">
+                <input type="checkbox" id="use-schedule" />
+                <span class="switch-slider"></span>
+              </span>
+            </label>
           </div>
         </section>
 
@@ -612,8 +559,8 @@
         </div>
 
         <div class="simulator-box-scroll">
-        <div class="quote-row">
-          <div class="quote-box quote-box-up" id="quote-up-buy-box">
+        <div class="quote-row" aria-label="Live quotes (display only)">
+          <div class="quote-box quote-box-up quote-box-display quote-box-disabled" id="quote-up-buy-box">
             <div class="quote-cell">
               <div class="quote-label">Buy</div>
               <div class="quote-values">
@@ -622,7 +569,7 @@
               </div>
             </div>
           </div>
-          <div class="quote-box quote-box-up" id="quote-up-sell-box">
+          <div class="quote-box quote-box-up quote-box-display quote-box-disabled" id="quote-up-sell-box">
             <div class="quote-cell">
               <div class="quote-label">Sell</div>
               <div class="quote-values">
@@ -631,7 +578,7 @@
               </div>
             </div>
           </div>
-          <div class="quote-box quote-box-down" id="quote-down-buy-box">
+          <div class="quote-box quote-box-down quote-box-display quote-box-disabled" id="quote-down-buy-box">
             <div class="quote-cell">
               <div class="quote-label">Buy</div>
               <div class="quote-values">
@@ -640,7 +587,7 @@
               </div>
             </div>
           </div>
-          <div class="quote-box quote-box-down" id="quote-down-sell-box">
+          <div class="quote-box quote-box-down quote-box-display quote-box-disabled" id="quote-down-sell-box">
             <div class="quote-cell">
               <div class="quote-label">Sell</div>
               <div class="quote-values">

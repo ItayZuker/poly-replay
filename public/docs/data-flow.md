@@ -6,7 +6,7 @@
 
 | Channel | Direction | For |
 |---------|-----------|-----|
-| **REST** `/api/...` | Browser → server | Login, settings, toggles, triggers, schedule hour stats, manual orders |
+| **REST** `/api/...` | Browser → server | Login, settings, toggles, triggers, schedule hour stats, Trigger/Prediction orders |
 | **SSE** `/api/stream` | Server → browser | Quotes, window, trading state, log, heatmap, schedule |
 | **WebSocket** | Server ↔ exchanges | CLOB book + Chainlink (server only) |
 
@@ -36,7 +36,7 @@ Server -> SSE -> Browser
 
 ## Trading
 
-**Trigger Trade** (and optional Prediction Trade) run on the **server**. The browser sets toggles / trigger definitions and can send **manual** orders.
+**Trigger Trade** is the only live order path (server-side). Manual quote orders and Prediction Trade are disabled. Graph quote boxes are display-only. The browser sets **Allow trade** and trigger definitions (**Trade** + **Active**).
 
 | Control | Effect |
 |---------|--------|

@@ -1818,8 +1818,10 @@ function updateQuoteBoxes(state) {
 
     live.textContent = fmtQuote(cfg.livePrice(state));
 
-    const allowed = canQuoteAction(trading, cfg.side, cfg.leg);
-    box.classList.toggle("quote-box-disabled", !allowed);
+    // Graph quote row is display-only (Trigger fills latch visually; never clickable).
+    box.classList.add("quote-box-display", "quote-box-disabled");
+    box.classList.remove("quote-box-pressing", "quote-box-pending");
+    box.setAttribute("aria-disabled", "true");
 
     const lockedPrice = locks[cfg.lockKey];
     if (lockedPrice != null && Number.isFinite(lockedPrice)) {
@@ -1828,7 +1830,6 @@ function updateQuoteBoxes(state) {
       values.classList.add("quote-has-locked");
       box.classList.add(cfg.tone === "up" ? "quote-triggered-up" : "quote-triggered-down");
       box.classList.add("quote-box-latched");
-      box.classList.remove("quote-box-pressing");
     } else {
       locked.hidden = true;
       locked.textContent = "";
@@ -1898,35 +1899,13 @@ async function postTriggerGtdSync(desires) {
   return { ok: res.ok, status: res.status, body };
 }
 
+/** Prediction never places live orders — Trigger cards only. */
 function isPredictionTradeArmed() {
-  return Boolean(
-    $("start-trading")?.checked &&
-      $("manipulation-detector")?.checked &&
-      $("prediction-trade")?.checked,
-  );
+  return false;
 }
 
-async function placePredictionTradeOrder(side, leg) {
-  if (!isPredictionTradeArmed()) return { ok: false, skipped: true };
-  if (side !== "up" && side !== "down") return { ok: false, error: "bad side" };
-  if (leg !== "buy" && leg !== "sell") return { ok: false, error: "bad leg" };
-  const result = await postTradingOrder(side, leg, { source: "prediction" });
-  if (!result.ok) {
-    appendLogEntry({
-      level: "warn",
-      source: "client",
-      message: `Prediction Trade ${leg.toUpperCase()} ${side.toUpperCase()} failed: ${
-        result.body?.error || result.status || "order failed"
-      }`,
-    });
-  } else {
-    appendLogEntry({
-      level: "info",
-      source: "client",
-      message: `Prediction Trade ${leg.toUpperCase()} ${side.toUpperCase()} placed`,
-    });
-  }
-  return result;
+async function placePredictionTradeOrder(_side, _leg) {
+  return { ok: false, skipped: true };
 }
 
 function predictionActionBoxForLeg(leg) {
@@ -1949,75 +1928,13 @@ function quoteBuyBlockedReason(trading) {
   return "not allowed";
 }
 
-async function clickQuoteBox(side, leg) {
-  const label = quoteActionLabel(side, leg);
-  if (quoteOrderInFlight) {
-    appendLogEntry({
-      level: "warn",
-      source: "trading",
-      message: `${label} click ignored — order already in progress`,
-    });
-    return;
-  }
-  const trading = tradingState(windowState);
-  if (trading && !canQuoteAction(trading, side, leg)) {
-    appendLogEntry({
-      level: "warn",
-      source: "trading",
-      message:
-        leg === "buy"
-          ? `${label} click ignored — ${quoteBuyBlockedReason(trading)}`
-          : `${label} click ignored — no position to sell`,
-    });
-    return;
-  }
-
-  quoteOrderInFlight = true;
-  const boxId = QUOTE_BOXES.find((b) => b.side === side && b.leg === leg)?.boxId;
-  const box = boxId ? $(boxId) : null;
-  if (box) box.classList.add("quote-box-pending");
-  const predBox = predictionActionBoxForLeg(leg);
-  const predPending =
-    predBox?.classList.contains("quote-box") &&
-    !predBox.classList.contains("quote-box-disabled") &&
-    predictionActionBoxMatchesSide(predBox, side);
-  if (predPending) predBox.classList.add("quote-box-pending");
-
+/** @deprecated Manual quote clicks removed — Trigger cards place orders. */
+async function clickQuoteBox(_side, _leg) {
   appendLogEntry({
-    level: "info",
+    level: "warn",
     source: "trading",
-    message: `${label} submitting…`,
+    message: "Manual quote orders removed — use Trigger cards (Trade + Active)",
   });
-
-  try {
-    const { ok, status, body } = await postTradingOrder(side, leg);
-    if (!ok) {
-      appendLogEntry({
-        level: "error",
-        source: "trading",
-        message: body.error || `${label} failed (${status})`,
-      });
-      return;
-    }
-    appendLogEntry({
-      level: "info",
-      source: "trading",
-      message: `${label} placed`,
-    });
-    const winRes = await fetch(`/api/window?series=${encodeURIComponent(selectedSeries)}`);
-    if (winRes.ok) updateWindowUI(await winRes.json());
-    void loadWalletAccount();
-  } catch (err) {
-    appendLogEntry({
-      level: "error",
-      source: "trading",
-      message: `${label} error: ${err.message || err}`,
-    });
-  } finally {
-    quoteOrderInFlight = false;
-    if (box) box.classList.remove("quote-box-pending");
-    if (predPending) predBox.classList.remove("quote-box-pending");
-  }
 }
 
 function bindQuoteBoxes() {
@@ -2025,24 +1942,8 @@ function bindQuoteBoxes() {
     const box = $(cfg.boxId);
     if (!box || box.dataset.bound === "1") continue;
     box.dataset.bound = "1";
-
-    box.addEventListener("mousedown", (e) => {
-      if (e.button !== 0 || box.classList.contains("quote-box-disabled")) return;
-      box.classList.add("quote-box-pressing");
-    });
-
-    const releasePress = () => {
-      if (!box.classList.contains("quote-box-latched")) {
-        box.classList.remove("quote-box-pressing");
-      }
-    };
-
-    box.addEventListener("mouseup", releasePress);
-    box.addEventListener("mouseleave", releasePress);
-
-    box.addEventListener("click", () => {
-      void clickQuoteBox(cfg.side, cfg.leg);
-    });
+    box.classList.add("quote-box-display", "quote-box-disabled");
+    box.setAttribute("aria-disabled", "true");
   }
 }
 
@@ -7130,18 +7031,6 @@ const SETUP_DELETE_CAN_SVG =
   "</g>" +
   "</svg>";
 
-function isLightHexColor(color) {
-  const raw = String(color || "").trim();
-  const hex = raw.startsWith("#") ? raw.slice(1) : raw;
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return false;
-  const r = parseInt(hex.slice(0, 2), 16) / 255;
-  const g = parseInt(hex.slice(2, 4), 16) / 255;
-  const b = parseInt(hex.slice(4, 6), 16) / 255;
-  const toLin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-  const luminance = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
-  return luminance > 0.55;
-}
-
 function setSetupListItemDeleting(setupId, deleting) {
   const item = document.querySelector(
     `.schedule-setup-item[data-setup-id="${CSS.escape(String(setupId))}"]`,
@@ -8381,10 +8270,7 @@ function writeLocalTradingConfig(config) {
         manualBuyOrderType: normalizeManualOrderType(config.manualBuyOrderType),
         manualSellOrderType: normalizeManualOrderType(config.manualSellOrderType),
         manipulationDetector: Boolean(config.manipulationDetector),
-        predictionTrade:
-          Boolean(config.predictionTrade) &&
-          Boolean(config.startTrading) &&
-          Boolean(config.manipulationDetector),
+        predictionTrade: false,
         predictionShares: normalizePredictionShares(config.predictionShares),
         predictionBuyOrderType: normalizeManualOrderType(config.predictionBuyOrderType),
         predictionSellOrderType: normalizePredictionSellOrderType(config.predictionSellOrderType),
@@ -8439,16 +8325,11 @@ function normalizePredictionShares(value) {
 function syncPredictionTradeEnabled() {
   const tradeInput = $("prediction-trade");
   const tradeLabel = $("prediction-trade-label");
-  const allowOn = Boolean($("start-trading")?.checked);
-  const predictionOn = Boolean($("manipulation-detector")?.checked);
-  const canTrade = allowOn && predictionOn;
   if (tradeInput) {
-    tradeInput.disabled = !canTrade;
-    if (!canTrade && tradeInput.checked) tradeInput.checked = false;
+    tradeInput.checked = false;
+    tradeInput.disabled = true;
   }
-  if (tradeLabel) {
-    tradeLabel.textContent = tradeInput?.checked ? "Trade · On" : "Trade · Off";
-  }
+  if (tradeLabel) tradeLabel.textContent = "Trade · Off";
 }
 
 function buildTradingConfigPatch(overrides = {}) {
@@ -8460,7 +8341,6 @@ function buildTradingConfigPatch(overrides = {}) {
   const buyTypeSelect = $("manual-buy-order-type");
   const sellTypeSelect = $("manual-sell-order-type");
   const manipInput = $("manipulation-detector");
-  const predictionTradeInput = $("prediction-trade");
   const predictionSharesInput = $("prediction-shares");
   const predictionBuyTypeSelect = $("prediction-buy-order-type");
   const predictionSellTypeSelect = $("prediction-sell-order-type");
@@ -8474,8 +8354,6 @@ function buildTradingConfigPatch(overrides = {}) {
   const quotes = normalizePredictionQuoteBand(minQuoteInput?.value, maxQuoteInput?.value);
   const startTrading = Boolean(startTradingInput?.checked);
   const manipulationDetector = Boolean(manipInput?.checked);
-  const predictionTrade =
-    startTrading && manipulationDetector && Boolean(predictionTradeInput?.checked);
   return {
     // Phase Auto Trade / Use Schedule removed — Triggers only.
     autoTrade: false,
@@ -8486,7 +8364,8 @@ function buildTradingConfigPatch(overrides = {}) {
     manualBuyOrderType: normalizeManualOrderType(buyTypeSelect?.value),
     manualSellOrderType: normalizeManualOrderType(sellTypeSelect?.value),
     manipulationDetector,
-    predictionTrade,
+    // Prediction scores in sim only — Trigger cards are the sole live order path.
+    predictionTrade: false,
     predictionShares: normalizePredictionShares(predictionSharesInput?.value),
     predictionBuyOrderType: normalizeManualOrderType(predictionBuyTypeSelect?.value),
     predictionSellOrderType: normalizePredictionSellOrderType(predictionSellTypeSelect?.value),
@@ -9214,53 +9093,12 @@ function syncPredictionStatusUi() {
   setPredictionSellDisabledUi();
 }
 
-function bindPredictionActionBox(box, leg) {
+function bindPredictionActionBox(box, _leg) {
   if (!box || box.dataset.predBound === "1") return;
   box.dataset.predBound = "1";
-
-  box.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    if (
-      !box.classList.contains("quote-box") ||
-      box.classList.contains("quote-box-disabled") ||
-      box.classList.contains("quote-box-latched")
-    ) {
-      return;
-    }
-    box.classList.add("quote-box-pressing");
-  });
-
-  const releasePress = () => {
-    if (!box.classList.contains("quote-box-latched")) {
-      box.classList.remove("quote-box-pressing");
-    }
-  };
-  box.addEventListener("mouseup", releasePress);
-  box.addEventListener("mouseleave", releasePress);
-
-  const activate = () => {
-    if (
-      !box.classList.contains("quote-box") ||
-      box.classList.contains("quote-box-disabled") ||
-      box.classList.contains("quote-box-latched")
-    ) {
-      return;
-    }
-    const side = box.classList.contains("quote-box-up")
-      ? "up"
-      : box.classList.contains("quote-box-down")
-        ? "down"
-        : null;
-    if (side !== "up" && side !== "down") return;
-    void clickQuoteBox(side, leg);
-  };
-
-  box.addEventListener("click", activate);
-  box.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    e.preventDefault();
-    activate();
-  });
+  // Visual latch / status only — never places orders.
+  box.classList.add("quote-box-display");
+  box.setAttribute("aria-disabled", "true");
 }
 
 function bindPredictionStatusBuyButton() {
@@ -11377,10 +11215,8 @@ function applyTradingConfigToUi(config) {
   if (sellTypeSelect) sellTypeSelect.value = normalizeManualOrderType(config.manualSellOrderType);
   if (manipInput) manipInput.checked = Boolean(config.manipulationDetector);
   if (predictionTradeInput) {
-    predictionTradeInput.checked =
-      Boolean(config.predictionTrade) &&
-      Boolean(config.startTrading) &&
-      Boolean(config.manipulationDetector);
+    predictionTradeInput.checked = false;
+    predictionTradeInput.disabled = true;
   }
   if (predictionSharesInput) {
     predictionSharesInput.value = String(normalizePredictionShares(config.predictionShares));
@@ -11577,17 +11413,11 @@ function bindTradeToggles() {
   const predictionBuyTypeSelect = $("prediction-buy-order-type");
   const predictionSellTypeSelect = $("prediction-sell-order-type");
 
-  predictionTradeInput?.addEventListener("change", async () => {
-    syncPredictionTradeEnabled();
-    await persistManipulationConfigPatch();
-    appendLogEntry({
-      level: "info",
-      source: "client",
-      message: predictionTradeInput.checked
-        ? "Prediction Trade enabled"
-        : "Prediction Trade disabled (sim)",
-    });
-  });
+  // Prediction Trade removed — Trigger cards are the only live order path.
+  if (predictionTradeInput) {
+    predictionTradeInput.checked = false;
+    predictionTradeInput.disabled = true;
+  }
 
   predictionSharesInput?.addEventListener("change", async () => {
     if (predictionSharesInput.disabled) return;
