@@ -5003,8 +5003,8 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   box-sizing: border-box;
 }
 
-.simulator-box-scroll-wrap:has(.quote-box:hover),
-.simulator-box-scroll-wrap:has(.quote-box.quote-box-pressing) {
+.simulator-box-scroll-wrap:has(.quote-box:not(.quote-box-display):hover),
+.simulator-box-scroll-wrap:has(.quote-box:not(.quote-box-display).quote-box-pressing) {
   z-index: 3;
 }
 
@@ -8083,7 +8083,18 @@ body.is-column-resizing * {
     opacity 0.12s ease;
 }
 
-.quote-box:not(.quote-box-disabled):not(.quote-box-latched):hover {
+/* Graph quote row: display-only (live quotes + trigger latch) — no click/hover lift. */
+.quote-row > .quote-box.quote-box-display,
+.quote-box.quote-box-display {
+  cursor: default;
+  pointer-events: none;
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+  transition: background-color 0.12s ease, opacity 0.12s ease;
+}
+
+.quote-box:not(.quote-box-display):not(.quote-box-disabled):not(.quote-box-latched):hover {
   transform: translateY(-4px);
   box-shadow:
     0 -1px 0 0 var(--quote-hover-edge, var(--border)),
@@ -8092,16 +8103,16 @@ body.is-column-resizing * {
   z-index: 2;
 }
 
-.quote-box-up:not(.quote-box-disabled):not(.quote-box-latched):hover {
+.quote-box-up:not(.quote-box-display):not(.quote-box-disabled):not(.quote-box-latched):hover {
   --quote-hover-edge: var(--up);
 }
 
-.quote-box-down:not(.quote-box-disabled):not(.quote-box-latched):hover {
+.quote-box-down:not(.quote-box-display):not(.quote-box-disabled):not(.quote-box-latched):hover {
   --quote-hover-edge: var(--down);
 }
 
-.quote-box:not(.quote-box-disabled).quote-box-pressing,
-.quote-box:not(.quote-box-disabled):active {
+.quote-box:not(.quote-box-display):not(.quote-box-disabled).quote-box-pressing,
+.quote-box:not(.quote-box-display):not(.quote-box-disabled):active {
   transform: translateY(0);
   box-shadow: none;
   transition-duration: 0.08s;
@@ -8112,7 +8123,7 @@ body.is-column-resizing * {
   box-shadow: none;
 }
 
-.quote-box.quote-box-disabled {
+.quote-box.quote-box-disabled:not(.quote-box-display) {
   cursor: not-allowed;
   opacity: 0.45;
   transform: translateY(0);
@@ -8121,6 +8132,11 @@ body.is-column-resizing * {
 
 .quote-box.quote-box-disabled.quote-triggered-up,
 .quote-box.quote-box-disabled.quote-triggered-down {
+  opacity: 1;
+}
+
+.quote-box.quote-box-display.quote-triggered-up,
+.quote-box.quote-box-display.quote-triggered-down {
   opacity: 1;
 }
 

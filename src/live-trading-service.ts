@@ -839,7 +839,8 @@ function normalizeTradingConfig(
     manualBuyOrderType: normalizeManualOrderType(raw.manualBuyOrderType),
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
-    predictionTrade: Boolean(raw.predictionTrade),
+    // Live Prediction Trade removed — Trigger cards only.
+    predictionTrade: false,
     predictionShares,
     predictionBuyOrderType: normalizeManualOrderType(raw.predictionBuyOrderType),
     predictionSellOrderType: normalizePredictionSellOrderType(raw.predictionSellOrderType),
@@ -854,13 +855,11 @@ function normalizeTradingConfig(
   if (!next.autoTrade) {
     next.useSchedule = false;
   }
-  if (!next.startTrading || !next.manipulationDetector) {
-    next.predictionTrade = false;
-  }
+  next.predictionTrade = false;
   return next;
 }
 
-/** Live trading — manual orders, phase auto-trade, schedule-driven setup. */
+/** Live trading — Trigger Trade orders + portfolio / schedule stats. */
 export class LiveTradingService {
   private config: TradingConfig = defaultTradingConfig();
   private persistChain: Promise<void> = Promise.resolve();
@@ -1633,9 +1632,8 @@ export class LiveTradingService {
     if (patch.manipulationDetector != null) {
       this.config.manipulationDetector = Boolean(patch.manipulationDetector);
     }
-    if (patch.predictionTrade != null) {
-      this.config.predictionTrade = Boolean(patch.predictionTrade);
-    }
+    // Prediction Trade disabled — ignore client patches.
+    this.config.predictionTrade = false;
     if (patch.predictionShares != null) {
       const shares = Number(patch.predictionShares);
       this.config.predictionShares = Math.max(
@@ -1705,9 +1703,7 @@ export class LiveTradingService {
     if (!this.config.autoTrade) {
       this.config.useSchedule = false;
     }
-    if (!this.config.startTrading || !this.config.manipulationDetector) {
-      this.config.predictionTrade = false;
-    }
+    this.config.predictionTrade = false;
     this.persistConfig();
     const isLive =
       this.config.autoTrade && this.config.useSchedule && this.config.startTrading;

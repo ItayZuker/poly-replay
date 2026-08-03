@@ -859,6 +859,12 @@ app.post("/api/trading/order", async (req, res) => {
         : req.body?.source === "trigger"
           ? "trigger"
           : "manual";
+    if (source === "manual" || source === "prediction") {
+      res.status(400).json({
+        error: "Only Trigger Trade places orders (Trade + Active)",
+      });
+      return;
+    }
     if (side !== "up" && side !== "down") {
       res.status(400).json({ error: "side must be up or down" });
       return;

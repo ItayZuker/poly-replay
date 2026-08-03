@@ -236,7 +236,8 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
     manualBuyOrderType: normalizeManualOrderType(raw.manualBuyOrderType),
     manualSellOrderType: normalizeManualOrderType(raw.manualSellOrderType),
     manipulationDetector: Boolean(raw.manipulationDetector),
-    predictionTrade: Boolean(raw.predictionTrade),
+    // Live Prediction Trade removed — Trigger cards only.
+    predictionTrade: false,
     predictionShares,
     predictionBuyOrderType: normalizeManualOrderType(raw.predictionBuyOrderType),
     predictionSellOrderType: normalizePredictionSellOrderType(raw.predictionSellOrderType),
@@ -251,10 +252,7 @@ function normalizeTrading(raw: Partial<TradingConfig> | null | undefined): Tradi
   if (!next.autoTrade) {
     next.useSchedule = false;
   }
-  // Trade requires both Allow trade and Prediction.
-  if (!next.startTrading || !next.manipulationDetector) {
-    next.predictionTrade = false;
-  }
+  next.predictionTrade = false;
   return next;
 }
 
