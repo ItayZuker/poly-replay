@@ -1,6 +1,11 @@
 {
-  "current": "1.41.2",
+  "current": "1.41.3",
   "releases": [
+    {
+      "version": "1.41.3",
+      "releasedAt": "2026-08-03T11:09:25.802Z",
+      "notes": "Tighten Trigger GTD double-buy guard: free a rest slot only on full fill, explicit cancel/expire status, or window end — never on unknown/empty status."
+    },
     {
       "version": "1.41.2",
       "releasedAt": "2026-08-03T06:17:23.327Z",
