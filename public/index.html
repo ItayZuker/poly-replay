@@ -414,8 +414,9 @@
               </div>
             </div>
           </div>
-          <!-- Manual Size / Manual Override removed — only Trigger cards place orders. -->
-          <div id="trade-body" class="trade-panel-body is-collapsed" hidden>
+          <!-- Manual Size / Manual Override removed — only Trigger cards place orders.
+               Keep trade-body in layout (no hidden) so left-column header drag heights stay correct. -->
+          <div id="trade-body" class="trade-panel-body is-collapsed">
             <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade" hidden>
               <span class="wallet-control-label" id="auto-trade-label">Auto Trade · Off</span>
               <span class="switch">
