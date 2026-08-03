@@ -1,6 +1,11 @@
 {
-  "current": "1.43.0",
+  "current": "1.44.0",
   "releases": [
+    {
+      "version": "1.44.0",
+      "releasedAt": "2026-08-03T14:30:16.320Z",
+      "notes": "Trigger Buy GTD (no Gap): rest both UP and DOWN at Price; first fill cancels the sibling. Docs updated."
+    },
     {
       "version": "1.43.0",
       "releasedAt": "2026-08-03T13:40:23.388Z",

@@ -923,14 +923,15 @@ export class LiveTradingService {
   private triggerRestingBuys = new Map<string, TriggerRestingBuyOrder>();
   /**
    * After a Trigger GTD buy fill, latch that triggerId → sessionKey until the
-   * position is confirmed sold (or the window rolls). Prevents a second 100-share
-   * rest on the same side while holding to settlement.
+   * position is confirmed sold (or the window rolls). Blocks further rests on
+   * either side while holding; sibling rest is cancelled on first fill.
    */
   private triggerGtdHoldSessionById = new Map<string, string>();
   /**
    * After a Trigger GTD place is accepted this window (orderId returned), never
-   * place again for that triggerId until the window rolls — one resting order max.
-   * Failed place attempts do not latch (so a miss can retry).
+   * place again for that triggerId+side until the window rolls.
+   * No-gap GTD may accept one rest per side (UP + DOWN); first fill cancels the sibling.
+   * Key: `${triggerId}:${side}` → sessionKey. Failed places do not latch (retry allowed).
    */
   private triggerGtdPlacedSessionById = new Map<string, string>();
   /** Serialize Trigger GTD sync so concurrent client posts cannot double-place. */
@@ -4243,17 +4244,29 @@ export class LiveTradingService {
     );
   }
 
-  /** True after any GTD place attempt for this trigger in this window. */
-  private isTriggerGtdPlaced(triggerId: string, session: string): boolean {
-    const id = String(triggerId || "").trim();
-    if (!id || !session) return false;
-    return this.triggerGtdPlacedSessionById.get(id) === session;
+  private triggerGtdPlacedKey(triggerId: string, side: "up" | "down"): string {
+    return `${triggerId}:${side}`;
   }
 
-  private latchTriggerGtdPlaced(triggerId: string, session: string): void {
+  /** True after a GTD place was accepted for this trigger+side in this window. */
+  private isTriggerGtdPlaced(
+    triggerId: string,
+    side: "up" | "down",
+    session: string,
+  ): boolean {
     const id = String(triggerId || "").trim();
-    if (!id || !session) return;
-    this.triggerGtdPlacedSessionById.set(id, session);
+    if (!id || !session || (side !== "up" && side !== "down")) return false;
+    return this.triggerGtdPlacedSessionById.get(this.triggerGtdPlacedKey(id, side)) === session;
+  }
+
+  private latchTriggerGtdPlaced(
+    triggerId: string,
+    side: "up" | "down",
+    session: string,
+  ): void {
+    const id = String(triggerId || "").trim();
+    if (!id || !session || (side !== "up" && side !== "down")) return;
+    this.triggerGtdPlacedSessionById.set(this.triggerGtdPlacedKey(id, side), session);
   }
 
   private async recordBuyFill(
@@ -4770,23 +4783,18 @@ export class LiveTradingService {
     }
 
     // Cancel rests that are no longer desired or at a different price/size.
-    // Once a trigger has placed this window, keep its rest even if the client
-    // flips desired side (cheaper-Ask lock) — latch forbids a replacement.
+    // Once a side has placed this window, keep that rest even if its desire
+    // briefly drops — latch forbids a replacement on the same side.
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
       if (
         resting.sessionKey === key &&
-        this.isTriggerGtdPlaced(resting.triggerId, key) &&
+        this.isTriggerGtdPlaced(resting.triggerId, resting.side, key) &&
         !this.isTriggerGtdHeld(resting.triggerId, key)
       ) {
-        // Reclaim if a side-flip briefly marked cancel — do not drop the only rest.
-        if (resting.cancelPending && desireByKey.size > 0) {
-          const anyDesireForTrigger = [...desireByKey.values()].some(
-            (d) => d.triggerId === resting.triggerId,
-          );
-          if (anyDesireForTrigger) {
-            resting.cancelPending = false;
-            resting.cancelAttempts = 0;
-          }
+        // Reclaim if a brief cancel race marked cancel — do not drop a live rest.
+        if (resting.cancelPending && desireByKey.has(rk)) {
+          resting.cancelPending = false;
+          resting.cancelAttempts = 0;
         }
         if (!resting.cancelPending) continue;
       }
@@ -4880,16 +4888,8 @@ export class LiveTradingService {
       // Still tracking a rest (including cancel-pending) → never place a duplicate.
       if (this.triggerRestingBuys.has(rk)) continue;
       if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
-      // Already accepted a resting GTD this window — never place again (silent).
-      if (this.isTriggerGtdPlaced(want.triggerId, key)) continue;
-      // Also block if we still track any rest for this trigger (any side).
-      const hasRestForTrigger = [...this.triggerRestingBuys.values()].some(
-        (r) => r.triggerId === want.triggerId && r.sessionKey === key,
-      );
-      if (hasRestForTrigger) {
-        this.latchTriggerGtdPlaced(want.triggerId, key);
-        continue;
-      }
+      // Already accepted a resting GTD on this side this window — never re-place.
+      if (this.isTriggerGtdPlaced(want.triggerId, want.side, key)) continue;
       if (this.positions.up || this.positions.down) break;
       if (this.predictionTradeHoldWindowKey === key) break;
       // Hard cap: never place again if this trigger already bought ≥ Shares this window
@@ -4907,7 +4907,7 @@ export class LiveTradingService {
         )
         .reduce((sum, c) => sum + (Number(c.shares) || 0), 0);
       if (matchedForTrigger + cardShares >= want.shares - 1e-9) {
-        this.latchTriggerGtdPlaced(want.triggerId, key);
+        this.latchTriggerGtdPlaced(want.triggerId, want.side, key);
         continue;
       }
 
@@ -4938,8 +4938,8 @@ export class LiveTradingService {
           // Do not latch on failure — allow retry until a rest is accepted.
           continue;
         }
-        // Accepted by CLOB — one resting order max for this trigger this window.
-        this.latchTriggerGtdPlaced(want.triggerId, key);
+        // Accepted by CLOB — one rest max per side this window (UP + DOWN both allowed).
+        this.latchTriggerGtdPlaced(want.triggerId, want.side, key);
 
         const immediateFill =
           result.fillShares != null && result.fillPrice != null && result.fillShares > 0;

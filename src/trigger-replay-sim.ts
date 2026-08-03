@@ -446,12 +446,12 @@ function startConditionMet(def: ReplayTriggerDef, currentCents: number): boolean
 }
 
 /**
- * Buy GTD: no gap → one side (lower Ask, UP on tie).
+ * Buy GTD: no gap → both UP and DOWN (first Ask ≤ Price fills; sibling unused in sim).
  * Any gap → GTD not allowed (normalize coerces to FOK); empty sides.
  */
 function gtdDesiredSides(
   def: ReplayTriggerDef,
-  tick: ReplayTickDocument,
+  _tick: ReplayTickDocument,
 ): Array<"up" | "down"> {
   const start = def.ptbGap.start;
   const end = def.ptbGap.end;
@@ -463,13 +463,7 @@ function gtdDesiredSides(
   ) {
     return [];
   }
-  const upAsk = quoteCents(tick, "up", "buy");
-  const downAsk = quoteCents(tick, "down", "buy");
-  if (Number.isFinite(upAsk) && Number.isFinite(downAsk)) {
-    return upAsk <= downAsk ? ["up"] : ["down"];
-  }
-  if (Number.isFinite(downAsk) && !Number.isFinite(upAsk)) return ["down"];
-  return ["up"];
+  return ["up", "down"];
 }
 
 function endConditionMet(def: ReplayTriggerDef, startCents: number, endCents: number): boolean {

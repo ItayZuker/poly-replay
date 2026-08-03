@@ -10877,42 +10877,12 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
 }
 
 /**
- * Locked GTD side per trigger for the current market window.
- * No-gap GTD places exactly one resting order; side is chosen once then held.
- * @type {Map<string, { windowStart: number, side: "up" | "down" }>}
+ * No-gap Buy GTD: rest both UP and DOWN at Price; first fill cancels the sibling.
+ * Gap set → GTD not allowed (normalize coerces to FOK); empty sides.
  */
-const triggerGtdLockedSideById = new Map();
-
-/** Pick one GTD side for no-gap: lower Ask (UP on tie / unknown). Locked for the window. */
-function triggerGtdDesiredSides(trigger, state) {
-  // Gap set → GTD not allowed (normalize coerces to FOK); no desires.
+function triggerGtdDesiredSides(trigger, _state) {
   if (triggerHasPtbGap(trigger?.ptbGap)) return [];
-  const id = String(trigger?.id || "");
-  if (!id) return [];
-  const windowStart = Number(state?.windowStart);
-  const locked = triggerGtdLockedSideById.get(id);
-  if (
-    locked &&
-    Number.isFinite(windowStart) &&
-    locked.windowStart === windowStart &&
-    (locked.side === "up" || locked.side === "down")
-  ) {
-    return [locked.side];
-  }
-  // Lock immediately (even before asks) so tick-to-tick Ask flips cannot
-  // cancel/replace the one resting order with the other side.
-  let side = "up";
-  const upAsk = triggerAskPrice(state, "up");
-  const downAsk = triggerAskPrice(state, "down");
-  if (Number.isFinite(upAsk) && Number.isFinite(downAsk)) {
-    side = upAsk <= downAsk ? "up" : "down";
-  } else if (Number.isFinite(downAsk) && !Number.isFinite(upAsk)) {
-    side = "down";
-  }
-  if (Number.isFinite(windowStart)) {
-    triggerGtdLockedSideById.set(id, { windowStart, side });
-  }
-  return [side];
+  return ["up", "down"];
 }
 
 function triggerUsesBuyGtd(trigger) {
@@ -10947,7 +10917,6 @@ function clearTriggerGtdArmTimer() {
 function invalidateTriggerGtdArmKeys(triggerId) {
   if (!triggerId) {
     triggerGtdArmedApplyKeys.clear();
-    triggerGtdLockedSideById.clear();
     return;
   }
   const id = String(triggerId);
@@ -10955,7 +10924,6 @@ function invalidateTriggerGtdArmKeys(triggerId) {
   for (const key of [...triggerGtdArmedApplyKeys]) {
     if (key.startsWith(prefix)) triggerGtdArmedApplyKeys.delete(key);
   }
-  triggerGtdLockedSideById.delete(id);
 }
 
 /** Build Trade GTD desires for triggers currently inside Apply (wall clock). */
@@ -11004,7 +10972,6 @@ function scheduleTriggerGtdArming(state = windowState) {
   if (ws !== triggerGtdArmWindowStart) {
     triggerGtdArmWindowStart = ws ?? null;
     triggerGtdArmedApplyKeys.clear();
-    triggerGtdLockedSideById.clear();
   }
 
   const nowMs = Date.now();
@@ -11211,7 +11178,7 @@ function tickUserTriggers(state) {
       continue;
     }
 
-    // Buy GTD: rest at Price from Apply-window start (no Duration / end condition).
+    // Buy GTD: rest UP + DOWN at Price from Apply-window start (first fill cancels sibling).
     if (buyGtd) {
       const priceCents = clampTriggerCents(trigger.startPriceCents ?? 50);
       const sides = triggerGtdDesiredSides(trigger, state);
