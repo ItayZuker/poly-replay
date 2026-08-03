@@ -78,6 +78,8 @@
   let resizeObserver = null;
 
   let payload = null;
+  /** True when this Open session is Live Schedule hour review (trade windows + ledger). */
+  let liveMode = false;
   /** Series used for this Open session (markers / ticks). */
   let playSeries = "btc-5m";
   /** Fallback Prediction Duration (sec) from Open request when window payload lacks it. */
@@ -1001,14 +1003,17 @@
       for (const m of win.markers || []) {
         markerCount += 1;
         if (m?.t == null || !Number.isFinite(m.t)) continue;
-        // Prefer asset Y; if missing, skip (server should enrich — don't fake with PTB).
-        if (m.y == null || !Number.isFinite(m.y)) continue;
+        const yMissing = m.y == null || !Number.isFinite(m.y);
+        // Live Open: keep ledger hits without Chainlink Y (drawn on mid band).
+        // Replay: prefer asset Y only (server should enrich — don't fake with PTB).
+        if (yMissing && !liveMode) continue;
         const elapsed = m.t - win.windowStart;
         // Allow tiny end-of-window float overflow from fill timing.
         if (elapsed < -0.5 || elapsed > duration + 1) continue;
         dots.push({
           elapsed: Math.max(0, Math.min(duration, elapsed)),
-          y: m.y,
+          y: yMissing ? null : m.y,
+          yMissing,
           type: m.type,
           side: m.side,
           source: markerTradeSource(m),
@@ -1087,9 +1092,16 @@
 
     let minP = Infinity;
     let maxP = -Infinity;
+    let pricedCount = 0;
     for (const d of dots) {
+      if (d.yMissing || d.y == null || !Number.isFinite(d.y)) continue;
+      pricedCount += 1;
       if (d.y < minP) minP = d.y;
       if (d.y > maxP) maxP = d.y;
+    }
+    if (pricedCount === 0) {
+      minP = 0;
+      maxP = 1;
     }
     const spread = maxP - minP || Math.max(Math.abs(minP) * 0.001, 1);
     const margin = spread * 0.12;
@@ -1097,7 +1109,11 @@
     maxP += margin;
 
     const xAt = (elapsed) => padding.left + (elapsed / maxDuration) * plotW;
-    const yAt = (price) => padding.top + plotH - ((price - minP) / (maxP - minP)) * plotH;
+    const midY = padding.top + plotH / 2;
+    const yAt = (price) => {
+      if (price == null || !Number.isFinite(price)) return midY;
+      return padding.top + plotH - ((price - minP) / (maxP - minP || 1)) * plotH;
+    };
 
     // Market values sit inside the plot on the top/bottom grid lines.
     ctx.fillStyle = "#6e7681";
@@ -1499,6 +1515,7 @@
     }
 
     // Missing official settlement or empty tick path — no price line.
+    // Live Open still draws ledger markers on a blank timeline.
     if (!ticksLoading && priceHistory.length === 0) {
       hoverTargets = [];
       playChartLayout = null;
@@ -1507,11 +1524,30 @@
       const { ctx, width, height } = resizeCanvas();
       if (ctx) {
         ctx.clearRect(0, 0, width, height);
+        const padding = CHART_PAD;
+        const plotW = width - padding.left - padding.right;
+        const plotH = height - padding.top - padding.bottom;
+        playChartLayout = { padding, plotW, plotH, xAt: null, yAt: null };
+        const duration = windowDuration(win);
+        const until = playheadSec;
+        const markers = (win.markers || []).filter((m) => Number(m.t) <= until);
+        if (plotW > 0 && plotH > 0) {
+          playChartLayout.xAt = (t) =>
+            padding.left + ((Number(t) - win.windowStart) / Math.max(1e-9, duration)) * plotW;
+          playChartLayout.yAt = () => padding.top + plotH / 2;
+          // Subtle mid band so markers have a rail when ticks are missing.
+          ctx.strokeStyle = "#21262d";
+          ctx.beginPath();
+          ctx.moveTo(padding.left, padding.top + plotH / 2);
+          ctx.lineTo(width - padding.right, padding.top + plotH / 2);
+          ctx.stroke();
+        }
         ctx.fillStyle = "#8b949e";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        if (!hasOfficialSettlement(win)) {
+        const noteY = padding.top + 18;
+        if (!hasOfficialSettlement(win) && !windowHasAnyHit(win)) {
           ctx.fillText("No official settlement data for this window", width / 2, height / 2 - 8);
           ctx.font = "11px sans-serif";
           ctx.fillStyle = "#6e7681";
@@ -1521,14 +1557,55 @@
             height / 2 + 12,
           );
         } else {
-          ctx.fillText("No Chainlink recording for this window", width / 2, height / 2 - 8);
+          ctx.fillText("No Chainlink recording for this window", width / 2, noteY);
           ctx.font = "11px sans-serif";
           ctx.fillStyle = "#6e7681";
           const hitNote = windowHasAnyHit(win)
-            ? "Trade stats are from the live ledger — price ticks were not saved"
+            ? "Trade from live ledger — markers shown by time"
             : "No price ticks on the recorder for this slot";
-          ctx.fillText(hitNote, width / 2, height / 2 + 12);
+          ctx.fillText(hitNote, width / 2, noteY + 16);
         }
+        const nextTargets = [];
+        const playDots = [];
+        if (playChartLayout?.xAt) {
+          for (const m of markers) {
+            if (m?.t == null || !Number.isFinite(m.t)) continue;
+            const x = playChartLayout.xAt(m.t);
+            const y = padding.top + plotH / 2;
+            const id = `play:${m.t}:${m.type}:${m.side}:noticks`;
+            const dot = {
+              id,
+              x,
+              y,
+              t: m.t,
+              type: m.type,
+              side: m.side,
+              source: markerTradeSource(m),
+              windowKey: m.windowKey,
+              windowStart: win.windowStart,
+              bucket: tradeBucketForMarker(win, m),
+              html: renderHitsMapTooltipHtml(m),
+              pairDotId: null,
+            };
+            playDots.push(dot);
+            nextTargets.push(dot);
+            ctx.beginPath();
+            ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+            const color = m.side === "down" ? DOWN_COLOR : UP_COLOR;
+            if (m.type === "buy") {
+              ctx.fillStyle = color;
+              ctx.fill();
+            } else {
+              ctx.fillStyle = "rgba(13, 17, 23, 0.85)";
+              ctx.fill();
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+          }
+          assignBuySellPairIds(playDots, (d) => d.id);
+        }
+        hoverTargets = nextTargets;
       }
       updateTimeUi(win);
       return;
@@ -2168,7 +2245,9 @@
 
       const sub = document.createElement("span");
       sub.className = "schedule-play-item-sub";
-      const hitCount = (win.markers || []).filter((m) => m?.y != null).length;
+      const hitCount = (win.markers || []).filter(
+        (m) => m && (m.type === "buy" || m.type === "sell"),
+      ).length;
       sub.textContent = `${win.plLabel || "—"} · ${formatPnl(win.pnl)}${hitCount ? ` · ${hitCount} hits` : ""}`;
 
       body.append(title, sub);
@@ -2233,7 +2312,9 @@
       return;
     }
 
-    if (!hasOfficialSettlement(win)) {
+    // Live Open: always try ticks (ledger rows may lack official open/close).
+    // Replay: require official settlement before loading a price path.
+    if (!liveMode && !hasOfficialSettlement(win)) {
       setTicksLoading(false);
       setStatus("No official settlement data for this window");
       drawFrame();
@@ -2257,11 +2338,23 @@
         loadBookQuotes(win.windowStart).catch(() => []),
       ]);
       if (token !== loadToken) return;
-      // No mid-window Chainlink → drop from Open Replay (false results without a price path).
+      // No mid-window Chainlink.
+      // Live Open: keep the trade window (markers on blank timeline).
+      // Replay: drop empty-path windows (false review without a price path).
       if (midWindowChainlinkCount(history, win) === 0) {
         priceHistory = [];
         setTicksLoading(false);
         updateTransportEnabled();
+        if (liveMode || windowHasAnyHit(win)) {
+          setStatus(
+            windowHasAnyHit(win)
+              ? "No Chainlink ticks — showing ledger trade markers"
+              : "No Chainlink recording for this window",
+          );
+          drawFrame();
+          if (continueAutoPlay) stopPlayback();
+          return;
+        }
         const removed = removeWindowAtIndex(index);
         if (!removed || windowCount() === 0) {
           setStatus("No Chainlink recording for this window");
@@ -2466,6 +2559,7 @@
     priceHistory = [];
     hoverTargets = [];
     playChartLayout = null;
+    liveMode = false;
     playPredictionSensitivitySec = null;
     hidePhaseHover();
     clearHitsHighlight();
@@ -2495,6 +2589,7 @@
     const openToken = ++loadToken;
     stopPlayback();
     payload = null;
+    liveMode = options.live === true;
     selectedIndex = -1;
     priceHistory = [];
     tickCache.clear();
@@ -2587,13 +2682,14 @@
       if (openToken !== loadToken) return;
       if (!res.ok) throw new Error(body.error || `Open Replay failed (${res.status})`);
       payload = body;
-      // Server may still send legacy ledger-only rows — never Open-Replay those.
-      if (Array.isArray(payload.windows)) {
+      liveMode = options.live === true;
+      // Replay: drop ledger-only / missing-tick rows. Live Open keeps them (trade windows).
+      if (!liveMode && Array.isArray(payload.windows)) {
         payload.windows = payload.windows.filter((w) => w && w.recordingMissing !== true);
       }
       const titleEl = $("schedule-play-title");
       if (titleEl) {
-        const prefix = options.live === true ? "Live Open" : "Open Replay";
+        const prefix = liveMode ? "Live Open" : "Open Replay";
         titleEl.textContent = `${prefix} · ${body.title || "Placement"}`;
       }
       if (!payload.windows?.length) {
@@ -2603,8 +2699,8 @@
         syncListNavButtons();
         setWindowsLoading(false);
         setStatus(
-          options.live === true
-            ? "No recorded windows with Chainlink ticks in this hour"
+          liveMode
+            ? "No traded windows in this hour"
             : "No recorded windows with Chainlink ticks in this card",
         );
         drawFrame();

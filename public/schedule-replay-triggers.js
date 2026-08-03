@@ -72,8 +72,8 @@
               (raw.startMode === "change-side" || raw.startMode === "price"
                 ? Math.abs(Number(raw.startChangeSideCents))
                 : 50),
-          ),
-        );
+          ) * 10,
+        ) / 10;
         if (!Number.isFinite(n)) return 50;
         return Math.max(0, Math.min(100, n));
       })(),
@@ -199,6 +199,47 @@
     save();
     render();
     stopReplayForTriggerChange();
+  }
+
+  function newTriggerId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `trg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  /** Deep-copy a Replay Trigger; always starts Paused with empty Run stats. */
+  function duplicate(triggerId) {
+    if (listLocked) return null;
+    const src = find(triggerId);
+    if (!src) return null;
+    let clone;
+    try {
+      clone = JSON.parse(JSON.stringify(src));
+    } catch {
+      return null;
+    }
+    const now = new Date().toISOString();
+    const next = normalizeTrigger({
+      ...clone,
+      id: newTriggerId(),
+      paused: true,
+      replayStats: emptyStats(),
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (!next) return null;
+    const srcIdx = replayTriggers.findIndex((t) => String(t.id) === String(src.id));
+    // Insert right after the source card.
+    if (srcIdx >= 0) {
+      replayTriggers.splice(srcIdx + 1, 0, next);
+    } else {
+      replayTriggers = [next, ...replayTriggers];
+    }
+    save();
+    render();
+    stopReplayForTriggerChange();
+    return next;
   }
 
   function find(triggerId) {
@@ -343,6 +384,15 @@
           closeMenus();
           window.openTriggerEditModalForHost?.("replay", find(id));
         });
+        const duplicateBtn = document.createElement("button");
+        duplicateBtn.type = "button";
+        duplicateBtn.className = "schedule-setup-menu-item";
+        duplicateBtn.textContent = "Duplicate";
+        duplicateBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeMenus();
+          duplicate(id);
+        });
         const deleteBtn = document.createElement("button");
         deleteBtn.type = "button";
         deleteBtn.className = "schedule-setup-menu-item schedule-setup-menu-item-danger";
@@ -354,7 +404,7 @@
           if (!window.confirm(`Delete "${label}"?\n\nThis cannot be undone.`)) return;
           remove(id);
         });
-        menu.append(editBtn, deleteBtn);
+        menu.append(editBtn, duplicateBtn, deleteBtn);
         document.body.appendChild(menu);
         const rect = menuBtn.getBoundingClientRect();
         menu.style.position = "fixed";
@@ -493,6 +543,7 @@
     listForRun,
     upsert,
     remove,
+    duplicate,
     find,
     setPaused,
     resetRunStats,

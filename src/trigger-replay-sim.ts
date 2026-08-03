@@ -101,10 +101,15 @@ type Rt = {
   stats: TriggerReplayStat;
 };
 
+/** Absolute Price/Range ¢ — snap to 0.1¢ steps. */
 function clampCents(raw: unknown, fallback: number): number {
-  const n = Math.round(Number(raw));
+  const n = Math.round(Number(raw) * 10) / 10;
   if (!Number.isFinite(n)) return fallback;
   return Math.max(0, Math.min(100, n));
+}
+
+function roundCentsTenths(raw: number): number {
+  return Math.round(raw * 10) / 10;
 }
 
 /** Take Profit / Stop Loss: ¢ offset from buy fill (1–100). */
@@ -138,9 +143,15 @@ function clampSignedCents(raw: unknown, fallback = 20): number {
 
 function normalizeRange(raw: unknown): ReplayTriggerPriceRange {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const minGap = 0.1;
   let low = clampCents(o.lowCents, 40);
   let high = clampCents(o.highCents, 70);
-  if (high < low) [low, high] = [high, low];
+  if (high < low + minGap) {
+    high = Math.min(100, low + minGap);
+    if (high < low + minGap) {
+      low = Math.max(0, high - minGap);
+    }
+  }
   return { lowCents: low, highCents: high };
 }
 
@@ -424,7 +435,9 @@ function priceTrendMatches(
 }
 
 function inPriceRange(cents: number, range: ReplayTriggerPriceRange): boolean {
-  return Number.isFinite(cents) && cents >= range.lowCents && cents <= range.highCents;
+  if (!Number.isFinite(cents)) return false;
+  const c = roundCentsTenths(cents);
+  return c >= range.lowCents && c <= range.highCents;
 }
 
 /** Signed ¢ change: 0 = unchanged; +N = rose ≥ N¢; −N = fell ≥ |N|¢. */
@@ -440,7 +453,7 @@ function signedChangeMet(needRaw: number, fromCents: number, toCents: number): b
 function startConditionMet(def: ReplayTriggerDef, currentCents: number): boolean {
   if (def.startMode === "price") {
     const need = clampCents(def.startPriceCents, 50);
-    return Number.isFinite(currentCents) && Math.round(currentCents) === need;
+    return Number.isFinite(currentCents) && roundCentsTenths(currentCents) === need;
   }
   return inPriceRange(currentCents, def.priceRanges.start);
 }

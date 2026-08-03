@@ -1,6 +1,11 @@
 {
-  "current": "1.44.0",
+  "current": "1.45.0",
   "releases": [
+    {
+      "version": "1.45.0",
+      "releasedAt": "2026-08-03T17:28:03.499Z",
+      "notes": "Trigger Price/Range at 0.1¢; keyboard ↑/↓ on bar handles; Positions show UTC window range; Replay Trigger Duplicate; Live Open Replay lists traded windows without Chainlink. Docs updated."
+    },
     {
       "version": "1.44.0",
       "releasedAt": "2026-08-03T14:30:16.320Z",

@@ -160,6 +160,13 @@ export type TriggerGtdDesire = {
   takeProfitCents?: number;
 };
 
+/** Trigger GTD limit from 0.1¢ steps (0.5¢ → 0.005). Unlike phase centsToPrice (min 1¢). */
+function triggerGtdLimitPrice(priceCents: number): number {
+  const tenths = Math.round(Number(priceCents) * 10) / 10;
+  const clamped = Math.max(0, Math.min(100, tenths));
+  return Math.max(0.001, Math.min(0.999, clamped / 100));
+}
+
 export type TriggerGtdFill = {
   triggerId: string;
   side: "up" | "down";
@@ -1757,6 +1764,11 @@ export class LiveTradingService {
       return this.autoEngine.getMarkers().filter((m) => m.windowKey === key);
     }
     return [...this.markers];
+  }
+
+  /** Settled ledger events (RAM) for Live Open Replay / hour stats freshness. */
+  getLiveStatEvents(): TradingStatEvent[] {
+    return [...this.liveStatLedger.values()].map((e) => ({ ...e, card: e.card ? { ...e.card } : e.card }));
   }
 
   getPublicState(): TradingPublicState {
@@ -4732,7 +4744,7 @@ export class LiveTradingService {
       if (!triggerId) continue;
       // Already filled this window and not sold yet — do not rest again.
       if (this.isTriggerGtdHeld(triggerId, key)) continue;
-      const priceCents = Math.max(0, Math.min(100, Math.round(Number(d.priceCents))));
+      const priceCents = Math.max(0, Math.min(100, Math.round(Number(d.priceCents) * 10) / 10));
       if (!Number.isFinite(priceCents)) continue;
       const shares = Math.max(1, Math.floor(Number(d.shares) || 1));
       const sellOrderType =
@@ -4771,7 +4783,7 @@ export class LiveTradingService {
       if (!resting.cancelPending) continue;
       const want = desireByKey.get(rk);
       if (!want || this.isTriggerGtdHeld(resting.triggerId, key)) continue;
-      const limitPrice = centsToPrice(want.priceCents);
+      const limitPrice = triggerGtdLimitPrice(want.priceCents);
       const matches =
         resting.sessionKey === key &&
         Math.abs(resting.limitPrice - limitPrice) <= 1e-9 &&
@@ -4799,7 +4811,7 @@ export class LiveTradingService {
         if (!resting.cancelPending) continue;
       }
       const want = desireByKey.get(rk);
-      const limitPrice = want ? centsToPrice(want.priceCents) : NaN;
+      const limitPrice = want ? triggerGtdLimitPrice(want.priceCents) : NaN;
       const stale =
         !want ||
         resting.sessionKey !== key ||
@@ -4916,7 +4928,7 @@ export class LiveTradingService {
         await this.cancelAllRestingBuys("trigger GTD buy");
       }
 
-      const limitPrice = centsToPrice(want.priceCents);
+      const limitPrice = triggerGtdLimitPrice(want.priceCents);
       this.orderInFlight = true;
       try {
         this.autoEngine.setExternalBuyPaused(true);

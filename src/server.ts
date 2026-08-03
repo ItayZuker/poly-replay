@@ -955,7 +955,7 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
         const sides = Array.isArray(d?.sides)
           ? (d.sides as unknown[]).filter((s) => s === "up" || s === "down")
           : [];
-        const priceCents = Math.round(Number(d?.priceCents));
+        const priceCents = Math.round(Number(d?.priceCents) * 10) / 10;
         const shares = Math.floor(Number(d?.shares));
         if (!Number.isFinite(priceCents) || !Number.isFinite(shares)) return null;
         const sellOrderType =
@@ -2066,7 +2066,10 @@ async function runPlacementPlay(
       return { status: 404 as const, body: { error: "Market not found" } };
     }
     const workerBase = replayWorkerBaseUrl();
+    const engine = await liveTradingRegistry.ensureLoaded(userId);
     const payload = await buildLiveHourPlayPayload(userId, market, placementId, {
+      cards: engine.getPublicState().positionCards,
+      events: engine.getLiveStatEvents(),
       resolveWindowsWithTicks: workerBase
         ? async (windowStarts) => {
             const remote = await fetchRemoteChainlinkPresence(workerBase, series, windowStarts);

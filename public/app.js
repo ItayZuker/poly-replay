@@ -3159,6 +3159,52 @@ function formatPositionBuyTime(buyAt) {
   return date.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" });
 }
 
+/** Unix start sec from `series:windowStart` or `btc-updown-5m-{start}` slug. */
+function positionWindowStartSec(card) {
+  const rawKey = card?.windowKey != null ? String(card.windowKey).trim() : "";
+  if (rawKey) {
+    const colon = rawKey.lastIndexOf(":");
+    const tail = colon >= 0 ? rawKey.slice(colon + 1) : rawKey;
+    const n = Number(tail);
+    if (Number.isFinite(n) && n > 0) return n > 1e12 ? n / 1000 : n;
+  }
+  const slug = typeof card?.slug === "string" ? card.slug.trim().toLowerCase() : "";
+  const m = slug.match(/-updown-(?:5m|15m)-(\d+)$/);
+  if (m) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return NaN;
+}
+
+function positionWindowDurationSec(card) {
+  const hay = `${card?.series || ""} ${card?.windowKey || ""} ${card?.slug || ""}`.toLowerCase();
+  if (hay.includes("15m")) return 900;
+  if (hay.includes("5m")) return 300;
+  return 300;
+}
+
+function formatUtcHm(unixSec) {
+  if (!Number.isFinite(unixSec)) return "";
+  return new Date(unixSec * 1000).toLocaleTimeString("en-GB", {
+    hour12: false,
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Market window range in UTC, e.g. `17:05–17:10`. */
+function formatPositionWindowRange(card) {
+  const start = positionWindowStartSec(card);
+  if (!Number.isFinite(start)) return "";
+  const end = start + positionWindowDurationSec(card);
+  const a = formatUtcHm(start);
+  const b = formatUtcHm(end);
+  if (!a || !b) return "";
+  return `${a}–${b}`;
+}
+
 function isPredictionPositionCard(card) {
   return card?.kind === "prediction" || String(card?.id || "").startsWith("prediction:");
 }
@@ -3251,6 +3297,10 @@ function renderPositionCard(card) {
   const sideLabel = isPrediction
     ? `Prediction ${(card.side || "").toUpperCase()}`
     : `Bet ${(card.side || "").toUpperCase()}`;
+  const windowRange = formatPositionWindowRange(card);
+  const windowHtml = windowRange
+    ? `<span class="position-card-window" title="Market window (UTC)">${windowRange}</span>`
+    : "";
   const demoPrefix =
     isDemo && !isPrediction
       ? `<span class="position-card-demo-label" title="Demo (Allow trade off)">Demo</span>`
@@ -3274,7 +3324,7 @@ function renderPositionCard(card) {
   // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
   return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
-      <span class="position-card-side-wrap">${demoPrefix}<span class="position-card-side ${sideClass}">${sideLabel}</span></span>
+      <span class="position-card-side-wrap">${demoPrefix}<span class="position-card-side ${sideClass}">${sideLabel}</span>${windowHtml}</span>
       ${statusBlock}
     </div>
     ${detailHtml}
@@ -4387,7 +4437,15 @@ const TRIGGER_DURATION_UNIT_MS = {
 
 const TRIGGER_PRICE_MIN_CENTS = 0;
 const TRIGGER_PRICE_MAX_CENTS = 100;
-const TRIGGER_PRICE_MIN_GAP = 1;
+/** Absolute Price/Range bars snap to 0.1¢. */
+const TRIGGER_PRICE_MIN_GAP = 0.1;
+
+/** Round Ask ¢ to one decimal (0.1¢ steps). */
+function roundTriggerPriceTenths(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.round(n * 10) / 10;
+}
 
 function clampTriggerDurationValue(raw) {
   const n = Math.floor(Number(raw));
@@ -4445,9 +4503,14 @@ function syncTriggerDurationDraft() {
 }
 
 function clampTriggerCents(raw) {
-  const n = Math.round(Number(raw));
+  const n = roundTriggerPriceTenths(raw);
   if (!Number.isFinite(n)) return TRIGGER_PRICE_MIN_CENTS;
   return Math.max(TRIGGER_PRICE_MIN_CENTS, Math.min(TRIGGER_PRICE_MAX_CENTS, n));
+}
+
+/** Absolute Price/Range label: always one digit after the decimal (e.g. 50.1¢). */
+function formatTriggerPriceCentsLabel(cents) {
+  return `${clampTriggerCents(cents).toFixed(1)}¢`;
 }
 
 const TRIGGER_OFFSET_MIN_CENTS = 1;
@@ -4535,7 +4598,7 @@ function signedCentsToTrackBottomPct(scale, signed) {
 function clientYToTriggerCents(scale, clientY) {
   const rect = scale.getBoundingClientRect();
   if (rect.height <= 0) return 0;
-  // Top of scale = 100¢, bottom = 0¢
+  // Top of scale = 100.0¢, bottom = 0.0¢ (0.1¢ steps)
   const ratio = (rect.bottom - clientY) / rect.height;
   return clampTriggerCents(ratio * TRIGGER_PRICE_MAX_CENTS);
 }
@@ -4563,7 +4626,7 @@ function normalizeTriggerEndMode(raw) {
   return raw === "change-side" ? "change-side" : "range";
 }
 
-/** Start bar: range (band) or price (single 0–100¢). Legacy "change-side" → price. */
+/** Start bar: range (band) or price (single 0.0–100.0¢). Legacy "change-side" → price. */
 function normalizeTriggerStartMode(raw) {
   if (raw === "price" || raw === "change-side") return "price";
   return "range";
@@ -4583,7 +4646,7 @@ function renderTriggerPriceRange(edge) {
     edge === "start" && normalizeTriggerStartMode(triggerCreateStartMode) === "price";
   const isEndChange =
     edge === "end" && normalizeTriggerEndMode(triggerCreateEndMode) === "change-side";
-  // Signed ± scale is end Price Change only; start Price stays on absolute 0–100¢.
+  // Signed ± scale is end Price Change only; start Price stays on absolute 0.0–100.0¢.
   col?.classList.toggle("is-change-side-mode", isEndChange);
   col?.classList.toggle("is-start-price-mode", isStartPrice);
 
@@ -4604,12 +4667,12 @@ function renderTriggerPriceRange(edge) {
     }
     if (lowThumb) lowThumb.hidden = true;
     if (highLabel) {
-      highLabel.textContent = `${price}¢`;
+      highLabel.textContent = formatTriggerPriceCentsLabel(price);
       highLabel.classList.remove("is-positive", "is-negative");
     }
     if (lowLabel) lowLabel.textContent = "";
     if (track) {
-      track.setAttribute("aria-label", "Start buy price: bottom 0¢, top 100¢");
+      track.setAttribute("aria-label", "Start buy price: bottom 0.0¢, top 100.0¢");
     }
     return;
   }
@@ -4673,11 +4736,11 @@ function renderTriggerPriceRange(edge) {
     lowThumb.style.bottom = `${lowPct}%`;
   }
   if (highLabel) {
-    highLabel.textContent = `${range.highCents}¢`;
+    highLabel.textContent = formatTriggerPriceCentsLabel(range.highCents);
     highLabel.classList.remove("is-positive", "is-negative");
   }
   if (lowLabel) {
-    lowLabel.textContent = `${range.lowCents}¢`;
+    lowLabel.textContent = formatTriggerPriceCentsLabel(range.lowCents);
     lowLabel.classList.remove("is-positive", "is-negative");
   }
   if (track) {
@@ -5403,6 +5466,30 @@ function setTriggerPriceThumb(edge, thumb, cents) {
   renderTriggerPriceRange(edge);
 }
 
+/** Current ¢ value for a bar thumb (absolute or signed end Price Change). */
+function getTriggerPriceThumbCents(edge, thumb) {
+  if (edge === "start" && normalizeTriggerStartMode(triggerCreateStartMode) === "price") {
+    return clampTriggerCents(triggerCreateStartPriceCents);
+  }
+  if (edge === "end" && normalizeTriggerEndMode(triggerCreateEndMode) === "change-side") {
+    return clampTriggerSignedCents(triggerCreateEndChangeSideCents);
+  }
+  const range = normalizeTriggerPriceRange(triggerCreatePriceRanges[edge]);
+  return thumb === "low" ? range.lowCents : range.highCents;
+}
+
+function nudgeTriggerPriceThumb(edge, thumb, direction) {
+  if (edge === "end" && isTriggerZeroDuration(triggerCreateDurationMs)) return;
+  const startPriceMode =
+    edge === "start" && normalizeTriggerStartMode(triggerCreateStartMode) === "price";
+  const endChangeMode =
+    edge === "end" && normalizeTriggerEndMode(triggerCreateEndMode) === "change-side";
+  if ((startPriceMode || endChangeMode) && thumb === "low") return;
+  const step = endChangeMode ? 1 : TRIGGER_PRICE_MIN_GAP;
+  const current = getTriggerPriceThumbCents(edge, thumb);
+  setTriggerPriceThumb(edge, thumb, current + direction * step);
+}
+
 function bindTriggerPriceRangeDrag() {
   const modal = $("trigger-create-modal");
   if (!modal || modal.dataset.priceDragBound === "1") return;
@@ -5459,6 +5546,14 @@ function bindTriggerPriceRangeDrag() {
       } catch {
         /* ignore */
       }
+      // Keep focus so ArrowUp/ArrowDown work after click/drag.
+      if (typeof thumbEl.focus === "function") {
+        try {
+          thumbEl.focus({ preventScroll: true });
+        } catch {
+          thumbEl.focus();
+        }
+      }
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", stopDrag);
       window.addEventListener("pointercancel", stopDrag);
@@ -5468,6 +5563,15 @@ function bindTriggerPriceRangeDrag() {
           : clientYToTriggerCents(scale, e.clientY);
       setTriggerPriceThumb(edge, thumb, nextCents);
       e.preventDefault();
+    });
+
+    thumbEl.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      const edge = thumbEl.dataset.edge;
+      const thumb = thumbEl.dataset.thumb;
+      if ((edge !== "start" && edge !== "end") || (thumb !== "high" && thumb !== "low")) return;
+      e.preventDefault();
+      nudgeTriggerPriceThumb(edge, thumb, e.key === "ArrowUp" ? 1 : -1);
     });
   });
 
@@ -10358,7 +10462,9 @@ function triggerPriceTrendMatches(trigger, startAsset, endAsset) {
 
 function triggerPriceInRange(cents, range) {
   const band = normalizeTriggerPriceRange(range);
-  return Number.isFinite(cents) && cents >= band.lowCents && cents <= band.highCents;
+  if (!Number.isFinite(cents)) return false;
+  const c = roundTriggerPriceTenths(cents);
+  return c >= band.lowCents && c <= band.highCents;
 }
 
 /** Signed ¢ change: 0 = unchanged; +N = rose ≥ N¢; −N = fell ≥ |N|¢. */
@@ -10374,7 +10480,9 @@ function triggerSignedChangeMet(needRaw, fromCents, toCents) {
 function triggerStartConditionMet(trigger, currentCents) {
   if (normalizeTriggerStartMode(trigger?.startMode) === "price") {
     const need = clampTriggerCents(trigger.startPriceCents ?? 50);
-    return Number.isFinite(currentCents) && Math.round(currentCents) === need;
+    return (
+      Number.isFinite(currentCents) && roundTriggerPriceTenths(currentCents) === need
+    );
   }
   return triggerPriceInRange(currentCents, trigger.priceRanges?.start);
 }
