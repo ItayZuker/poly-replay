@@ -1,6 +1,11 @@
 {
-  "current": "1.41.1",
+  "current": "1.41.2",
   "releases": [
+    {
+      "version": "1.41.2",
+      "releasedAt": "2026-08-03T06:17:23.327Z",
+      "notes": "Fix left-column header drag: keep empty Trade body in layout (do not hide it) so Positions/Triggers/Log resize works again."
+    },
     {
       "version": "1.41.1",
       "releasedAt": "2026-08-03T06:08:38.847Z",
