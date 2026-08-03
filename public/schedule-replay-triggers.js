@@ -63,6 +63,7 @@
       // Explicit true only — older cards without the field stay Active on Run.
       paused: raw.paused === true,
       priceSide: "buy",
+      gapMode: raw.gapMode === "relative" ? "relative" : "fixed",
       startMode: raw.startMode === "price" || raw.startMode === "change-side" ? "price" : "range",
       startPriceCents: (() => {
         const n = Math.round(

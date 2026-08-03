@@ -1245,7 +1245,7 @@
           </label>
           <p class="trigger-buy-order-note" id="trigger-buy-order-note">
             Default <strong>FOK</strong> (full size or no fill). <strong>GTD</strong> is available only when
-            Duration is <strong>0</strong>, the left bar is <strong>Price</strong>, and <strong>no Gap</strong>
+            Duration is <strong>0</strong>, the left bar is <strong>UP/DOWN Price</strong>, and <strong>no Gap</strong>
             is set — posts <strong>one</strong> resting buy at that ¢ from Apply-window start (lower Ask side;
             UP if tied). With any +/− Gap, use FAK or FOK only.
           </p>
@@ -1258,10 +1258,10 @@
                   <select
                     id="trigger-start-mode"
                     class="trigger-price-side is-buy"
-                    aria-label="Start condition: range or price"
+                    aria-label="Start condition: UP/DOWN range or UP/DOWN price"
                   >
-                    <option value="range" selected>Range</option>
-                    <option value="price">Price</option>
+                    <option value="range" selected>UP/DOWN Range</option>
+                    <option value="price">UP/DOWN Price</option>
                   </select>
                 </label>
                 <div
@@ -1422,6 +1422,31 @@
                 </div>
               </div>
 
+              <div
+                class="trigger-gap-mode"
+                id="trigger-gap-mode"
+                role="group"
+                aria-label="Gap mode: Fixed or Relative to BUY"
+                title="Fixed = market vs PTB. Relative = gap direction vs the BUY side (UP/DOWN)."
+              >
+                <button
+                  type="button"
+                  class="trigger-gap-mode-opt is-active"
+                  data-gap-mode="fixed"
+                  aria-pressed="true"
+                >
+                  Fixed
+                </button>
+                <button
+                  type="button"
+                  class="trigger-gap-mode-opt"
+                  data-gap-mode="relative"
+                  aria-pressed="false"
+                >
+                  Relative
+                </button>
+              </div>
+
               <button
                 type="button"
                 class="trigger-ptb-btn"
@@ -1475,10 +1500,10 @@
                   <select
                     id="trigger-end-mode"
                     class="trigger-price-side is-buy"
-                    aria-label="End condition: price range or price change"
+                    aria-label="End condition: UP/DOWN price range or UP/DOWN price change"
                   >
-                    <option value="range" selected>BUY Price Range</option>
-                    <option value="change-side">BUY Price Change</option>
+                    <option value="range" selected>UP/DOWN Price Range</option>
+                    <option value="change-side">UP/DOWN Price Change</option>
                   </select>
                 </label>
                 <div

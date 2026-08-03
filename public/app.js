@@ -4333,6 +4333,11 @@ let triggerCreatePtbGap = {
   start: null,
   end: null,
 };
+/**
+ * fixed: +/− = market above/below PTB.
+ * relative: + = With BUY (UP→+, DOWN→−); − = Against BUY.
+ */
+let triggerCreateGapMode = "fixed";
 /** Per-edge gap size constraint. value 0 = any size (bound ignored). */
 let triggerCreateGapSize = {
   start: { bound: "min", value: 0 },
@@ -4434,6 +4439,7 @@ function syncTriggerZeroDurationUi() {
 function syncTriggerDurationDraft() {
   triggerCreateDurationMs = readTriggerDurationMsFromInputs();
   syncTriggerZeroDurationUi();
+  if (!triggerCreateHasActivePtbGap()) triggerCreateGapMode = "fixed";
   syncTriggerCreateBuyOrderTypeUi();
   renderTriggerPtbGapUi();
 }
@@ -4876,6 +4882,22 @@ function triggerSameSideGaps(gaps) {
   return (start === "positive" || start === "negative") && start === end;
 }
 
+function normalizeTriggerGapMode(raw) {
+  return raw === "relative" ? "relative" : "fixed";
+}
+
+/**
+ * Resolve stored gap kind to absolute market-vs-PTB sign for a BUY side.
+ * Relative: With (positive) UP→+, DOWN→−; Against (negative) UP→−, DOWN→+.
+ */
+function triggerAbsoluteGapKindForSide(side, kind, gapMode) {
+  if (kind !== "positive" && kind !== "negative") return null;
+  if (normalizeTriggerGapMode(gapMode) !== "relative") return kind;
+  if (side !== "up" && side !== "down") return null;
+  if (kind === "positive") return side === "up" ? "positive" : "negative";
+  return side === "up" ? "negative" : "positive";
+}
+
 /** Visual tilt range for ±$100 (display only). */
 const TRIGGER_TREND_VISUAL_MAX_DEG = 55;
 /**
@@ -4934,17 +4956,27 @@ function syncTriggerGapSizeControl(edge) {
   control.classList.toggle("is-any-size", size.value <= 0);
 }
 
-function renderTriggerMarketOverlay(stage, stageRect, zigzagPoints, edgeLayouts, ptbY, pathSpan) {
+function renderTriggerMarketOverlay(
+  stage,
+  stageRect,
+  zigzagPoints,
+  edgeLayouts,
+  ptbY,
+  pathSpan,
+  options = {},
+) {
   const overlay = $("trigger-market-overlay");
   const marketLine = $("trigger-market-line");
   if (!overlay || !marketLine || !zigzagPoints.length) return;
+  const relative = options.relative === true;
 
   overlay.setAttribute(
     "viewBox",
     `0 0 ${Math.max(1, stageRect.width)} ${Math.max(1, stageRect.height)}`,
   );
 
-  // No gap → no base gray line; active sides draw their own colored halves.
+  // No gap → no base gray line; Fixed active sides draw colored halves.
+  // Relative: no green/red graph (With/Against are not absolute +/− colors).
   marketLine.setAttribute("hidden", "");
   marketLine.removeAttribute("points");
   marketLine.classList.remove("is-negative", "is-positive");
@@ -4965,8 +4997,29 @@ function renderTriggerMarketOverlay(stage, stageRect, zigzagPoints, edgeLayouts,
       fill.classList.remove("is-negative", "is-positive");
       if (sizeControl) {
         sizeControl.hidden = true;
-        sizeControl.classList.remove("is-negative", "is-positive");
+        sizeControl.classList.remove("is-negative", "is-positive", "is-relative");
       }
+    } else if (relative) {
+      fill.setAttribute("hidden", "");
+      fill.removeAttribute("d");
+      fill.classList.remove("is-negative", "is-positive");
+      if (sideLine) {
+        sideLine.setAttribute("hidden", "");
+        sideLine.removeAttribute("points");
+        sideLine.classList.remove("is-negative", "is-positive");
+      }
+      if (sizeControl) {
+        const zoneMidX = (layout.x0 + layout.x1) / 2;
+        const ptbPad = 8;
+        sizeControl.style.left = `${zoneMidX}px`;
+        // Relative: Min/Max always above the PTB line (With or Against).
+        sizeControl.style.top = `${ptbY - ptbPad}px`;
+        sizeControl.classList.remove("is-positive");
+        sizeControl.classList.add("is-negative", "is-relative");
+        sizeControl.hidden = false;
+        syncTriggerGapSizeControl(edge);
+      }
+      continue;
     } else {
       // SVG elements don't reliably honor the HTMLElement `hidden` IDL property.
       fill.removeAttribute("hidden");
@@ -4987,6 +5040,7 @@ function renderTriggerMarketOverlay(stage, stageRect, zigzagPoints, edgeLayouts,
           kind === "positive" ? `${ptbY + ptbPad}px` : `${ptbY - ptbPad}px`;
         sizeControl.classList.toggle("is-negative", kind === "negative");
         sizeControl.classList.toggle("is-positive", kind === "positive");
+        sizeControl.classList.remove("is-relative");
         sizeControl.hidden = false;
         syncTriggerGapSizeControl(edge);
       }
@@ -5045,6 +5099,8 @@ function renderTriggerPtbGapUi() {
   }
 
   const zeroDuration = isTriggerZeroDuration(triggerCreateDurationMs);
+  const gapMode = normalizeTriggerGapMode(triggerCreateGapMode);
+  const relative = gapMode === "relative";
 
   // Trend wheel: only when both gap areas are on the same side (needs Duration > 0).
   const trendWrap = $("trigger-price-trend");
@@ -5063,6 +5119,7 @@ function renderTriggerPtbGapUi() {
     }
   }
 
+  let topBtnY = null;
   for (const edge of ["start", "end"]) {
     const endDisabled = zeroDuration && edge === "end";
     const selected = endDisabled ? null : triggerCreatePtbGap[edge];
@@ -5071,11 +5128,12 @@ function renderTriggerPtbGapUi() {
     if (!scale || !col) continue;
     const scaleRect = scale.getBoundingClientRect();
 
-    // Top = market above mid line (+Gap); bottom = market below (-Gap).
+    // Top = + Gap / With BUY; bottom = − Gap / Against BUY.
     const yByKind = {
       positive: scaleRect.top - stageRect.top,
       negative: scaleRect.bottom - stageRect.top,
     };
+    if (topBtnY == null) topBtnY = yByKind.positive;
 
     // Full half-width of the price path for fill + colored line.
     const halfX0 = edge === "start" ? built.x0 : midX;
@@ -5086,6 +5144,28 @@ function renderTriggerPtbGapUi() {
       const btn = stage.querySelector(`.trigger-ptb-btn[data-edge="${edge}"][data-ptb="${kind}"]`);
       const active = selected === kind;
       if (btn) {
+        const edgeLabel = edge === "start" ? "Start" : "End";
+        if (relative) {
+          if (kind === "positive") {
+            btn.textContent = "Gap With BUY";
+            btn.title =
+              "Gap With BUY: UP needs market above PTB; DOWN needs market below PTB";
+            btn.setAttribute("aria-label", `${edgeLabel}: Gap With BUY`);
+          } else {
+            btn.textContent = "Gap Against BUY";
+            btn.title =
+              "Gap Against BUY: UP needs market below PTB; DOWN needs market above PTB";
+            btn.setAttribute("aria-label", `${edgeLabel}: Gap Against BUY`);
+          }
+        } else if (kind === "positive") {
+          btn.textContent = "+ Gap";
+          btn.title = "Require market above PTB (positive gap)";
+          btn.setAttribute("aria-label", `${edgeLabel}: + Gap`);
+        } else {
+          btn.textContent = "- Gap";
+          btn.title = "Require market below PTB (negative gap)";
+          btn.setAttribute("aria-label", `${edgeLabel}: - Gap`);
+        }
         btn.classList.toggle("is-active", active);
         btn.setAttribute("aria-pressed", active ? "true" : "false");
         btn.style.left = `${Math.round(btnX)}px`;
@@ -5107,10 +5187,41 @@ function renderTriggerPtbGapUi() {
     }
   }
 
-  renderTriggerMarketOverlay(stage, stageRect, zigzagPoints, edgeLayouts, ptbY, {
-    x0: built.x0,
-    x1: built.x1,
-  });
+  // Fixed / Relative: only enabled when at least one Gap button is active.
+  const modeEl = $("trigger-gap-mode");
+  if (modeEl && topBtnY != null) {
+    const hasGap =
+      triggerCreatePtbGap.start === "positive" ||
+      triggerCreatePtbGap.start === "negative" ||
+      (!zeroDuration &&
+        (triggerCreatePtbGap.end === "positive" ||
+          triggerCreatePtbGap.end === "negative"));
+    modeEl.hidden = false;
+    modeEl.classList.toggle("is-disabled", !hasGap);
+    modeEl.setAttribute("aria-disabled", hasGap ? "false" : "true");
+    modeEl.style.left = `${Math.round(midX)}px`;
+    modeEl.style.top = `${Math.round(topBtnY)}px`;
+    modeEl.querySelectorAll("[data-gap-mode]").forEach((opt) => {
+      const mode = opt.getAttribute("data-gap-mode");
+      const active = hasGap && mode === gapMode;
+      opt.disabled = !hasGap;
+      opt.classList.toggle("is-active", active);
+      opt.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  renderTriggerMarketOverlay(
+    stage,
+    stageRect,
+    zigzagPoints,
+    edgeLayouts,
+    ptbY,
+    {
+      x0: built.x0,
+      x1: built.x1,
+    },
+    { relative },
+  );
 }
 
 function renderAllTriggerPriceRanges() {
@@ -5119,13 +5230,33 @@ function renderAllTriggerPriceRanges() {
   renderTriggerPtbGapUi();
 }
 
+function triggerCreateHasActivePtbGap() {
+  const zeroDuration = isTriggerZeroDuration(triggerCreateDurationMs);
+  return (
+    triggerCreatePtbGap.start === "positive" ||
+    triggerCreatePtbGap.start === "negative" ||
+    (!zeroDuration &&
+      (triggerCreatePtbGap.end === "positive" ||
+        triggerCreatePtbGap.end === "negative"))
+  );
+}
+
 function toggleTriggerPtbGap(edge, kind) {
   if (edge !== "start" && edge !== "end") return;
   if (kind !== "negative" && kind !== "positive") return;
   if (edge === "end" && isTriggerZeroDuration(triggerCreateDurationMs)) return;
   triggerCreatePtbGap[edge] = triggerCreatePtbGap[edge] === kind ? null : kind;
+  // No active gap → Fixed/Relative is disabled; fall back to Fixed labels.
+  if (!triggerCreateHasActivePtbGap()) triggerCreateGapMode = "fixed";
   renderTriggerPtbGapUi();
   // Gap disables Buy GTD — coerce order type while the dialog is open.
+  syncTriggerCreateBuyOrderTypeUi();
+}
+
+function setTriggerCreateGapMode(mode) {
+  if (!triggerCreateHasActivePtbGap()) return;
+  triggerCreateGapMode = normalizeTriggerGapMode(mode);
+  renderTriggerPtbGapUi();
   syncTriggerCreateBuyOrderTypeUi();
 }
 
@@ -5346,6 +5477,12 @@ function bindTriggerPriceRangeDrag() {
     });
   });
 
+  modal.querySelectorAll("#trigger-gap-mode [data-gap-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setTriggerCreateGapMode(btn.getAttribute("data-gap-mode"));
+    });
+  });
+
   window.addEventListener("resize", () => {
     if (!modal.hidden) renderTriggerPtbGapUi();
   });
@@ -5544,6 +5681,7 @@ function normalizeTriggerRecord(raw) {
     takeProfitCents: exits.takeProfitCents,
     stopLossCents: exits.stopLossCents,
     priceTrend: normalizeTriggerPriceTrend(raw.priceTrend),
+    gapMode: normalizeTriggerGapMode(raw.gapMode),
     priceSide: "buy",
     startMode: normalizeTriggerStartMode(raw.startMode),
     startPriceCents: clampTriggerCents(
@@ -6474,6 +6612,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
         ? trigger.ptbGap.end
         : null,
   };
+  triggerCreateGapMode = normalizeTriggerGapMode(trigger?.gapMode);
   triggerCreateGapSize = {
     start: normalizeTriggerGapSize(trigger?.gapSize?.start),
     end: normalizeTriggerGapSize(trigger?.gapSize?.end),
@@ -6553,6 +6692,7 @@ function buildTriggerFromCreateDraft() {
         ? triggerCreatePtbGap.end
         : null,
     },
+    gapMode: normalizeTriggerGapMode(triggerCreateGapMode),
     gapSize: {
       start: normalizeTriggerGapSize(triggerCreateGapSize.start),
       end: normalizeTriggerGapSize(triggerCreateGapSize.end),
@@ -6616,7 +6756,7 @@ function syncTriggerCreateColorDraft() {
 }
 
 function syncTriggerCreateSideUi() {
-  // Editor is BUY-only (Ask quotes). Left: Range / Price; right: Range / Change.
+  // Editor is BUY-only (Ask quotes). Left: UP/DOWN Range / Price; right: UP/DOWN Price Range / Change.
   triggerCreatePriceSide = "buy";
   const startMode = normalizeTriggerStartMode(triggerCreateStartMode);
   const endMode = normalizeTriggerEndMode(triggerCreateEndMode);
@@ -6678,6 +6818,7 @@ function resetTriggerCreateForm() {
     end: { lowCents: 40, highCents: 70 },
   };
   triggerCreatePtbGap = { start: null, end: null };
+  triggerCreateGapMode = "fixed";
   triggerCreateGapSize = {
     start: { bound: "min", value: 0 },
     end: { bound: "min", value: 0 },
@@ -10178,12 +10319,15 @@ function triggerAskPrice(state, marketSide) {
   return Number.isFinite(v) ? v : NaN;
 }
 
-function triggerGapMatches(state, kind, gapSizeRaw) {
+function triggerGapMatches(state, kind, gapSizeRaw, gapMode, side) {
   if (kind !== "positive" && kind !== "negative") return true;
+  const mode = normalizeTriggerGapMode(gapMode);
+  if (mode === "relative" && side !== "up" && side !== "down") return false;
+  const absKind = triggerAbsoluteGapKindForSide(side, kind, mode) || kind;
   const gap = Number(state.assetGap);
   if (!Number.isFinite(gap)) return false;
-  if (kind === "positive" && !(gap > 0)) return false;
-  if (kind === "negative" && !(gap < 0)) return false;
+  if (absKind === "positive" && !(gap > 0)) return false;
+  if (absKind === "negative" && !(gap < 0)) return false;
   const size = normalizeTriggerGapSize(gapSizeRaw);
   if (!(size.value > 0)) return true;
   const abs = Math.abs(gap);
@@ -11106,12 +11250,18 @@ function tickUserTriggers(state) {
 
     const priceSide = "buy";
     const durationMs = normalizeTriggerDurationMs(trigger.durationMs, 5000);
-    const startGapOk = triggerGapMatches(state, trigger.ptbGap?.start, trigger.gapSize?.start);
-    const endGapOk = triggerGapMatches(state, trigger.ptbGap?.end, trigger.gapSize?.end);
+    const gapMode = normalizeTriggerGapMode(trigger.gapMode);
 
     if (durationMs > 0 && rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
       if (nowMs - rt.watchStartedAtMs < durationMs) continue;
       const endCents = triggerQuoteCents(state, rt.side, priceSide);
+      const endGapOk = triggerGapMatches(
+        state,
+        trigger.ptbGap?.end,
+        trigger.gapSize?.end,
+        gapMode,
+        rt.side,
+      );
       const trendOk = triggerPriceTrendMatches(
         trigger,
         rt.startAssetPrice,
@@ -11133,11 +11283,21 @@ function tickUserTriggers(state) {
       continue;
     }
 
-    if (!startGapOk) continue;
-
+    // Ask/price first, then gap (Relative needs the candidate BUY side).
     for (const side of ["up", "down"]) {
       const startCents = triggerQuoteCents(state, side, priceSide);
       if (!triggerStartConditionMet(trigger, startCents)) continue;
+      if (
+        !triggerGapMatches(
+          state,
+          trigger.ptbGap?.start,
+          trigger.gapSize?.start,
+          gapMode,
+          side,
+        )
+      ) {
+        continue;
+      }
       rt.side = side;
       rt.watchStartedAtMs = nowMs;
       rt.startPriceCents = startCents;

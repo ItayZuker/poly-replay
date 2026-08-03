@@ -6377,8 +6377,8 @@ body.is-row-resizing .panel-header-drag-handle {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 104px;
-  flex: 0 0 104px;
+  width: 128px;
+  flex: 0 0 128px;
   margin-bottom: 18px;
   background: var(--panel);
 }
@@ -6390,8 +6390,8 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 .trigger-price-column[data-edge="end"] {
-  width: 118px;
-  flex-basis: 118px;
+  width: 148px;
+  flex-basis: 148px;
 }
 
 /* Duration 0: end price column + right half of the center diagram are inactive. */
@@ -6515,6 +6515,72 @@ select.trigger-price-side:focus {
   min-height: 220px;
   touch-action: none;
   user-select: none;
+}
+
+.trigger-gap-mode {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  align-items: stretch;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+}
+
+.trigger-gap-mode-opt {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 8px;
+  height: 22px;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.trigger-gap-mode-opt:last-child {
+  border-right: 0;
+}
+
+.trigger-gap-mode-opt:hover {
+  color: var(--text);
+}
+
+.trigger-gap-mode-opt.is-active {
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.trigger-gap-mode-opt:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(210, 153, 34, 0.35);
+}
+
+.trigger-gap-mode.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.trigger-gap-mode.is-disabled .trigger-gap-mode-opt,
+.trigger-gap-mode.is-disabled .trigger-gap-mode-opt.is-active {
+  color: var(--muted);
+  background: transparent;
+}
+
+.trigger-gap-mode-opt:disabled {
+  cursor: default;
 }
 
 .trigger-ptb-btn {
@@ -6749,6 +6815,13 @@ select.trigger-price-side:focus {
 .trigger-gap-size-control.is-positive .trigger-gap-size-box {
   border-color: var(--up);
   background: rgba(46, 160, 67, 0.12);
+}
+
+/* Relative: Min/Max match gold Gap buttons (not absolute green/red). */
+.trigger-gap-size-control.is-relative.is-positive .trigger-gap-size-box,
+.trigger-gap-size-control.is-relative.is-negative .trigger-gap-size-box {
+  border-color: #d29922;
+  background: rgba(210, 153, 34, 0.12);
 }
 
 .trigger-gap-size-bound,

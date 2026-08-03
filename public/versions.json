@@ -1,6 +1,11 @@
 {
-  "current": "1.42.0",
+  "current": "1.43.0",
   "releases": [
+    {
+      "version": "1.43.0",
+      "releasedAt": "2026-08-03T13:40:23.388Z",
+      "notes": "Trigger gaps: Fixed/Relative mode (Gap With/Against BUY); UP/DOWN Price/Range labels; Relative UI without green/red graph and gold Min/Max above PTB. Docs updated."
+    },
     {
       "version": "1.42.0",
       "releasedAt": "2026-08-03T12:16:26.835Z",

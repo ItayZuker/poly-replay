@@ -36,6 +36,12 @@ export interface UserTriggerRecord {
     start: "positive" | "negative" | null;
     end: "positive" | "negative" | null;
   };
+  /**
+   * How ptbGap kinds are interpreted.
+   * fixed: positive = market above PTB, negative = below.
+   * relative: positive = With BUY (UP→+, DOWN→−), negative = Against BUY (UP→−, DOWN→+).
+   */
+  gapMode: "fixed" | "relative";
   gapSize: {
     start: { bound: "min" | "max"; value: number };
     end: { bound: "min" | "max"; value: number };
@@ -122,6 +128,10 @@ function normalizePriceTrend(raw: unknown): { dollars: number; bound: "min" | "m
 
 function normalizeGapKind(raw: unknown): "positive" | "negative" | null {
   return raw === "positive" || raw === "negative" ? raw : null;
+}
+
+function normalizeGapMode(raw: unknown): "fixed" | "relative" {
+  return raw === "relative" ? "relative" : "fixed";
 }
 
 function normalizeDemoStats(raw: unknown): TriggerDemoStats {
@@ -232,6 +242,9 @@ export function normalizeUserTriggerInput(
       end: normalizeRange(ranges.end ?? existing?.priceRanges?.end),
     },
     ptbGap,
+    gapMode: normalizeGapMode(
+      o.gapMode !== undefined ? o.gapMode : existing?.gapMode,
+    ),
     gapSize: {
       start: normalizeGapSize(gapSize.start ?? existing?.gapSize?.start),
       end: normalizeGapSize(gapSize.end ?? existing?.gapSize?.end),

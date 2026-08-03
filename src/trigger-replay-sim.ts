@@ -36,6 +36,11 @@ export interface ReplayTriggerDef {
     start: "positive" | "negative" | null;
     end: "positive" | "negative" | null;
   };
+  /**
+   * fixed: positive/negative = market above/below PTB.
+   * relative: positive = With BUY (UP→+, DOWN→−); negative = Against BUY.
+   */
+  gapMode: "fixed" | "relative";
   gapSize: {
     start: ReplayTriggerGapSize;
     end: ReplayTriggerGapSize;
@@ -165,6 +170,22 @@ function normalizeGapKind(raw: unknown): "positive" | "negative" | null {
   return raw === "positive" || raw === "negative" ? raw : null;
 }
 
+function normalizeGapMode(raw: unknown): "fixed" | "relative" {
+  return raw === "relative" ? "relative" : "fixed";
+}
+
+/** Resolve stored gap kind to absolute market-vs-PTB sign for a buy side. */
+function absoluteGapKindForSide(
+  side: "up" | "down",
+  kind: "positive" | "negative",
+  gapMode: "fixed" | "relative",
+): "positive" | "negative" {
+  if (gapMode !== "relative") return kind;
+  // With BUY (positive): UP→+, DOWN→−. Against BUY (negative): UP→−, DOWN→+.
+  if (kind === "positive") return side === "up" ? "positive" : "negative";
+  return side === "up" ? "negative" : "positive";
+}
+
 export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -230,6 +251,7 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
       start: normalizeGapKind(gaps.start),
       end: normalizeGapKind(gaps.end),
     },
+    gapMode: normalizeGapMode(o.gapMode),
     gapSize: {
       start: normalizeGapSize(gapSize.start),
       end: normalizeGapSize(gapSize.end),
@@ -362,12 +384,19 @@ function gapMatches(
   tick: ReplayTickDocument,
   kind: "positive" | "negative" | null,
   size: ReplayTriggerGapSize,
+  gapMode: "fixed" | "relative" = "fixed",
+  side: "up" | "down" | null = null,
 ): boolean {
   if (kind !== "positive" && kind !== "negative") return true;
+  if (gapMode === "relative" && (side !== "up" && side !== "down")) return false;
+  const absKind =
+    side === "up" || side === "down"
+      ? absoluteGapKindForSide(side, kind, gapMode)
+      : kind;
   const gap = Number(tick.assetGap);
   if (!Number.isFinite(gap)) return false;
-  if (kind === "positive" && !(gap > 0)) return false;
-  if (kind === "negative" && !(gap < 0)) return false;
+  if (absKind === "positive" && !(gap > 0)) return false;
+  if (absKind === "negative" && !(gap < 0)) return false;
   if (!(size.value > 0)) return true;
   const abs = Math.abs(gap);
   return size.bound === "max" ? abs <= size.value : abs >= size.value;
@@ -598,7 +627,13 @@ export class TriggerReplayRaceSession {
     if (durationMs > 0 && rt.phase === "watching" && rt.side && rt.watchStartedAtMs != null) {
       if (tick.tMs - rt.watchStartedAtMs < durationMs) return;
       const endCents = quoteCents(tick, rt.side, priceSide);
-      const endGapOk = gapMatches(tick, def.ptbGap.end, def.gapSize.end);
+      const endGapOk = gapMatches(
+        tick,
+        def.ptbGap.end,
+        def.gapSize.end,
+        def.gapMode,
+        rt.side,
+      );
       const trendOk = priceTrendMatches(def, rt.startAssetPrice, tick.assetPrice);
       if (
         endGapOk &&
@@ -619,10 +654,13 @@ export class TriggerReplayRaceSession {
       return;
     }
 
-    if (!gapMatches(tick, def.ptbGap.start, def.gapSize.start)) return;
+    // Ask/price first, then gap (Relative needs the candidate BUY side).
     for (const side of ["up", "down"] as const) {
       const startCents = quoteCents(tick, side, priceSide);
       if (!startConditionMet(def, startCents)) continue;
+      if (!gapMatches(tick, def.ptbGap.start, def.gapSize.start, def.gapMode, side)) {
+        continue;
+      }
       rt.side = side;
       rt.watchStartedAtMs = tick.tMs;
       rt.startPriceCents = startCents;
