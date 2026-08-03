@@ -1,6 +1,11 @@
 {
-  "current": "1.40.0",
+  "current": "1.41.0",
   "releases": [
+    {
+      "version": "1.41.0",
+      "releasedAt": "2026-08-03T05:40:37.667Z",
+      "notes": "Trigger-only live trading: remove Size / Manual Override and clickable graph quote boxes; disable Prediction Trade orders (sim scoring only). Server rejects manual and prediction order sources. Docs updated."
+    },
     {
       "version": "1.40.0",
       "releasedAt": "2026-08-03T05:21:38.169Z",
