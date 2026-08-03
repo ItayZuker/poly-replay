@@ -8021,6 +8021,7 @@ body.is-column-resizing * {
   width: 100%;
   height: 100%;
   display: block;
+  cursor: default;
 }
 
 .graph-save-btn {
