@@ -925,7 +925,7 @@
       setHoveredPhaseLine(null);
       hideMarkerTooltip();
       hidePhaseHover();
-      canvas.style.cursor = "pointer";
+      canvas.style.cursor = "default";
       if (window.drawPriceChart && window.windowState) window.drawPriceChart(window.windowState);
 
       if (wasDragging && moved && editable) {
@@ -1026,12 +1026,12 @@
         return;
       }
       if (marker) {
-        canvas.style.cursor = "pointer";
+        canvas.style.cursor = "default";
         updateMarkerHover(canvas, e.clientX, e.clientY);
         return;
       }
       hideMarkerTooltip();
-      canvas.style.cursor = "pointer";
+      canvas.style.cursor = "default";
     });
 
     canvas.addEventListener("mouseup", (e) => {
@@ -1115,7 +1115,7 @@
       phaseHoverEl = document.getElementById("sim-phase-hover");
       bindChartInteraction(canvas);
       bindModal();
-      canvas.style.cursor = "pointer";
+      canvas.style.cursor = "default";
     },
     beginExternalPhaseEdit(setup, onChange, options = {}) {
       externalPhaseContext = {

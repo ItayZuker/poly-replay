@@ -10652,6 +10652,9 @@ function collectTradeGtdDesires(state) {
     if (trigger.paused !== false) continue;
     if (trigger.runMode !== "trade") continue;
     if (!triggerUsesBuyGtd(trigger)) continue;
+    const rt = getOrCreateTriggerRuntime(id);
+    // Already filled — do not re-desire rests until sell / window end.
+    if (rt.phase === "open" || rt.phase === "opening") continue;
     if (
       !isInTriggerApplyAreaNow(state, trigger.windowArea?.start, trigger.windowArea?.end)
     ) {
@@ -10897,7 +10900,13 @@ function tickUserTriggers(state) {
       const sides = triggerGtdDesiredSides(trigger, state);
       if (trigger.runMode === "trade") {
         hasTradeGtd = true;
-        if (sides.length && isTriggerTradeArmed()) {
+        // Empty desire while open → server cancels sibling rests; no re-place.
+        if (
+          sides.length &&
+          isTriggerTradeArmed() &&
+          rt.phase !== "open" &&
+          rt.phase !== "opening"
+        ) {
           gtdDesires.push({
             triggerId: id,
             sides,

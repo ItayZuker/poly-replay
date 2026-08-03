@@ -142,6 +142,13 @@ interface TriggerRestingBuyOrder {
   tokenId?: string;
   conditionId?: string;
   slug?: string;
+  /**
+   * Cancel requested but CLOB order may still be live.
+   * Keep in `triggerRestingBuys` until confirmed gone — never re-place while set.
+   */
+  cancelPending?: boolean;
+  /** Cancel / confirm attempts while `cancelPending` (cap before force-drop). */
+  cancelAttempts?: number;
 }
 
 export type TriggerGtdDesire = {
@@ -4441,6 +4448,19 @@ export class LiveTradingService {
     }
   }
 
+  /** True while CLOB still shows the Trigger GTD as live (or status unknown). */
+  private async isTriggerRestStillOpen(resting: TriggerRestingBuyOrder): Promise<boolean> {
+    const snap = await fetchOpenOrder(this.userId, resting.orderId);
+    if (!snap) return true; // unknown → keep tracking (do not re-place)
+    const status = snap.status.toLowerCase();
+    return status === "live" || status === "delayed";
+  }
+
+  /**
+   * Request cancel of a Trigger GTD rest.
+   * Keeps the map entry until the CLOB order is confirmed gone (or race-filled).
+   * This prevents placing a second rest on the same side while the first is still live.
+   */
   private async cancelTriggerRestingBuy(
     key: string,
     reason: string,
@@ -4448,31 +4468,69 @@ export class LiveTradingService {
   ): Promise<void> {
     const resting = this.triggerRestingBuys.get(key);
     if (!resting) return;
-    // Harvest before removing the map entry — a race fill must latch hold first.
-    if (state && (await this.harvestTriggerGtdFill(resting, state))) {
+    resting.cancelPending = true;
+    resting.cancelAttempts = (resting.cancelAttempts ?? 0) + 1;
+
+    // Harvest before / after cancel — a race fill must latch hold first.
+    if (state) {
+      await this.harvestTriggerGtdFill(resting, state);
+    }
+    if (!(await this.isTriggerRestStillOpen(resting))) {
+      if (resting.sizeMatched <= 1e-9) await this.noteFillClose(resting.orderId);
       this.triggerRestingBuys.delete(key);
+      logService.info(
+        "trading",
+        `Trigger GTD cancel confirmed ${resting.side.toUpperCase()} (${reason})`,
+      );
       this.notify();
       return;
     }
+
     const result = await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
-    if (state && (await this.harvestTriggerGtdFill(resting, state))) {
+    if (state) {
+      await this.harvestTriggerGtdFill(resting, state);
+    }
+    if (!(await this.isTriggerRestStillOpen(resting))) {
+      if (resting.sizeMatched <= 1e-9) await this.noteFillClose(resting.orderId);
       this.triggerRestingBuys.delete(key);
+      logService.info(
+        "trading",
+        `Trigger GTD cancel confirmed ${resting.side.toUpperCase()} (${reason})`,
+      );
       this.notify();
       return;
     }
-    this.triggerRestingBuys.delete(key);
-    logService.info(
-      "trading",
-      `Trigger GTD cancel ${resting.side.toUpperCase()} (${reason})${
-        result.ok ? "" : `: ${result.error ?? "failed"}`
-      }`,
-    );
+
+    // Still live (or unknown) — keep tracking so sync cannot place a duplicate.
+    const attempts = resting.cancelAttempts ?? 1;
+    if (attempts === 1 || attempts % 3 === 0) {
+      logService.warn(
+        "trading",
+        `Trigger GTD cancel pending ${resting.side.toUpperCase()} (${reason})` +
+          ` attempt ${attempts}${result.ok ? "" : `: ${result.error ?? "failed"}`}` +
+          ` — keeping track (no re-place)`,
+      );
+    }
+    // Force-drop only after many tries AND hold latch is set (fill already recorded).
+    // Otherwise a stuck cancel must not free the slot for a second 100-share rest.
+    if (
+      attempts >= 12 &&
+      state &&
+      this.isTriggerGtdHeld(resting.triggerId, sessionKey(state))
+    ) {
+      logService.warn(
+        "trading",
+        `Trigger GTD cancel abandoned ${resting.side.toUpperCase()} (${reason}) — hold latch blocks re-place`,
+      );
+      this.triggerRestingBuys.delete(key);
+    }
     this.notify();
   }
 
   /**
    * Record a Trigger GTD buy fill (poll or cancel race). Latches hold for the trigger.
-   * Returns true when a fill was applied (or order is fully done).
+   * Returns true only when the CLOB order is fully done (not live) — never drop tracking
+   * while the order can still fill.
    */
   private async harvestTriggerGtdFill(
     resting: TriggerRestingBuyOrder,
@@ -4480,9 +4538,7 @@ export class LiveTradingService {
   ): Promise<boolean> {
     const snap = await fetchOpenOrder(this.userId, resting.orderId);
     if (!snap) {
-      // Open-order lookup miss: if we already tracked a fill/hold for this trigger, done.
-      const key = sessionKey(state);
-      if (this.isTriggerGtdHeld(resting.triggerId, key)) return true;
+      // Unknown: not done. Caller keeps tracking.
       return false;
     }
     const matched = Math.max(0, snap.sizeMatched);
@@ -4514,17 +4570,22 @@ export class LiveTradingService {
           resting.triggerId,
         );
       }
+      // First fill wins: cancel the other side (keeps sibling tracked until CLOB confirms).
       await this.cancelTriggerSiblingRests(resting.triggerId, resting.side, state);
+      resting.cancelPending = true;
       const status = snap.status.toLowerCase();
       if (status === "live" || status === "delayed") {
         await cancelOpenOrder(this.userId, resting.orderId, { quiet: true });
       }
       this.notify();
-      return true;
     }
-    const status = snap.status.toLowerCase();
+    const after = await fetchOpenOrder(this.userId, resting.orderId);
+    if (!after) return false;
+    const status = after.status.toLowerCase();
     if (status === "live" || status === "delayed") return false;
-    if (matched <= 1e-9) await this.noteFillClose(resting.orderId);
+    if (Math.max(0, after.sizeMatched) <= 1e-9 && resting.sizeMatched <= 1e-9) {
+      await this.noteFillClose(resting.orderId);
+    }
     return true;
   }
 
@@ -4611,9 +4672,26 @@ export class LiveTradingService {
     }
 
     // Drop rests for held triggers (client may still send desires while holding).
+    // Cancel keeps tracking until CLOB confirms — blocks re-place of a second rest.
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
       if (this.isTriggerGtdHeld(resting.triggerId, key)) {
         await this.cancelTriggerRestingBuy(rk, "trigger holding — no rearm", state);
+      }
+    }
+
+    // If desire matches again while a cancel was in flight, keep the live rest.
+    for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      if (!resting.cancelPending) continue;
+      const want = desireByKey.get(rk);
+      if (!want || this.isTriggerGtdHeld(resting.triggerId, key)) continue;
+      const limitPrice = centsToPrice(want.priceCents);
+      const matches =
+        resting.sessionKey === key &&
+        Math.abs(resting.limitPrice - limitPrice) <= 1e-9 &&
+        resting.shares === want.shares;
+      if (matches) {
+        resting.cancelPending = false;
+        resting.cancelAttempts = 0;
       }
     }
 
@@ -4626,10 +4704,14 @@ export class LiveTradingService {
         resting.sessionKey !== key ||
         Math.abs(resting.limitPrice - limitPrice) > 1e-9 ||
         resting.shares !== want.shares;
-      if (stale) {
+      if (stale || resting.cancelPending) {
         await this.cancelTriggerRestingBuy(
           rk,
-          !want ? "gap/window — not desired" : "price/size change",
+          !want
+            ? "gap/window — not desired"
+            : resting.cancelPending
+              ? "cancel retry"
+              : "price/size change",
           state,
         );
       }
@@ -4647,35 +4729,35 @@ export class LiveTradingService {
       const beforeShares = resting.shares;
       const beforePrice = resting.limitPrice;
       const done = await this.harvestTriggerGtdFill(resting, state);
-      if (done) {
-        this.triggerRestingBuys.delete(rk);
-        if (resting.sizeMatched > beforeMatched + 1e-9) {
-          fills.push({
-            triggerId: beforeTriggerId,
-            side: beforeSide,
-            fillPrice: beforePrice,
-            fillShares: Math.min(
-              beforeShares,
-              resting.sizeMatched - beforeMatched,
-            ),
-          });
-          // Prefer last known fill price from harvest path via positions card.
-          const card = this.positionCards.find(
-            (c) =>
-              c.source === "trigger" &&
-              c.triggerId === beforeTriggerId &&
-              c.status === "open" &&
-              c.windowKey === key,
+      if (resting.sizeMatched > beforeMatched + 1e-9) {
+        fills.push({
+          triggerId: beforeTriggerId,
+          side: beforeSide,
+          fillPrice: beforePrice,
+          fillShares: Math.min(beforeShares, resting.sizeMatched - beforeMatched),
+        });
+        const card = this.positionCards.find(
+          (c) =>
+            c.source === "trigger" &&
+            c.triggerId === beforeTriggerId &&
+            c.status === "open" &&
+            c.windowKey === key,
+        );
+        if (card) {
+          fills[fills.length - 1]!.fillPrice = card.buyPrice;
+          fills[fills.length - 1]!.fillShares = Math.min(
+            beforeShares,
+            resting.sizeMatched - beforeMatched,
           );
-          if (card) {
-            fills[fills.length - 1]!.fillPrice = card.buyPrice;
-            fills[fills.length - 1]!.fillShares = Math.min(
-              beforeShares,
-              resting.sizeMatched - beforeMatched,
-            );
-          }
         }
         this.notify();
+      }
+      // Only drop tracking when the CLOB order is fully done.
+      if (done) {
+        this.triggerRestingBuys.delete(rk);
+        this.notify();
+      } else if (resting.cancelPending) {
+        await this.cancelTriggerRestingBuy(rk, "cancel retry", state);
       }
     }
 
@@ -4697,10 +4779,17 @@ export class LiveTradingService {
     if (this.orderInFlight) return { ok: true, fills };
 
     for (const [rk, want] of desireByKey.entries()) {
+      // Still tracking a rest (including cancel-pending) → never place a duplicate.
       if (this.triggerRestingBuys.has(rk)) continue;
       if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
       if (this.positions.up || this.positions.down) break;
       if (this.predictionTradeHoldWindowKey === key) break;
+      // Any outstanding rest for this trigger (other side canceling, etc.) after a
+      // partial/matched fill — hold latch should cover; also block if matched ≥ Shares.
+      const matchedForTrigger = [...this.triggerRestingBuys.values()]
+        .filter((r) => r.triggerId === want.triggerId)
+        .reduce((sum, r) => sum + r.sizeMatched, 0);
+      if (matchedForTrigger >= want.shares - 1e-9) continue;
 
       // Trigger GTD takes the slot — drop phase rests first.
       if (this.restingBuys.size > 0) {
@@ -4762,7 +4851,25 @@ export class LiveTradingService {
             fillPrice: result.fillPrice!,
             fillShares: result.fillShares!,
           });
+          // Track until CLOB confirms the order is done (blocks duplicate place).
+          this.triggerRestingBuys.set(rk, {
+            orderId: result.orderId,
+            triggerId: want.triggerId,
+            side: want.side,
+            sessionKey: key,
+            shares: want.shares,
+            limitPrice,
+            sizeMatched: result.fillShares!,
+            sellOrderType: want.sellOrderType ?? "FAK",
+            takeProfitCents: want.takeProfitCents ?? 10,
+            tokenId: result.tokenId,
+            conditionId: result.conditionId,
+            slug: result.slug,
+            cancelPending: true,
+            cancelAttempts: 0,
+          });
           await this.cancelTriggerSiblingRests(want.triggerId, want.side, state);
+          await this.cancelTriggerRestingBuy(rk, "immediate fill — close rest", state);
           // Stop placing further rests this sync — hold latch is set; rearm only after sell.
           break;
         }
