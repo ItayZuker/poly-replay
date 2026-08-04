@@ -1,6 +1,11 @@
 {
-  "current": "1.45.0",
+  "current": "1.45.1",
   "releases": [
+    {
+      "version": "1.45.1",
+      "releasedAt": "2026-08-04T06:59:03.273Z",
+      "notes": "Left-column section headers no longer jump when pushed to the top/bottom edge. Allow trade label shows · On / · Off. Docs updated."
+    },
     {
       "version": "1.45.0",
       "releasedAt": "2026-08-03T17:28:03.499Z",

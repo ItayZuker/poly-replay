@@ -6,7 +6,7 @@ Live trading console for the selected series.
 
 | Control | Meaning |
 |---------|---------|
-| **Allow trade** | Off = demo; on = real orders when other gates pass. Turning **Off** also moves every Trigger card that was on **Trade** back to **Demo** |
+| **Allow trade** | Off = demo; on = real orders when other gates pass. The label shows **· On** / **· Off**. Turning **Off** also moves every Trigger card that was on **Trade** back to **Demo** |
 | **Prediction** | Manipulation / prediction detector. Per-series switch; the label shows **· On** / **· Off**. Detects adverse UP/DOWN Buy quotes vs Gap. When **On**, the panel expands to show **Trade**, Order type, Shares, quote/Duration/Shift/Profit inputs, Trigger Area, Buy/Sell quote boxes, and Right/Wrong. When **Off**, that block collapses so only the Prediction switcher and ⓘ remain — ⓘ still opens the short info note (not the settings). **Trade** · On/Off is active only when **Allow trade** and **Prediction** are both On — turning either Off forces Trade Off and disables it. **Settings** sync per series; **triggers and scoring run only on the deployed app** (not localhost). |
 
 Phase **Auto Trade**, **Use Schedule**, chart phase setups, **manual quote orders** (Size / Manual Override / clickable UP·DOWN boxes), and **Prediction Trade** (real Prediction buys/sells) are removed. The **only** live buy/sell path is **Trigger cards** (**Trade** + **Active**, with **Allow trade** on). Prediction, when present, scores in **sim only** (Right/Wrong) — it never places orders.

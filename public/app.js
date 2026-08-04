@@ -2435,9 +2435,10 @@ function initLeftRowSplitter() {
         p *= scale;
         tr *= scale;
         l *= scale;
-      } else if (total < maxContent) {
+      } else if (total < maxContent && !dragging) {
         // Fill leftover column space into an open content body (not as a gap
-        // below Positions that looks like an empty section).
+        // below Positions that looks like an empty section). Skip while
+        // dragging so pointer-driven sizes are not redistributed (jump).
         const slack = maxContent - total;
         if (l > 0) {
           l += slack;
@@ -2521,14 +2522,17 @@ function initLeftRowSplitter() {
     const prevBottom = prevTop + prevHeaderH;
     if (prevBottom > anchorTriggersHeaderTop) {
       // Touching the Triggers header — push it down and shrink content below.
+      // Keep content anchors in sync so reversing does not restore pre-push sizes.
       anchorTriggersHeaderTop = prevBottom;
       const below = Math.max(0, colRect.bottom - prevBottom - triggersHeaderH - logHeaderH);
       const log = Math.min(anchorLogContent, below);
       const triggers = Math.max(0, below - log);
+      anchorTriggersContent = triggers;
+      anchorLogContent = log;
       applyHeights(trade, 0, triggers, log);
       return;
     }
-    const prev = anchorTriggersHeaderTop - prevTop - prevHeaderH;
+    const prev = Math.max(0, anchorTriggersHeaderTop - prevBottom);
     applyHeights(trade, prev, anchorTriggersContent, anchorLogContent);
   };
 
@@ -2536,37 +2540,39 @@ function initLeftRowSplitter() {
     const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, triggersHeaderH, logHeaderH } =
       getMetrics();
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
-    const prevBottom = prevHeader.getBoundingClientRect().bottom;
+    // Use drag anchors (not live header rects) so push/reverse stays continuous.
+    const prevBottom = tradeHeaderBottom + anchorTradeContent + prevHeaderH;
     const minTriggersTop = tradeHeaderBottom + prevHeaderH;
     const maxTriggersTop = colRect.bottom - triggersHeaderH - logHeaderH;
-    let triggersTop = Math.max(minTriggersTop, Math.min(clientY, maxTriggersTop));
-    const triggersBottom = () => triggersTop + triggersHeaderH;
+    const triggersTop = Math.max(minTriggersTop, Math.min(clientY, maxTriggersTop));
+    const triggersBottom = triggersTop + triggersHeaderH;
 
     if (triggersTop < prevBottom) {
       // Touching the Positions header — push it up and shrink Trade content.
-      anchorTradeContent = Math.max(0, triggersTop - prevHeaderH - tradeHeaderBottom);
-      const below = Math.max(0, colRect.bottom - triggersBottom() - logHeaderH);
+      const trade = Math.max(0, triggersTop - prevHeaderH - tradeHeaderBottom);
+      anchorTradeContent = trade;
+      anchorPrevContent = 0;
+      const below = Math.max(0, colRect.bottom - triggersBottom - logHeaderH);
       const log = Math.min(anchorLogContent, below);
       const triggers = Math.max(0, below - log);
-      applyHeights(anchorTradeContent, 0, triggers, log);
+      anchorLogContent = log;
+      applyHeights(trade, 0, triggers, log);
       return;
     }
 
-    let prev = triggersTop - prevBottom;
-    if (prev < 1) {
-      prev = 0;
-      triggersTop = prevBottom;
-    }
+    const prev = Math.max(0, triggersTop - prevBottom);
+    anchorPrevContent = prev;
 
-    if (triggersBottom() > anchorLogHeaderTop) {
+    if (triggersBottom > anchorLogHeaderTop) {
       // Touching the Log header — push it down and shrink Log content.
-      anchorLogHeaderTop = triggersBottom();
-      const log = Math.max(0, colRect.bottom - triggersBottom() - logHeaderH);
+      anchorLogHeaderTop = triggersBottom;
+      const log = Math.max(0, colRect.bottom - triggersBottom - logHeaderH);
+      anchorLogContent = log;
       applyHeights(anchorTradeContent, prev, 0, log);
       return;
     }
 
-    const triggers = anchorLogHeaderTop - triggersBottom();
+    const triggers = Math.max(0, anchorLogHeaderTop - triggersBottom);
     applyHeights(anchorTradeContent, prev, triggers, anchorLogContent);
   };
 
@@ -2574,34 +2580,36 @@ function initLeftRowSplitter() {
     const { colRect, walletHeaderH, tradeHeaderH, prevHeaderH, triggersHeaderH, logHeaderH } =
       getMetrics();
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
-    const triggersBottom = triggersHeader.getBoundingClientRect().bottom;
     // Dragging up past Triggers/Positions headers pushes them up toward Trade.
     const minLogTop = tradeHeaderBottom + prevHeaderH + triggersHeaderH;
     const maxLogTop = colRect.bottom - logHeaderH;
-    let logTop = Math.max(minLogTop, Math.min(clientY, maxLogTop));
+    const logTop = Math.max(minLogTop, Math.min(clientY, maxLogTop));
+    const log = Math.max(0, colRect.bottom - logTop - logHeaderH);
+    // Bottom of Triggers header from anchors (avoids getBoundingClientRect feedback).
+    const triggersHeaderBottom =
+      tradeHeaderBottom + anchorTradeContent + prevHeaderH + anchorPrevContent + triggersHeaderH;
 
-    if (logTop < triggersBottom) {
+    if (logTop < triggersHeaderBottom) {
       // Triggers content collapses; Triggers header sits directly above Log.
-      const log = Math.max(0, colRect.bottom - logTop - logHeaderH);
+      anchorTriggersContent = 0;
       const triggersHeaderTop = logTop - triggersHeaderH;
-      const prevHeaderBottom = prevHeader.getBoundingClientRect().bottom;
+      const prevHeaderBottom = tradeHeaderBottom + anchorTradeContent + prevHeaderH;
       if (triggersHeaderTop < prevHeaderBottom) {
-        // Also push Positions up / collapse it.
+        // Also push Positions up / collapse it — keep anchors synced for reverse.
         const trade = Math.max(0, triggersHeaderTop - prevHeaderH - tradeHeaderBottom);
+        anchorTradeContent = trade;
+        anchorPrevContent = 0;
         applyHeights(trade, 0, 0, log);
         return;
       }
       const prev = Math.max(0, triggersHeaderTop - prevHeaderBottom);
+      anchorPrevContent = prev;
       applyHeights(anchorTradeContent, prev, 0, log);
       return;
     }
 
-    let triggers = logTop - triggersBottom;
-    if (triggers < 1) {
-      triggers = 0;
-      logTop = triggersBottom;
-    }
-    const log = Math.max(0, colRect.bottom - logTop - logHeaderH);
+    const triggers = Math.max(0, logTop - triggersHeaderBottom);
+    anchorTriggersContent = triggers;
     applyHeights(anchorTradeContent, anchorPrevContent, triggers, log);
   };
 
@@ -2641,6 +2649,7 @@ function initLeftRowSplitter() {
     activeHandle = triggersDragHandle;
     const heights = readHeights();
     anchorTradeContent = heights.trade;
+    anchorPrevContent = heights.prev;
     anchorLogHeaderTop = logHeader.getBoundingClientRect().top;
     anchorLogContent = heights.log;
     activeHandle.classList.add("is-dragging");
@@ -2662,6 +2671,7 @@ function initLeftRowSplitter() {
     const heights = readHeights();
     anchorTradeContent = heights.trade;
     anchorPrevContent = heights.prev;
+    anchorTriggersContent = heights.triggers;
     activeHandle.classList.add("is-dragging");
     document.body.classList.add("is-row-resizing");
     try {
@@ -8415,6 +8425,7 @@ function syncWalletControls(config) {
   if (useScheduleField) useScheduleField.hidden = !autoTradeOn;
   // Allow trade stays visible per market (header control), even when Auto Trade is off.
   if (startTradingField) startTradingField.hidden = false;
+  syncTradeToggleLabel("start-trading-label", "Allow trade", Boolean(config?.startTrading));
   syncTradeToggleLabel("auto-trade-label", "Auto Trade", autoTradeOn);
   syncTradeToggleLabel("use-schedule-label", "Use Schedule", useScheduleOn);
   if (unitSelect) {
@@ -11789,6 +11800,7 @@ function bindTradeToggles() {
   startTradingInput.addEventListener("change", async () => {
     // Allow trade only switches real vs demo — leave Auto Trade / Use Schedule alone.
     // Turning Allow trade off forces Prediction Trade off and Trigger cards off Trade.
+    syncTradeToggleLabel("start-trading-label", "Allow trade", startTradingInput.checked);
     syncPredictionTradeEnabled();
     if (!startTradingInput.checked) {
       forceTradeTriggersToDemo("Allow trade off");
