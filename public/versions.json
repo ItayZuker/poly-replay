@@ -1,6 +1,11 @@
 {
-  "current": "1.45.1",
+  "current": "1.46.0",
   "releases": [
+    {
+      "version": "1.46.0",
+      "releasedAt": "2026-08-04T07:17:52.062Z",
+      "notes": "Market Triggers: drag the wide colored left strip to reorder cards; order saved per user in Mongo. Docs updated."
+    },
     {
       "version": "1.45.1",
       "releasedAt": "2026-08-04T06:59:03.273Z",

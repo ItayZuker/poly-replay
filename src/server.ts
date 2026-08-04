@@ -72,6 +72,7 @@ import {
   deleteUserTrigger,
   listUserTriggers,
   patchUserTrigger,
+  reorderUserTriggers,
   upsertUserTrigger,
   upsertUserTriggersBulk,
 } from "./db/user-trigger-repository.js";
@@ -1412,6 +1413,18 @@ app.post("/api/triggers/migrate", async (req, res) => {
     const saved = await upsertUserTriggersBulk(userId, items);
     const triggers = await listUserTriggers(userId);
     res.json({ migrated: saved.length, triggers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Persist Market Triggers display order (per user). Must be before /api/triggers/:id. */
+app.put("/api/triggers/reorder", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggers = await reorderUserTriggers(userId, req.body?.ids);
+    res.json({ triggers });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });

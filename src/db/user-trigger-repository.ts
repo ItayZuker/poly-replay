@@ -57,6 +57,8 @@ export interface UserTriggerRecord {
   runMode: "demo" | "trade";
   paused: boolean;
   demoStats: TriggerDemoStats;
+  /** Lower = higher in the Market Triggers list (per user). */
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,6 +78,7 @@ async function ensureIndexes(): Promise<void> {
       const c = await col();
       await c.createIndex({ userId: 1, id: 1 }, { unique: true });
       await c.createIndex({ userId: 1, updatedAt: -1 });
+      await c.createIndex({ userId: 1, sortOrder: 1 });
     })().catch((err) => {
       indexesPromise = null;
       throw err;
@@ -224,6 +227,12 @@ export function normalizeUserTriggerInput(
     buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price" && !hasPtbGap)
       ? "FOK"
       : buyOrderTypeRaw;
+  const sortOrderRaw = Number(o.sortOrder);
+  const sortOrder = Number.isFinite(sortOrderRaw)
+    ? Math.floor(sortOrderRaw)
+    : Number.isFinite(existing?.sortOrder)
+      ? Math.floor(Number(existing?.sortOrder))
+      : 0;
   return {
     id,
     name,
@@ -271,9 +280,24 @@ export function normalizeUserTriggerInput(
     runMode: o.runMode === "trade" ? "trade" : "demo",
     paused: o.paused !== false,
     demoStats: normalizeDemoStats(o.demoStats ?? existing?.demoStats),
+    sortOrder,
     createdAt,
     updatedAt: now,
   };
+}
+
+function compareTriggerDisplayOrder(a: UserTriggerRecord, b: UserTriggerRecord): number {
+  const ao = Number.isFinite(a.sortOrder) ? a.sortOrder : null;
+  const bo = Number.isFinite(b.sortOrder) ? b.sortOrder : null;
+  if (ao != null && bo != null && ao !== bo) return ao - bo;
+  if (ao != null && bo == null) return -1;
+  if (ao == null && bo != null) return 1;
+  const at = Date.parse(a.updatedAt);
+  const bt = Date.parse(b.updatedAt);
+  const aOk = Number.isFinite(at);
+  const bOk = Number.isFinite(bt);
+  if (aOk && bOk && bt !== at) return bt - at;
+  return String(a.id).localeCompare(String(b.id));
 }
 
 function toClient(doc: UserTriggerDoc): UserTriggerRecord {
@@ -284,8 +308,22 @@ function toClient(doc: UserTriggerDoc): UserTriggerRecord {
 export async function listUserTriggers(userId: string): Promise<UserTriggerRecord[]> {
   await ensureIndexes();
   const c = await col();
-  const docs = await c.find({ userId }).sort({ updatedAt: -1 }).toArray();
-  const list = docs.map(toClient).filter(Boolean);
+  const docs = await c.find({ userId }).toArray();
+  const list = docs.map(toClient).filter(Boolean) as UserTriggerRecord[];
+  list.sort(compareTriggerDisplayOrder);
+  // Backfill sortOrder for legacy docs (and keep 0..n-1 dense after first load).
+  const needsSortBackfill = docs.some(
+    (d) => d.sortOrder == null || !Number.isFinite(Number(d.sortOrder)),
+  );
+  if (needsSortBackfill && list.length > 0) {
+    await Promise.all(
+      list.map((t, i) =>
+        c.updateOne({ userId, id: t.id }, { $set: { sortOrder: i } }).then(() => {
+          t.sortOrder = i;
+        }),
+      ),
+    );
+  }
   // Backfill Active/Paused timeline for triggers created before timeline existed.
   await Promise.all(
     list.map((t) =>
@@ -348,6 +386,28 @@ export async function upsertUserTrigger(
   const next = normalizeUserTriggerInput(raw, existing);
   if (!next) return null;
   const c = await col();
+  // New cards go to the top of the user's list.
+  if (!existing) {
+    const rawBody = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    if (rawBody.sortOrder === undefined) {
+      const peers = await c
+        .find({ userId }, { projection: { sortOrder: 1 } })
+        .toArray();
+      let min = 0;
+      for (const doc of peers) {
+        const n = Number(doc.sortOrder);
+        if (Number.isFinite(n)) min = Math.min(min, n);
+      }
+      next.sortOrder = peers.length === 0 ? 0 : min - 1;
+    }
+  } else if (
+    raw &&
+    typeof raw === "object" &&
+    (raw as Record<string, unknown>).sortOrder === undefined &&
+    Number.isFinite(existing.sortOrder)
+  ) {
+    next.sortOrder = existing.sortOrder;
+  }
   await c.updateOne(
     { userId, id: next.id },
     { $set: { ...next, userId } },
@@ -355,6 +415,37 @@ export async function upsertUserTrigger(
   );
   await syncTriggerModeTimeline(userId, next, existing).catch(() => undefined);
   return next;
+}
+
+/** Persist Market Triggers list order for a user (ids top → bottom). */
+export async function reorderUserTriggers(
+  userId: string,
+  orderedIds: unknown,
+): Promise<UserTriggerRecord[]> {
+  await ensureIndexes();
+  const c = await col();
+  const ids = Array.isArray(orderedIds)
+    ? orderedIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  const existing = await c.find({ userId }).toArray();
+  const byId = new Map(existing.map((d) => [String(d.id), d]));
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!byId.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(id);
+  }
+  for (const doc of existing) {
+    const id = String(doc.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(id);
+  }
+  await Promise.all(
+    ordered.map((id, i) => c.updateOne({ userId, id }, { $set: { sortOrder: i } })),
+  );
+  return listUserTriggers(userId);
 }
 
 export async function patchUserTrigger(

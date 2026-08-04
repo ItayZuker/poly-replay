@@ -5918,18 +5918,71 @@ body.is-row-resizing .panel-header-drag-handle {
 
 .trigger-card {
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
   border-radius: 4px;
   background: var(--panel);
-  padding: 8px 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.trigger-card-drag-handle {
+  flex: 0 0 10px;
+  width: 10px;
+  align-self: stretch;
+  background: var(--accent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.trigger-card-drag-handle:hover {
+  filter: brightness(1.12);
+}
+
+.trigger-card-drag-handle:active,
+.trigger-card.is-reordering .trigger-card-drag-handle {
+  cursor: grabbing;
+}
+
+.trigger-card-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 12px;
+  padding: 8px 10px;
 }
 
 .trigger-card.is-paused {
   opacity: 0.72;
+}
+
+.trigger-card.is-reordering {
+  opacity: 0.92;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  position: relative;
+  z-index: 2;
+}
+
+.trigger-card-reorder-placeholder {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  border: 1px dashed rgba(88, 166, 255, 0.55);
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.08);
+  pointer-events: none;
+}
+
+body.is-trigger-reordering {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.is-trigger-reordering .trigger-card-drag-handle {
+  cursor: grabbing;
 }
 
 .trigger-card-header {

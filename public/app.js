@@ -4428,6 +4428,16 @@ const USER_TRIGGERS_STORAGE_KEY = "detector-triggers-v1";
 const USER_TRIGGERS_MIGRATED_KEY = "detector-triggers-migrated-v1";
 /** @type {Array<Record<string, unknown>>} */
 let userTriggers = [];
+/** @type {null | {
+ *   card: HTMLElement,
+ *   cardsEl: HTMLElement,
+ *   placeholder: HTMLElement | null,
+ *   offsetY: number,
+ *   height: number,
+ *   pointerId: number,
+ *   moved: boolean,
+ * }} */
+let triggerReorderState = null;
 /** Cached Mongo Trade stats by trigger id. */
 const triggerLiveStatsCache = Object.create(null);
 /** In-flight persist tokens so stale responses do not overwrite newer edits. */
@@ -5809,7 +5819,172 @@ function normalizeTriggerRecord(raw) {
     runMode: raw.runMode === "trade" ? "trade" : "demo",
     paused: raw.paused !== false,
     demoStats: normalizeTriggerDemoStats(raw.demoStats),
+    sortOrder: Number.isFinite(Number(raw.sortOrder))
+      ? Math.floor(Number(raw.sortOrder))
+      : raw.sortOrder,
   };
+}
+
+function sortUserTriggersInPlace() {
+  if (!Array.isArray(userTriggers)) return;
+  userTriggers.sort((a, b) => {
+    const ao = Number.isFinite(Number(a?.sortOrder)) ? Number(a.sortOrder) : null;
+    const bo = Number.isFinite(Number(b?.sortOrder)) ? Number(b.sortOrder) : null;
+    if (ao != null && bo != null && ao !== bo) return ao - bo;
+    if (ao != null && bo == null) return -1;
+    if (ao == null && bo != null) return 1;
+    const at = Date.parse(String(a?.updatedAt || ""));
+    const bt = Date.parse(String(b?.updatedAt || ""));
+    if (Number.isFinite(at) && Number.isFinite(bt) && bt !== at) return bt - at;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+}
+
+async function persistTriggerOrder(orderedIds) {
+  const ids = Array.isArray(orderedIds)
+    ? orderedIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  if (ids.length === 0) return;
+  const byId = new Map(
+    (Array.isArray(userTriggers) ? userTriggers : []).map((t) => [String(t?.id), t]),
+  );
+  const next = [];
+  const seen = new Set();
+  ids.forEach((id, i) => {
+    const t = byId.get(id);
+    if (!t || seen.has(id)) return;
+    seen.add(id);
+    next.push({ ...t, sortOrder: i });
+  });
+  for (const t of userTriggers) {
+    const id = String(t?.id || "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    next.push({ ...t, sortOrder: next.length });
+  }
+  userTriggers = next;
+  try {
+    const res = await fetch("/api/triggers/reorder", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) return;
+    const body = await res.json().catch(() => ({}));
+    if (Array.isArray(body?.triggers)) {
+      userTriggers = body.triggers.map(normalizeTriggerRecord).filter(Boolean);
+    }
+  } catch {
+    /* keep local order */
+  }
+  window.ScheduleLiveTriggers?.render?.();
+}
+
+function endTriggerCardReorder(commit) {
+  const state = triggerReorderState;
+  triggerReorderState = null;
+  if (!state) return;
+  const { card, cardsEl, placeholder, moved } = state;
+  card.classList.remove("is-reordering");
+  card.style.position = "";
+  card.style.left = "";
+  card.style.top = "";
+  card.style.width = "";
+  card.style.zIndex = "";
+  card.style.pointerEvents = "";
+  document.body.classList.remove("is-trigger-reordering");
+  if (placeholder?.parentNode) {
+    placeholder.parentNode.insertBefore(card, placeholder);
+    placeholder.remove();
+  } else if (card.parentNode !== cardsEl) {
+    cardsEl.appendChild(card);
+  }
+  if (!commit || !moved) return;
+  const orderedIds = [...cardsEl.querySelectorAll(".trigger-card")]
+    .map((el) => el.dataset.triggerId)
+    .filter(Boolean);
+  void persistTriggerOrder(orderedIds);
+}
+
+function updateTriggerCardReorder(clientY) {
+  const state = triggerReorderState;
+  if (!state) return;
+  const { card, cardsEl, placeholder, offsetY } = state;
+  if (!placeholder) return;
+  state.moved = true;
+  card.style.top = `${clientY - offsetY}px`;
+
+  const siblings = [...cardsEl.querySelectorAll(".trigger-card")].filter((el) => el !== card);
+  let insertBefore = null;
+  for (const other of siblings) {
+    const rect = other.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      insertBefore = other;
+      break;
+    }
+  }
+  if (insertBefore) {
+    if (placeholder.nextElementSibling !== insertBefore) {
+      cardsEl.insertBefore(placeholder, insertBefore);
+    }
+  } else if (placeholder.parentNode === cardsEl) {
+    cardsEl.appendChild(placeholder);
+  }
+}
+
+function startTriggerCardReorder(e, card, cardsEl) {
+  if (e.button !== 0 || triggerReorderState) return;
+  e.preventDefault();
+  e.stopPropagation();
+  closeTriggerMenus();
+  const rect = card.getBoundingClientRect();
+  const placeholder = document.createElement("div");
+  placeholder.className = "trigger-card-reorder-placeholder";
+  placeholder.style.height = `${Math.max(40, rect.height)}px`;
+  cardsEl.insertBefore(placeholder, card);
+
+  card.classList.add("is-reordering");
+  card.style.position = "fixed";
+  card.style.left = `${rect.left}px`;
+  card.style.top = `${rect.top}px`;
+  card.style.width = `${rect.width}px`;
+  card.style.zIndex = "1300";
+  card.style.pointerEvents = "none";
+  document.body.appendChild(card);
+  document.body.classList.add("is-trigger-reordering");
+
+  triggerReorderState = {
+    card,
+    cardsEl,
+    placeholder,
+    offsetY: e.clientY - rect.top,
+    height: rect.height,
+    pointerId: e.pointerId,
+    moved: false,
+  };
+
+  const handle = card.querySelector(".trigger-card-drag-handle");
+  try {
+    handle?.setPointerCapture?.(e.pointerId);
+  } catch {
+    /* ignore */
+  }
+
+  const onMove = (ev) => {
+    if (!triggerReorderState || triggerReorderState.card !== card) return;
+    updateTriggerCardReorder(ev.clientY);
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    endTriggerCardReorder(true);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+  updateTriggerCardReorder(e.clientY);
 }
 
 /**
@@ -5846,9 +6021,11 @@ async function loadUserTriggers() {
       clearLocalUserTriggers();
     }
     userTriggers = list;
+    sortUserTriggersInPlace();
   } catch {
     const local = readLocalUserTriggers();
     if (local.length > 0) userTriggers = local;
+    sortUserTriggersInPlace();
   }
   return userTriggers;
 }
@@ -5871,6 +6048,7 @@ async function persistUserTrigger(trigger) {
     const idx = userTriggers.findIndex((t) => String(t?.id) === id);
     if (idx >= 0) userTriggers[idx] = saved;
     else userTriggers = [saved, ...userTriggers];
+    sortUserTriggersInPlace();
     return saved;
   } catch {
     return null;
@@ -6018,8 +6196,10 @@ function renderTriggersList() {
   const cards = $("triggers-cards");
   const body = $("triggers-list");
   if (!cards) return;
+  if (triggerReorderState) endTriggerCardReorder(false);
   closeTriggerMenus();
   cards.replaceChildren();
+  sortUserTriggersInPlace();
   const list = Array.isArray(userTriggers) ? userTriggers : [];
   if (empty) empty.hidden = list.length > 0;
   window.ScheduleLiveTriggers?.render?.();
@@ -6032,7 +6212,18 @@ function renderTriggersList() {
     if (paused) card.classList.add("is-paused");
     card.dataset.triggerId = triggerId;
     const color = typeof trigger.color === "string" ? trigger.color : "#58a6ff";
-    card.style.borderLeftColor = color;
+
+    const dragHandle = document.createElement("div");
+    dragHandle.className = "trigger-card-drag-handle";
+    dragHandle.style.background = color;
+    dragHandle.title = "Drag to reorder";
+    dragHandle.setAttribute("aria-label", "Drag to reorder trigger");
+    dragHandle.addEventListener("pointerdown", (e) => {
+      startTriggerCardReorder(e, card, cards);
+    });
+
+    const main = document.createElement("div");
+    main.className = "trigger-card-main";
 
     const header = document.createElement("div");
     header.className = "trigger-card-header";
@@ -6190,7 +6381,8 @@ function renderTriggersList() {
       "</div>";
     statsRow.appendChild(statsBody);
 
-    card.append(header, controls, liveRow, statsRow);
+    main.append(header, controls, liveRow, statsRow);
+    card.append(dragHandle, main);
     cards.appendChild(card);
     fillTriggerCardStatsRow(statsRow, trigger);
     syncTriggerCardLiveUi(triggerId);
