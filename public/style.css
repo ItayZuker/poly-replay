@@ -4012,6 +4012,37 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   display: grid;
 }
 
+/* Empty heatmap slots: same "No Recordings" label as Schedule Replay. */
+.schedule-heatmap-no-recordings {
+  display: none;
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  color: var(--muted, #8b93a7);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.app-page-schedule:not(.is-heatmap-view) .schedule-heatmap-no-recordings {
+  display: none !important;
+}
+
+.app-page-schedule.is-heatmap-view .schedule-hour-slot.is-heatmap-empty .schedule-heatmap-row {
+  display: none !important;
+}
+
+.app-page-schedule.is-heatmap-view .schedule-hour-slot.is-heatmap-empty .schedule-heatmap-no-recordings {
+  display: flex;
+}
+
 .schedule-heatmap-cell {
   min-height: 0;
   min-width: 0;

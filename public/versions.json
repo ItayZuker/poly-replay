@@ -1,6 +1,11 @@
 {
-  "current": "1.48.0",
+  "current": "1.48.1",
   "releases": [
+    {
+      "version": "1.48.1",
+      "releasedAt": "2026-08-04T10:07:28.237Z",
+      "notes": "Heatmap empty slots show No Recordings; Replay Schedule all-zero hour cells (incl. gray) show No Recordings instead of a zero-dot row. Docs updated."
+    },
     {
       "version": "1.48.0",
       "releasedAt": "2026-08-04T08:57:56.393Z",

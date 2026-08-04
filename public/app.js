@@ -8205,6 +8205,14 @@ function initScheduleUtcColumn() {
   }
 }
 
+function ensureHeatmapNoRecordingsLabel(slot) {
+  if (!slot || slot.querySelector(".schedule-heatmap-no-recordings")) return;
+  const label = document.createElement("div");
+  label.className = "schedule-heatmap-no-recordings";
+  label.textContent = "No Recordings";
+  slot.appendChild(label);
+}
+
 function initScheduleDaySlots() {
   const bodies = document.querySelectorAll(".schedule-day-body");
   for (const body of bodies) {
@@ -8212,7 +8220,10 @@ function initScheduleDaySlots() {
     if (firstSlot && !firstSlot.querySelector(".schedule-heatmap-row")) {
       body.replaceChildren();
     }
-    if (body.children.length > 0) continue;
+    if (body.children.length > 0) {
+      body.querySelectorAll(".schedule-hour-slot").forEach(ensureHeatmapNoRecordingsLabel);
+      continue;
+    }
     for (let hour = 0; hour < 24; hour++) {
       const slot = document.createElement("div");
       slot.className = "schedule-hour-slot";
@@ -8230,6 +8241,7 @@ function initScheduleDaySlots() {
         row.appendChild(cell);
       }
       slot.appendChild(row);
+      ensureHeatmapNoRecordingsLabel(slot);
       body.appendChild(slot);
     }
   }
@@ -8256,6 +8268,9 @@ function clearHeatmapDisplay() {
       valueEl.classList.remove("is-empty");
     }
   }
+  document.querySelectorAll(".schedule-hour-slot.is-heatmap-empty").forEach((slot) => {
+    slot.classList.remove("is-heatmap-empty");
+  });
 }
 
 function initHeatmapCellIndex() {
@@ -8284,6 +8299,18 @@ function renderHeatmap(state) {
   if (!state?.cells || !state?.max) return;
   lastHeatmapState = state;
 
+  document.querySelectorAll(".schedule-day-column").forEach((col) => {
+    const day = col.dataset.day;
+    if (!day) return;
+    for (let hour = 0; hour < 24; hour++) {
+      const slot = col.querySelector(`.schedule-hour-slot[data-hour="${hour}"]`);
+      if (!slot) continue;
+      ensureHeatmapNoRecordingsLabel(slot);
+      const hasData = Boolean(state.cells[`${day}:${hour}`]);
+      slot.classList.toggle("is-heatmap-empty", !hasData);
+    }
+  });
+
   for (const metric of getHeatmapMetrics()) {
     const max = state.max[metric.key] ?? 0;
     const rgb = metric.rgb;
@@ -8301,7 +8328,7 @@ function renderHeatmap(state) {
         cell.style.backgroundColor = alpha > 0 ? `rgba(${rgb}, ${alpha})` : "transparent";
         const valueEl = cell.querySelector(".schedule-heatmap-value");
         if (valueEl) {
-          valueEl.textContent = formatHeatmapValue(value, hasData);
+          valueEl.textContent = hasData ? formatHeatmapValue(value, true) : "";
           valueEl.classList.toggle("is-empty", !hasData);
         }
       }

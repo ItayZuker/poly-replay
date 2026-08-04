@@ -244,10 +244,21 @@
     return true;
   }
 
+  /** True when green/red/blue/gray are all 0 and P/L is flat (empty Run / empty slot). */
+  function slotCountsAreEmpty(stats) {
+    const green = Math.max(0, Math.round(Number(stats?.green) || 0));
+    const red = Math.max(0, Math.round(Number(stats?.red) || 0));
+    const blue = Math.max(0, Math.round(Number(stats?.blue) || 0));
+    const gray = Math.max(0, Math.round(Number(stats?.gray) || 0));
+    const pnl = Number(stats?.pnl) || 0;
+    return green + red + blue + gray === 0 && Math.abs(pnl) < 1e-9;
+  }
+
   /**
    * Display model for a Replay cell:
    * - Run result (resolved) → green/red/blue/gray from sim (gray = no-trigger windows)
    * - Idle / pending Run → gray = recorded window count; empty slots → "No Recordings"
+   * - All-zero counts (incl. gray) after a Run → "No Recordings" (not a zero-dot row)
    */
   function displayStatsForSlot(day, hour, stats) {
     const key = slotKey(day, hour);
@@ -255,7 +266,7 @@
     const resolved = replayResolvedKeys.has(key) || (stats.hasData === true && !stats.isBaseline);
 
     if (resolved) {
-      if (!stats.hasData && count === 0) {
+      if (!stats.hasData || slotCountsAreEmpty(stats)) {
         return { kind: "no-recordings" };
       }
       return { kind: "stats", stats };
