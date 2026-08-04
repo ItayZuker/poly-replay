@@ -4,7 +4,7 @@ Poly Real is Trigger-driven Polymarket **up/down** trading: define Market Trigge
 
 ## What you can do
 
-- Watch live windows (quotes, chart, PTB vs price)
+- Watch live windows (quotes, Book depth, chart, PTB vs price)
 - Create **Market Triggers** (detector rules + Demo/Trade)
 - See every UTC hour on **Schedule** with Trigger Trade stats + P/L
 - Use **Replay** to trial local triggers over recent history
@@ -16,7 +16,7 @@ Poly Real is Trigger-driven Polymarket **up/down** trading: define Market Trigge
 
 | Page | Purpose |
 |------|---------|
-| **Market** | Live window, Triggers, trades, positions — [Market](doc:market) |
+| **Market** | Live window, Triggers, Book, trades, positions — [Market](doc:market) |
 | **Schedule / Heatmap** | Hour-slot Trigger stats, Replay, heatmap — [Schedule](doc:schedule) |
 | **Settings** | Profile and wallet — [Settings & wallet](doc:settings) |
 

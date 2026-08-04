@@ -3,7 +3,7 @@ import type { BookLevel } from "./clob-service.js";
 export type WindowOutcome = "up" | "down";
 export type TickSource = "clob-book" | "chainlink-tick";
 
-export const BOOK_DEPTH_LEVELS = 5;
+export const BOOK_DEPTH_LEVELS = 10;
 
 export interface MarketDocument {
   _id: string;
@@ -527,6 +527,11 @@ export interface TradingPublicState {
   config: TradingConfig;
   positions: { up: LiveSidePosition | null; down: LiveSidePosition | null };
   positionCards: TradingPositionCard[];
+  /**
+   * True after Mongo live-stat / position-card hydration finished (success or fail).
+   * Clients should wait for this before painting the Positions list to avoid a jump.
+   */
+  positionCardsReady: boolean;
   placementStats: PlacementLiveStats[];
   /**
    * Optional Trigger Trade hour-slot stats (latest calendar day per weekday×hour).

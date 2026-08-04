@@ -28,7 +28,7 @@ Server -> SSE -> Browser
 
 | Data | Source |
 |------|--------|
-| Quotes / book | Polymarket CLOB (server WS) |
+| Quotes / book (top + 10-level depth) | Polymarket CLOB (server WS); SSE `quotes` + `window` |
 | Window / tokens | Polymarket REST |
 | PTB | Window open price (REST) |
 | Asset price | Chainlink (prefer), else REST |

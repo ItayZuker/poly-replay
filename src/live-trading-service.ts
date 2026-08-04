@@ -1222,7 +1222,6 @@ export class LiveTradingService {
 
       restored.sort((a, b) => (b.buyAt ?? 0) - (a.buyAt ?? 0));
       this.positionCards = [...openCards, ...restored].slice(0, MAX_POSITION_CARDS);
-      this.statsHydrated = true;
 
       const backfilled = await this.backfillOrphanPlacementIds();
       logService.info(
@@ -1235,6 +1234,9 @@ export class LiveTradingService {
       this.ensureConfirmLoop();
     } catch (err) {
       logService.warn("trading", `Failed to hydrate live stats from Mongo: ${String(err)}`);
+    } finally {
+      // Always unblock clients (Positions spinner) even if Mongo hydrate failed.
+      this.statsHydrated = true;
     }
   }
 
@@ -1784,6 +1786,7 @@ export class LiveTradingService {
       positionCards: this.positionCards
         .filter((card) => this.cardMatchesBoundSeries(card))
         .map((card) => ({ ...card })),
+      positionCardsReady: this.statsHydrated,
       placementStats: this.getPlacementStatsFromCards(),
       sessionTotals: {
         green: live.green,

@@ -382,6 +382,10 @@ function quotesPayloadFromState(state: ReturnType<typeof displayService.getState
     yesAskSize: state.yesAskSize,
     noBidSize: state.noBidSize,
     noAskSize: state.noAskSize,
+    yesBids: state.yesBids ?? [],
+    yesAsks: state.yesAsks ?? [],
+    noBids: state.noBids ?? [],
+    noAsks: state.noAsks ?? [],
     yesDisplay: state.yesDisplay,
     noDisplay: state.noDisplay,
     feedLatencyMs: state.feedLatencyMs,
@@ -1163,7 +1167,9 @@ app.get("/api/window", async (req, res) => {
     displayService.setSeries(series);
     const userId = (req as AuthedRequest).authUser?.id;
     if (userId) {
-      void tradingFor(req).ensureBoundToSeries(series);
+      // Await hydrate + series bind so Positions gets a ready card list (no demo→live jump).
+      await liveTradingRegistry.ensureLoaded(userId);
+      await tradingFor(req).ensureBoundToSeries(series);
     }
     res.json(enrichWindowStateForUser(userId, displayService.getState()));
   } catch (err) {

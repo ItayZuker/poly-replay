@@ -5,7 +5,7 @@ import {
   type TakerFeeParams,
 } from "./taker-fee.js";
 
-export const BOOK_DEPTH_LEVELS = 5;
+export const BOOK_DEPTH_LEVELS = 10;
 
 export interface FillLeg {
   price: number;

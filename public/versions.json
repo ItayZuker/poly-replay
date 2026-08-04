@@ -1,6 +1,11 @@
 {
-  "current": "1.47.0",
+  "current": "1.48.0",
   "releases": [
+    {
+      "version": "1.48.0",
+      "releasedAt": "2026-08-04T08:57:56.393Z",
+      "notes": "Market Book: live UP/DOWN CLOB depth (10 levels), mid/vertical dividers, best bid/ask borders, BUY/SELL labels. Positions show a loading spinner until live cards are ready (no list jump). Docs updated."
+    },
     {
       "version": "1.47.0",
       "releasedAt": "2026-08-04T08:06:22.641Z",
