@@ -1,6 +1,11 @@
 {
-  "current": "1.46.0",
+  "current": "1.47.0",
   "releases": [
+    {
+      "version": "1.47.0",
+      "releasedAt": "2026-08-04T08:06:22.641Z",
+      "notes": "Market Triggers: Duplicate (Paused/Demo); card color on border + grip handle; BUY/SELL wrap with controls; switcher labels vertically centered. Docs updated."
+    },
     {
       "version": "1.46.0",
       "releasedAt": "2026-08-04T07:17:52.062Z",

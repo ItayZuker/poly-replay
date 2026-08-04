@@ -5917,7 +5917,8 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 .trigger-card {
-  border: 1px solid var(--border);
+  --trigger-card-color: var(--accent);
+  border: 1px solid var(--trigger-card-color);
   border-radius: 4px;
   background: var(--panel);
   padding: 0;
@@ -5930,16 +5931,32 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 .trigger-card-drag-handle {
-  flex: 0 0 10px;
-  width: 10px;
+  flex: 0 0 15px;
+  width: 15px;
   align-self: stretch;
-  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--trigger-card-color);
+  color: rgba(255, 255, 255, 0.88);
   cursor: grab;
   touch-action: none;
+  user-select: none;
+}
+
+.trigger-card-drag-handle.is-light-handle {
+  color: rgba(22, 27, 34, 0.72);
 }
 
 .trigger-card-drag-handle:hover {
-  filter: brightness(1.12);
+  filter: brightness(1.08);
+}
+
+.trigger-card-drag-handle svg {
+  width: 8px;
+  height: 14px;
+  display: block;
+  pointer-events: none;
 }
 
 .trigger-card-drag-handle:active,
@@ -6013,15 +6030,18 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   flex: 1 1 120px;
 }
 
-/* Visual-only BUY (left) / SELL (right) live status (not clickable). */
+/* Visual-only BUY / SELL live status (not clickable).
+   Same ~120px basis as Demo/Trade & Pause/Active so they wrap to a column together. */
 .trigger-card-live {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   width: 100%;
 }
 
 .trigger-card-live-side {
+  flex: 1 1 120px;
+  min-width: 120px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -6029,6 +6049,7 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   gap: 2px;
   min-height: 36px;
   padding: 4px 6px;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -6251,6 +6272,10 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   font-weight: 600;
   cursor: pointer;
   line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .trigger-run-mode-btn.is-active {

@@ -6191,6 +6191,50 @@ function deleteUserTrigger(trigger) {
   }
 }
 
+function newUserTriggerId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `trg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Deep-copy a Market Trigger; always starts Paused / Demo with empty Demo stats. */
+function duplicateUserTrigger(trigger) {
+  closeTriggerMenus();
+  const srcId = trigger?.id != null ? String(trigger.id) : "";
+  const src = findUserTrigger(srcId) || trigger;
+  if (!src?.id) return null;
+  let clone;
+  try {
+    clone = JSON.parse(JSON.stringify(src));
+  } catch {
+    return null;
+  }
+  const now = new Date().toISOString();
+  const next = normalizeTriggerRecord({
+    ...clone,
+    id: newUserTriggerId(),
+    runMode: "demo",
+    paused: true,
+    demoStats: emptyTriggerDemoStats(),
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (!next) return null;
+  const srcIdx = userTriggers.findIndex((t) => String(t?.id) === String(src.id));
+  if (srcIdx >= 0) userTriggers.splice(srcIdx + 1, 0, next);
+  else userTriggers = [next, ...userTriggers];
+  userTriggers.forEach((t, i) => {
+    t.sortOrder = i;
+  });
+  renderTriggersList();
+  void (async () => {
+    await persistUserTrigger(next);
+    await persistTriggerOrder(userTriggers.map((t) => String(t?.id || "")).filter(Boolean));
+  })();
+  return next;
+}
+
 function renderTriggersList() {
   const empty = $("triggers-empty");
   const cards = $("triggers-cards");
@@ -6212,12 +6256,22 @@ function renderTriggersList() {
     if (paused) card.classList.add("is-paused");
     card.dataset.triggerId = triggerId;
     const color = typeof trigger.color === "string" ? trigger.color : "#58a6ff";
+    card.style.setProperty("--trigger-card-color", color);
 
     const dragHandle = document.createElement("div");
     dragHandle.className = "trigger-card-drag-handle";
-    dragHandle.style.background = color;
+    if (isLightHexColor(color)) dragHandle.classList.add("is-light-handle");
     dragHandle.title = "Drag to reorder";
     dragHandle.setAttribute("aria-label", "Drag to reorder trigger");
+    dragHandle.innerHTML =
+      '<svg viewBox="0 0 8 14" aria-hidden="true">' +
+      '<circle cx="2" cy="2" r="1.2" fill="currentColor"/>' +
+      '<circle cx="6" cy="2" r="1.2" fill="currentColor"/>' +
+      '<circle cx="2" cy="7" r="1.2" fill="currentColor"/>' +
+      '<circle cx="6" cy="7" r="1.2" fill="currentColor"/>' +
+      '<circle cx="2" cy="12" r="1.2" fill="currentColor"/>' +
+      '<circle cx="6" cy="12" r="1.2" fill="currentColor"/>' +
+      "</svg>";
     dragHandle.addEventListener("pointerdown", (e) => {
       startTriggerCardReorder(e, card, cards);
     });
@@ -6265,6 +6319,16 @@ function renderTriggersList() {
         openTriggerEditModal(trigger);
       });
 
+      const duplicateBtn = document.createElement("button");
+      duplicateBtn.type = "button";
+      duplicateBtn.className = "schedule-setup-menu-item";
+      duplicateBtn.setAttribute("role", "menuitem");
+      duplicateBtn.textContent = "Duplicate";
+      duplicateBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        duplicateUserTrigger(trigger);
+      });
+
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "schedule-setup-menu-item schedule-setup-menu-item-danger";
@@ -6275,7 +6339,7 @@ function renderTriggersList() {
         deleteUserTrigger(trigger);
       });
 
-      menu.append(editBtn, deleteBtn);
+      menu.append(editBtn, duplicateBtn, deleteBtn);
       document.body.appendChild(menu);
       positionSetupMenu(menu, menuBtn);
     });
