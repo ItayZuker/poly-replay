@@ -1182,7 +1182,7 @@ function closeSettingsInfoPanels(exceptKey = null) {
     if (exceptKey != null && key === exceptKey) return;
     setSettingsInfoPanelOpen(panel, false);
   });
-  document.querySelectorAll(".settings-info-toggle").forEach((btn) => {
+  document.querySelectorAll(".settings-info-toggle[data-settings-info]").forEach((btn) => {
     const key = btn.getAttribute("data-settings-info");
     if (exceptKey != null && key === exceptKey) return;
     btn.setAttribute("aria-expanded", "false");
@@ -7076,6 +7076,19 @@ function applyTriggerBuySharesToInput(shares) {
   if (el) el.value = String(triggerCreateBuyShares);
 }
 
+/** Offset 100 = exit path disabled — show Disabled badge + muted label. */
+function syncTriggerExitDisabledUi() {
+  const syncOne = (fieldId, badgeId, cents) => {
+    const field = $(fieldId);
+    const badge = $(badgeId);
+    const disabled = isTriggerExitDisabled(cents);
+    if (field) field.classList.toggle("is-exit-disabled", disabled);
+    if (badge) badge.hidden = !disabled;
+  };
+  syncOne("trigger-take-profit-field", "trigger-take-profit-disabled", triggerCreateTakeProfitCents);
+  syncOne("trigger-stop-loss-field", "trigger-stop-loss-disabled", triggerCreateStopLossCents);
+}
+
 function syncTriggerCreateSellDraft() {
   triggerCreateTakeProfitCents = clampTriggerOffsetCents($("trigger-take-profit")?.value ?? 10, 10);
   triggerCreateStopLossCents = clampTriggerOffsetCents($("trigger-stop-loss")?.value ?? 10, 10);
@@ -7092,6 +7105,7 @@ function syncTriggerCreateSellDraft() {
     slEl.value = String(triggerCreateStopLossCents);
   }
   if (typeEl) typeEl.value = triggerCreateSellOrderType;
+  syncTriggerExitDisabledUi();
 }
 
 function applyTriggerSellToInputs(takeProfitCents, stopLossCents, sellOrderType) {
@@ -7104,6 +7118,7 @@ function applyTriggerSellToInputs(takeProfitCents, stopLossCents, sellOrderType)
   if (tpEl) tpEl.value = String(triggerCreateTakeProfitCents);
   if (slEl) slEl.value = String(triggerCreateStopLossCents);
   if (typeEl) typeEl.value = triggerCreateSellOrderType;
+  syncTriggerExitDisabledUi();
 }
 
 function formatTriggerStatsPnl(pnlUsd) {
@@ -7254,7 +7269,6 @@ function fillTriggerStatsCountRows(stats, pending) {
 }
 
 function syncTriggerStatsPanel() {
-  const note = $("trigger-stats-note");
   if (triggerCreateHost === "replay") {
     const replay = triggerCreateEditingId
       ? window.ScheduleReplayTriggers?.find?.(triggerCreateEditingId)
@@ -7268,31 +7282,11 @@ function syncTriggerStatsPanel() {
       pnlUsd: 0,
     };
     fillTriggerStatsCountRows(stats, false);
-    if (note) {
-      note.textContent =
-        "Replay stats from the last completed Run (not live Trade / Mongo). Win/Loss = held to window end; Sell = profitable early exit; Stop Loss = early exit at a loss. % is share of Win+Loss+Sell+Stop Loss. Active time applies to Market triggers only.";
-    }
-    const activeNote = $("trigger-stats-active-note");
-    if (activeNote) {
-      activeNote.textContent = "Active time is tracked for Market triggers (Mongo timeline), not Replay Runs.";
-    }
     return;
   }
   if (!triggerCreateEditingId) {
     fillTriggerStatsCountRows(null, false);
-    if (note) {
-      note.textContent = "Save the trigger first to collect Trade stats on the server.";
-    }
     return;
-  }
-  if (note) {
-    note.textContent =
-      "All-time Trade stats for this trigger (server). Win/Loss = held to window end; Sell = profitable early exit; Stop Loss = early exit at a loss. % is share of Win+Loss+Sell+Stop Loss.";
-  }
-  const activeNote = $("trigger-stats-active-note");
-  if (activeNote) {
-    activeNote.textContent =
-      "Time in Trade + Active from the mode timeline (Demo does not count), with average P/L over that span.";
   }
   const cached = triggerLiveStatsCache[String(triggerCreateEditingId)];
   if (cached) fillTriggerStatsCountRows(cached, false);
@@ -7615,6 +7609,7 @@ function openTriggerCreateModalForHost(host) {
   triggerCreateHost = host === "replay" ? "replay" : "market";
   triggerCreateEditingId = null;
   resetTriggerCreateForm();
+  closeTriggerOrderTypeInfoPanels();
   syncTriggerCreateModalChrome();
   modal.hidden = false;
   requestAnimationFrame(() => {
@@ -7637,6 +7632,7 @@ function openTriggerEditModalForHost(host, trigger) {
   triggerCreateHost = host === "replay" ? "replay" : "market";
   triggerCreateEditingId = String(trigger.id);
   fillTriggerCreateFormFromTrigger(trigger);
+  closeTriggerOrderTypeInfoPanels();
   syncTriggerCreateModalChrome();
   modal.hidden = false;
   requestAnimationFrame(() => {
@@ -7648,9 +7644,33 @@ function openTriggerEditModalForHost(host, trigger) {
   });
 }
 
+function setTriggerOrderTypeInfoOpen(side, open) {
+  const btn = $(side === "sell" ? "trigger-sell-order-info-btn" : "trigger-buy-order-info-btn");
+  const panel = $(side === "sell" ? "trigger-sell-order-note" : "trigger-buy-order-note");
+  if (panel) {
+    panel.classList.toggle("is-open", open);
+    panel.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function closeTriggerOrderTypeInfoPanels() {
+  setTriggerOrderTypeInfoOpen("buy", false);
+  setTriggerOrderTypeInfoOpen("sell", false);
+}
+
+function toggleTriggerOrderTypeInfo(side) {
+  const panel = $(side === "sell" ? "trigger-sell-order-note" : "trigger-buy-order-note");
+  if (!panel) return;
+  const willOpen = !panel.classList.contains("is-open");
+  setTriggerOrderTypeInfoOpen(side === "sell" ? "buy" : "sell", false);
+  setTriggerOrderTypeInfoOpen(side, willOpen);
+}
+
 function closeTriggerCreateModal() {
   const modal = $("trigger-create-modal");
   if (!modal) return;
+  closeTriggerOrderTypeInfoPanels();
   modal.hidden = true;
   triggerCreateEditingId = null;
   triggerCreateHost = "market";
@@ -7724,8 +7744,16 @@ function bindTriggerCreateModal() {
   $("trigger-buy-order-type")?.addEventListener("change", () => {
     syncTriggerCreateBuyOrderTypeDraft();
   });
+  $("trigger-buy-order-info-btn")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleTriggerOrderTypeInfo("buy");
+  });
   $("trigger-sell-order-type")?.addEventListener("change", () => {
     syncTriggerCreateSellDraft();
+  });
+  $("trigger-sell-order-info-btn")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleTriggerOrderTypeInfo("sell");
   });
   $("trigger-take-profit")?.addEventListener("input", () => {
     syncTriggerCreateSellDraft();

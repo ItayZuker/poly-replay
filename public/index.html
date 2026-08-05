@@ -1283,20 +1283,46 @@
           aria-labelledby="trigger-tab-buy"
           data-trigger-tab-panel="buy"
         >
-          <label class="modal-field" for="trigger-buy-order-type">
-            <span>Buy order type</span>
-            <select id="trigger-buy-order-type" class="modal-select" aria-label="Trigger buy order type">
-              <option value="FAK">FAK</option>
-              <option value="FOK" selected>FOK</option>
-              <option value="GTD">GTD</option>
-            </select>
-          </label>
-          <p class="trigger-buy-order-note" id="trigger-buy-order-note">
-            Default <strong>FOK</strong> (full size or no fill). <strong>GTD</strong> is available only when
-            Duration is <strong>0</strong>, the left bar is <strong>UP/DOWN Price</strong>, and <strong>no Gap</strong>
-            is set — posts <strong>one</strong> resting buy at that ¢ from Apply-window start (lower Ask side;
-            UP if tied). With any +/− Gap, use FAK or FOK only.
-          </p>
+          <div class="trigger-order-type-block">
+            <div class="modal-field trigger-order-type-field">
+              <button
+                type="button"
+                class="settings-info-toggle trigger-order-type-info-toggle"
+                id="trigger-buy-order-info-btn"
+                aria-expanded="false"
+                aria-controls="trigger-buy-order-note"
+                title="About buy order types"
+              >
+                <span class="settings-info-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
+                </span>
+                <span class="settings-field-label">Buy order type</span>
+              </button>
+              <select id="trigger-buy-order-type" class="modal-select" aria-label="Trigger buy order type">
+                <option value="FAK">FAK</option>
+                <option value="FOK" selected>FOK</option>
+                <option value="GTD">GTD</option>
+              </select>
+            </div>
+            <div
+              id="trigger-buy-order-note"
+              class="trigger-order-type-info-panel"
+              role="region"
+              aria-labelledby="trigger-buy-order-info-btn"
+              aria-hidden="true"
+            >
+              <div class="trigger-order-type-info-panel-body">
+                <ul class="trigger-order-type-note-list">
+                  <li><strong>FAK</strong> — Fill-And-Kill: take what the book allows now; any unfilled size is cancelled.</li>
+                  <li><strong>FOK</strong> — Fill-Or-Kill: full size or nothing (default).</li>
+                  <li>
+                    <strong>GTD</strong> — Good-Til-Date: resting limit buys at the Price ¢ from Apply-window start
+                    (only when Duration is <strong>0</strong>, left bar is <strong>UP/DOWN Price</strong>, and no Gap).
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
         <section class="modal-section trigger-duration-section" aria-label="Duration">
           <div class="trigger-duration-diagram" aria-label="Trigger duration period">
             <div class="trigger-duration-stage">
@@ -1669,19 +1695,48 @@
           data-trigger-tab-panel="sell"
           hidden
         >
-          <label class="modal-field" for="trigger-sell-order-type">
-            <span>Sell order type</span>
-            <select id="trigger-sell-order-type" class="modal-select" aria-label="Trigger sell order type">
-              <option value="FAK" selected>FAK</option>
-              <option value="FOK">FOK</option>
-              <option value="GTD">GTD</option>
-            </select>
-          </label>
-          <p class="trigger-sell-order-note" id="trigger-sell-order-note">
-            Buy order type is set on the BUY tab. FAK sell retries until flat. Take Profit / Stop Loss are ¢ offsets from the buy fill (1–100; <strong>100 = disabled</strong> for that exit). Held to window end without TP/SL counts blue (win) or red (loss). GTD rests at fill + Take Profit as soon as the buy fills (skipped when TP is 100).
-          </p>
-          <label class="modal-field" for="trigger-take-profit">
-            <span>Take Profit (¢ from fill)</span>
+          <div class="trigger-order-type-block">
+            <div class="modal-field trigger-order-type-field">
+              <button
+                type="button"
+                class="settings-info-toggle trigger-order-type-info-toggle"
+                id="trigger-sell-order-info-btn"
+                aria-expanded="false"
+                aria-controls="trigger-sell-order-note"
+                title="About sell order types"
+              >
+                <span class="settings-info-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
+                </span>
+                <span class="settings-field-label">Sell order type</span>
+              </button>
+              <select id="trigger-sell-order-type" class="modal-select" aria-label="Trigger sell order type">
+                <option value="FAK" selected>FAK</option>
+                <option value="FOK">FOK</option>
+                <option value="GTD">GTD</option>
+              </select>
+            </div>
+            <div
+              id="trigger-sell-order-note"
+              class="trigger-order-type-info-panel"
+              role="region"
+              aria-labelledby="trigger-sell-order-info-btn"
+              aria-hidden="true"
+            >
+              <div class="trigger-order-type-info-panel-body">
+                <ul class="trigger-order-type-note-list">
+                  <li><strong>FAK</strong> — Fill-And-Kill: take what the book allows now; retries until the position is flat.</li>
+                  <li><strong>FOK</strong> — Fill-Or-Kill: full size or nothing; retries on later ticks if it does not fully fill.</li>
+                  <li><strong>GTD</strong> — Good-Til-Date: rests a limit sell at fill + Take Profit as soon as the buy fills (skipped when TP is 100).</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <label class="modal-field trigger-exit-field" for="trigger-take-profit" id="trigger-take-profit-field">
+            <span class="trigger-exit-field-heading">
+              <span class="trigger-exit-field-name">Take Profit (¢ from fill)</span>
+              <span class="trigger-exit-disabled-badge" id="trigger-take-profit-disabled" hidden>(Disabled)</span>
+            </span>
             <input
               type="number"
               id="trigger-take-profit"
@@ -1693,8 +1748,11 @@
               aria-label="Take profit offset in cents from buy fill"
             />
           </label>
-          <label class="modal-field" for="trigger-stop-loss">
-            <span>Stop Loss (¢ from fill)</span>
+          <label class="modal-field trigger-exit-field" for="trigger-stop-loss" id="trigger-stop-loss-field">
+            <span class="trigger-exit-field-heading">
+              <span class="trigger-exit-field-name">Stop Loss (¢ from fill)</span>
+              <span class="trigger-exit-disabled-badge" id="trigger-stop-loss-disabled" hidden>(Disabled)</span>
+            </span>
             <input
               type="number"
               id="trigger-stop-loss"
@@ -1715,10 +1773,19 @@
           data-trigger-tab-panel="stats"
           hidden
         >
-          <p class="trigger-stats-note" id="trigger-stats-note">
-            All-time Trade stats for this trigger across every live session (stored on the server).
-          </p>
           <table class="trigger-stats-table" aria-label="Trigger trade stats">
+            <colgroup>
+              <col class="trigger-stats-col-label" />
+              <col class="trigger-stats-col-mid" />
+              <col class="trigger-stats-col-value" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col" class="trigger-stats-pct">%</th>
+                <th scope="col">Count</th>
+              </tr>
+            </thead>
             <tbody>
               <tr>
                 <th scope="row">
@@ -1764,35 +1831,37 @@
               </tr>
             </tbody>
           </table>
-          <p class="trigger-stats-note trigger-stats-active-note" id="trigger-stats-active-note">
-            Time in Trade + Active from the mode timeline (Demo does not count), with average P/L over that span.
-          </p>
           <table class="trigger-stats-table trigger-stats-active-table" aria-label="Trigger active time and average P/L">
+            <colgroup>
+              <col class="trigger-stats-col-label" />
+              <col class="trigger-stats-col-mid" />
+              <col class="trigger-stats-col-value" />
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col"></th>
-                <th scope="col">Active</th>
+                <th scope="col" class="trigger-stats-pct">Active</th>
                 <th scope="col">Avg P/L</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <th scope="row">Weeks</th>
-                <td id="trigger-stats-active-weeks">—</td>
+                <td id="trigger-stats-active-weeks" class="trigger-stats-pct">—</td>
                 <td class="trigger-stats-pnl-cell">
                   <span id="trigger-stats-avg-pnl-week" class="trigger-card-stats-pnl">—</span>
                 </td>
               </tr>
               <tr>
                 <th scope="row">Days</th>
-                <td id="trigger-stats-active-days">—</td>
+                <td id="trigger-stats-active-days" class="trigger-stats-pct">—</td>
                 <td class="trigger-stats-pnl-cell">
                   <span id="trigger-stats-avg-pnl-day" class="trigger-card-stats-pnl">—</span>
                 </td>
               </tr>
               <tr>
                 <th scope="row">Hours</th>
-                <td id="trigger-stats-active-hours">—</td>
+                <td id="trigger-stats-active-hours" class="trigger-stats-pct">—</td>
                 <td class="trigger-stats-pnl-cell">
                   <span id="trigger-stats-avg-pnl-hour" class="trigger-card-stats-pnl">—</span>
                 </td>
