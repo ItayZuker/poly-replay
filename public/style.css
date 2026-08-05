@@ -6606,18 +6606,28 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   line-height: 1.4;
 }
 
-.trigger-stats-active-note {
-  margin-top: 16px;
-}
-
 .trigger-stats-active-table {
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
 .trigger-stats-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.85rem;
+}
+
+/* Same mid/value widths so % (top) and Active (bottom) share one right edge. */
+.trigger-stats-table .trigger-stats-col-label {
+  width: auto;
+}
+
+.trigger-stats-table .trigger-stats-col-mid {
+  width: 5.5rem;
+}
+
+.trigger-stats-table .trigger-stats-col-value {
+  width: 6.75rem;
 }
 
 .trigger-stats-table th,
@@ -6650,8 +6660,7 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   color: var(--text);
 }
 
-.trigger-stats-table td.trigger-stats-pct {
-  width: 5.25rem;
+.trigger-stats-table .trigger-stats-pct {
   color: var(--muted);
   font-size: 0.8rem;
 }
@@ -6666,9 +6675,50 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   font-size: 0.85rem;
 }
 
+/* Avg P/L: text color only (no chip background). */
+.trigger-stats-active-table .trigger-card-stats-pnl {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-weight: 600;
+}
+
+.trigger-stats-active-table .trigger-card-stats-pnl.is-positive {
+  color: var(--up, #3fb950);
+  background: transparent;
+}
+
+.trigger-stats-active-table .trigger-card-stats-pnl.is-negative {
+  color: var(--down, #f85149);
+  background: transparent;
+}
+
+.trigger-stats-active-table .trigger-card-stats-pnl.is-neutral {
+  color: var(--muted);
+  background: transparent;
+}
+
 .modal-card.trigger-create-card {
   width: min(720px, calc(100vw - 32px));
   max-width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-card.trigger-create-card .modal-header,
+.modal-card.trigger-create-card .modal-footer {
+  flex: 0 0 auto;
+}
+
+.modal-card.trigger-create-card .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #484f58 transparent;
 }
 
 .trigger-create-tabs {
@@ -6753,15 +6803,78 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   padding-right: 4px;
 }
 
-.trigger-buy-order-note {
+.trigger-order-type-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 1.4;
+}
+
+.trigger-order-type-field {
+  margin: 0;
+}
+
+.trigger-order-type-info-toggle .settings-field-label {
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  color: inherit;
+}
+
+.trigger-order-type-info-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.08);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow: hidden;
+  pointer-events: none;
+  box-sizing: border-box;
+  transition:
+    grid-template-rows 0.22s ease,
+    opacity 0.18s ease,
+    border-color 0.18s ease,
+    margin 0.22s ease;
+}
+
+.trigger-order-type-info-panel.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 8px;
+  border-color: var(--border);
+  pointer-events: auto;
+}
+
+.trigger-order-type-info-panel-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 10px;
+  transition: padding 0.22s ease;
+}
+
+.trigger-order-type-info-panel.is-open .trigger-order-type-info-panel-body {
+  padding: 8px 10px;
+}
+
+.trigger-order-type-note-list {
+  margin: 0;
+  padding-left: 1.15rem;
   color: var(--muted);
 }
 
-.trigger-buy-order-note.is-gtd-locked {
-  opacity: 0.85;
+.trigger-order-type-note-list li + li {
+  margin-top: 4px;
+}
+
+.trigger-order-type-info-panel.is-gtd-locked .trigger-order-type-note-list li:last-child {
+  opacity: 0.75;
 }
 
 .trigger-duration-diagram {
@@ -7607,13 +7720,6 @@ select.trigger-price-side:focus {
   border-color: var(--accent);
 }
 
-.trigger-sell-order-note {
-  margin: 0 0 10px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--muted);
-}
-
 .trigger-duration-end-controls {
   display: flex;
   align-items: center;
@@ -7772,7 +7878,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar,
 .schedule-week-scroll::-webkit-scrollbar,
 .schedule-setups-list::-webkit-scrollbar,
-.schedule-replay-prediction-settings::-webkit-scrollbar {
+.schedule-replay-prediction-settings::-webkit-scrollbar,
+.modal-card.trigger-create-card .modal-body::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
@@ -7781,7 +7888,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-track,
 .schedule-week-scroll::-webkit-scrollbar-track,
 .schedule-setups-list::-webkit-scrollbar-track,
-.schedule-replay-prediction-settings::-webkit-scrollbar-track {
+.schedule-replay-prediction-settings::-webkit-scrollbar-track,
+.modal-card.trigger-create-card .modal-body::-webkit-scrollbar-track {
   background: transparent;
 }
 
@@ -7789,7 +7897,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-thumb,
 .schedule-week-scroll::-webkit-scrollbar-thumb,
 .schedule-setups-list::-webkit-scrollbar-thumb,
-.schedule-replay-prediction-settings::-webkit-scrollbar-thumb {
+.schedule-replay-prediction-settings::-webkit-scrollbar-thumb,
+.modal-card.trigger-create-card .modal-body::-webkit-scrollbar-thumb {
   background: #484f58;
   border-radius: 4px;
   border: 2px solid transparent;
@@ -7800,7 +7909,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-thumb:hover,
 .schedule-week-scroll::-webkit-scrollbar-thumb:hover,
 .schedule-setups-list::-webkit-scrollbar-thumb:hover,
-.schedule-replay-prediction-settings::-webkit-scrollbar-thumb:hover {
+.schedule-replay-prediction-settings::-webkit-scrollbar-thumb:hover,
+.modal-card.trigger-create-card .modal-body::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -7810,7 +7920,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-corner,
 .schedule-week-scroll::-webkit-scrollbar-corner,
 .schedule-setups-list::-webkit-scrollbar-corner,
-.schedule-replay-prediction-settings::-webkit-scrollbar-corner {
+.schedule-replay-prediction-settings::-webkit-scrollbar-corner,
+.modal-card.trigger-create-card .modal-body::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -8967,6 +9078,29 @@ body.is-column-resizing * {
   justify-content: space-between;
   gap: 10px;
   font-size: 0.85rem;
+}
+
+.trigger-exit-field-heading {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trigger-exit-field.is-exit-disabled .trigger-exit-field-name {
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.trigger-exit-disabled-badge {
+  color: var(--text);
+  font-weight: 400;
+  font-size: inherit;
+}
+
+.trigger-exit-disabled-badge[hidden] {
+  display: none;
 }
 
 .modal-field input[type="number"] {
