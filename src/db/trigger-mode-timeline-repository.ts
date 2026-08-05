@@ -110,6 +110,36 @@ export async function listTriggerModeEvents(
 }
 
 /**
+ * Total milliseconds the trigger was Trade + Active (not paused).
+ * Demo (even when Active) does not count. Open Trade+Active interval
+ * continues through `untilMs` (default now).
+ */
+export function sumTriggerActiveMs(
+  eventsForTrigger: TriggerModeTimelineEvent[],
+  untilMs: number = Date.now(),
+): number {
+  if (!eventsForTrigger.length || !Number.isFinite(untilMs)) return 0;
+  const sorted = [...eventsForTrigger].sort((a, b) => {
+    if (a.atMs !== b.atMs) return a.atMs - b.atMs;
+    return 0;
+  });
+  let total = 0;
+  let activeStart: number | null = null;
+  for (const ev of sorted) {
+    if (ev.atMs > untilMs) break;
+    const tradingActive = !ev.paused && ev.runMode === "trade";
+    if (tradingActive) {
+      if (activeStart == null) activeStart = ev.atMs;
+    } else if (activeStart != null) {
+      total += Math.max(0, ev.atMs - activeStart);
+      activeStart = null;
+    }
+  }
+  if (activeStart != null) total += Math.max(0, untilMs - activeStart);
+  return total;
+}
+
+/**
  * True when the latest timeline event at or before `atMs` has Trade mode and is not paused.
  * No events → false (callers may treat empty timelines as legacy separately).
  */

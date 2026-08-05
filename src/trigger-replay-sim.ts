@@ -979,13 +979,15 @@ export class TriggerReplayRaceSession {
   ): void {
     const pnl = Number.isFinite(pnlUsd) ? pnlUsd : 0;
     if (reason === "window-end") {
+      // Win / Loss — held to settlement only.
       if (heldWon === true) rt.stats.blue += 1;
       else rt.stats.fail += 1;
+    } else if (pnl > 0) {
+      // Sell — early exit with profit.
+      rt.stats.takeProfit += 1;
     } else {
-      if (pnl > 0) rt.stats.success += 1;
-      else rt.stats.fail += 1;
-      if (reason === "tp") rt.stats.takeProfit += 1;
-      else if (reason === "sl") rt.stats.stopLoss += 1;
+      // Stop Loss — early exit in losing conditions.
+      rt.stats.stopLoss += 1;
     }
     rt.stats.pnlUsd += pnl;
   }

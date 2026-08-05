@@ -5945,7 +5945,10 @@ function normalizeTriggerDemoStats(raw) {
   const takeProfit = Math.max(0, Math.round(Number(raw?.takeProfit) || 0));
   const stopLoss = Math.max(0, Math.round(Number(raw?.stopLoss) || 0));
   const pnlUsd = Number.isFinite(Number(raw?.pnlUsd)) ? Number(raw.pnlUsd) : 0;
-  return { success, fail, blue, takeProfit, stopLoss, pnlUsd };
+  const activeMsRaw = Number(raw?.activeMs);
+  const activeMs =
+    Number.isFinite(activeMsRaw) && activeMsRaw >= 0 ? Math.floor(activeMsRaw) : null;
+  return { success, fail, blue, takeProfit, stopLoss, pnlUsd, activeMs };
 }
 
 /** Offset 100 = that exit path is disabled. */
@@ -6680,13 +6683,13 @@ function renderTriggersList() {
 
     const statsBody = document.createElement("div");
     statsBody.className = "trigger-card-stats-body";
-    // Stats dots (+ Demo reset right), then Stop Loss row with right-aligned P/L chip.
+    // Stats dots: Sell (green) / Win (blue) / Loss (red); then Stop Loss + P/L.
     statsBody.innerHTML =
       '<div class="trigger-card-stats-main">' +
       '<span class="trigger-card-stats-counts">' +
-      '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
-      '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
-      '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Sell (profitable early exit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
       "</span>" +
       "</div>" +
       '<div class="trigger-card-stats-exits">' +
@@ -6751,12 +6754,12 @@ function resolveTriggerCardStats(trigger) {
 function fillTriggerCardStatsRow(statsRow, trigger) {
   if (!statsRow) return;
   const stats = resolveTriggerCardStats(trigger);
-  const successEl = statsRow.querySelector('[data-stat="success"]');
+  const sellEl = statsRow.querySelector('[data-stat="takeProfit"]');
   const blueEl = statsRow.querySelector('[data-stat="blue"]');
   const failEl = statsRow.querySelector('[data-stat="fail"]');
   const slEl = statsRow.querySelector('[data-stat="stopLoss"]');
   const pnlEl = statsRow.querySelector('[data-stat="pnl"]');
-  if (successEl) successEl.textContent = stats.pending ? "…" : String(stats.success);
+  if (sellEl) sellEl.textContent = stats.pending ? "…" : String(stats.takeProfit ?? 0);
   if (blueEl) blueEl.textContent = stats.pending ? "…" : String(stats.blue ?? 0);
   if (failEl) failEl.textContent = stats.pending ? "…" : String(stats.fail);
   if (slEl) slEl.textContent = stats.pending ? "…" : String(stats.stopLoss);
@@ -7110,11 +7113,147 @@ function formatTriggerStatsPnl(pnlUsd) {
   return `${sign}$${n.toFixed(2)}`;
 }
 
-function syncTriggerStatsPanel() {
+/** Share of Win+Loss+Sell+Stop Loss; empty total → 0.0%. One decimal, no integer round. */
+function formatTriggerStatsSharePct(count, total) {
+  const n = Math.max(0, Math.round(Number(count) || 0));
+  const t = Math.max(0, Math.round(Number(total) || 0));
+  if (t <= 0) return "0.0%";
+  return `${((n / t) * 100).toFixed(1)}%`;
+}
+
+function setTriggerStatsPnlChip(elOrId, pnlUsd, clear) {
+  const el = typeof elOrId === "string" ? $(elOrId) : elOrId;
+  if (!el) return;
+  el.classList.remove("is-positive", "is-negative", "is-neutral");
+  if (clear) {
+    el.textContent = "—";
+    return;
+  }
+  const n = Number(pnlUsd);
+  el.textContent = formatTriggerStatsPnl(n);
+  if (!Number.isFinite(n)) return;
+  if (n > 0) el.classList.add("is-positive");
+  else if (n < 0) el.classList.add("is-negative");
+  else el.classList.add("is-neutral");
+}
+
+const MS_PER_HOUR = 3600_000;
+const MS_PER_DAY = 24 * MS_PER_HOUR;
+const MS_PER_WEEK = 7 * MS_PER_DAY;
+
+function fillTriggerStatsActiveRows(stats, pending) {
   const setText = (id, text) => {
     const el = $(id);
     if (el) el.textContent = text;
   };
+  const clearAvg = () => {
+    setTriggerStatsPnlChip("trigger-stats-avg-pnl-week", 0, true);
+    setTriggerStatsPnlChip("trigger-stats-avg-pnl-day", 0, true);
+    setTriggerStatsPnlChip("trigger-stats-avg-pnl-hour", 0, true);
+  };
+  if (pending) {
+    setText("trigger-stats-active-weeks", "…");
+    setText("trigger-stats-active-days", "…");
+    setText("trigger-stats-active-hours", "…");
+    for (const id of [
+      "trigger-stats-avg-pnl-week",
+      "trigger-stats-avg-pnl-day",
+      "trigger-stats-avg-pnl-hour",
+    ]) {
+      const el = $(id);
+      if (el) {
+        el.textContent = "…";
+        el.classList.remove("is-positive", "is-negative", "is-neutral");
+      }
+    }
+    return;
+  }
+  const activeMs = stats?.activeMs;
+  if (activeMs == null || !Number.isFinite(activeMs) || activeMs < 0) {
+    setText("trigger-stats-active-weeks", "—");
+    setText("trigger-stats-active-days", "—");
+    setText("trigger-stats-active-hours", "—");
+    clearAvg();
+    return;
+  }
+  const weeks = activeMs / MS_PER_WEEK;
+  const days = activeMs / MS_PER_DAY;
+  const hours = activeMs / MS_PER_HOUR;
+  setText("trigger-stats-active-weeks", weeks.toFixed(1));
+  setText("trigger-stats-active-days", days.toFixed(1));
+  setText("trigger-stats-active-hours", hours.toFixed(1));
+  const pnl = Number(stats?.pnlUsd);
+  const avgOrClear = (id, denom) => {
+    if (!Number.isFinite(pnl) || !(denom > 0)) {
+      setTriggerStatsPnlChip(id, 0, true);
+      return;
+    }
+    setTriggerStatsPnlChip(id, pnl / denom, false);
+  };
+  avgOrClear("trigger-stats-avg-pnl-week", weeks);
+  avgOrClear("trigger-stats-avg-pnl-day", days);
+  avgOrClear("trigger-stats-avg-pnl-hour", hours);
+}
+
+function fillTriggerStatsCountRows(stats, pending) {
+  const setText = (id, text) => {
+    const el = $(id);
+    if (el) el.textContent = text;
+  };
+  if (pending) {
+    for (const id of [
+      "trigger-stats-live-blue",
+      "trigger-stats-live-blue-pct",
+      "trigger-stats-live-fail",
+      "trigger-stats-live-fail-pct",
+      "trigger-stats-live-take-profit",
+      "trigger-stats-live-take-profit-pct",
+      "trigger-stats-live-stop-loss",
+      "trigger-stats-live-stop-loss-pct",
+      "trigger-stats-live-pnl",
+    ]) {
+      setText(id, "…");
+    }
+    const pnlEl = $("trigger-stats-live-pnl");
+    if (pnlEl) pnlEl.classList.remove("is-positive", "is-negative", "is-neutral");
+    fillTriggerStatsActiveRows(null, true);
+    return;
+  }
+  if (!stats) {
+    for (const id of [
+      "trigger-stats-live-blue",
+      "trigger-stats-live-blue-pct",
+      "trigger-stats-live-fail",
+      "trigger-stats-live-fail-pct",
+      "trigger-stats-live-take-profit",
+      "trigger-stats-live-take-profit-pct",
+      "trigger-stats-live-stop-loss",
+      "trigger-stats-live-stop-loss-pct",
+    ]) {
+      setText(id, "—");
+    }
+    setTriggerStatsPnlChip("trigger-stats-live-pnl", 0, true);
+    fillTriggerStatsActiveRows(null, false);
+    return;
+  }
+  const win = Math.max(0, Math.round(Number(stats.blue) || 0));
+  const loss = Math.max(0, Math.round(Number(stats.fail) || 0));
+  const sell = Math.max(0, Math.round(Number(stats.takeProfit) || 0));
+  const stopLoss = Math.max(0, Math.round(Number(stats.stopLoss) || 0));
+  const total = win + loss + sell + stopLoss;
+  setText("trigger-stats-live-blue", String(win));
+  setText("trigger-stats-live-blue-pct", formatTriggerStatsSharePct(win, total));
+  setText("trigger-stats-live-fail", String(loss));
+  setText("trigger-stats-live-fail-pct", formatTriggerStatsSharePct(loss, total));
+  setText("trigger-stats-live-take-profit", String(sell));
+  setText("trigger-stats-live-take-profit-pct", formatTriggerStatsSharePct(sell, total));
+  setText("trigger-stats-live-stop-loss", String(stopLoss));
+  setText("trigger-stats-live-stop-loss-pct", formatTriggerStatsSharePct(stopLoss, total));
+  setTriggerStatsPnlChip("trigger-stats-live-pnl", stats.pnlUsd, false);
+  fillTriggerStatsActiveRows(stats, false);
+}
+
+function syncTriggerStatsPanel() {
   const note = $("trigger-stats-note");
   if (triggerCreateHost === "replay") {
     const replay = triggerCreateEditingId
@@ -7128,25 +7267,19 @@ function syncTriggerStatsPanel() {
       stopLoss: 0,
       pnlUsd: 0,
     };
-    setText("trigger-stats-live-success", String(stats.success ?? 0));
-    setText("trigger-stats-live-blue", String(stats.blue ?? 0));
-    setText("trigger-stats-live-fail", String(stats.fail ?? 0));
-    setText("trigger-stats-live-take-profit", String(stats.takeProfit ?? 0));
-    setText("trigger-stats-live-stop-loss", String(stats.stopLoss ?? 0));
-    setText("trigger-stats-live-pnl", formatTriggerStatsPnl(stats.pnlUsd));
+    fillTriggerStatsCountRows(stats, false);
     if (note) {
       note.textContent =
-        "Replay stats from the last completed Run (not live Trade / Mongo).";
+        "Replay stats from the last completed Run (not live Trade / Mongo). Win/Loss = held to window end; Sell = profitable early exit; Stop Loss = early exit at a loss. % is share of Win+Loss+Sell+Stop Loss. Active time applies to Market triggers only.";
+    }
+    const activeNote = $("trigger-stats-active-note");
+    if (activeNote) {
+      activeNote.textContent = "Active time is tracked for Market triggers (Mongo timeline), not Replay Runs.";
     }
     return;
   }
   if (!triggerCreateEditingId) {
-    setText("trigger-stats-live-success", "—");
-    setText("trigger-stats-live-blue", "—");
-    setText("trigger-stats-live-fail", "—");
-    setText("trigger-stats-live-take-profit", "—");
-    setText("trigger-stats-live-stop-loss", "—");
-    setText("trigger-stats-live-pnl", "—");
+    fillTriggerStatsCountRows(null, false);
     if (note) {
       note.textContent = "Save the trigger first to collect Trade stats on the server.";
     }
@@ -7154,24 +7287,16 @@ function syncTriggerStatsPanel() {
   }
   if (note) {
     note.textContent =
-      "All-time Trade stats for this trigger across every live session (stored on the server).";
+      "All-time Trade stats for this trigger (server). Win/Loss = held to window end; Sell = profitable early exit; Stop Loss = early exit at a loss. % is share of Win+Loss+Sell+Stop Loss.";
+  }
+  const activeNote = $("trigger-stats-active-note");
+  if (activeNote) {
+    activeNote.textContent =
+      "Time in Trade + Active from the mode timeline (Demo does not count), with average P/L over that span.";
   }
   const cached = triggerLiveStatsCache[String(triggerCreateEditingId)];
-  if (cached) {
-    setText("trigger-stats-live-success", String(cached.success));
-    setText("trigger-stats-live-blue", String(cached.blue ?? 0));
-    setText("trigger-stats-live-fail", String(cached.fail));
-    setText("trigger-stats-live-take-profit", String(cached.takeProfit));
-    setText("trigger-stats-live-stop-loss", String(cached.stopLoss));
-    setText("trigger-stats-live-pnl", formatTriggerStatsPnl(cached.pnlUsd));
-  } else {
-    setText("trigger-stats-live-success", "…");
-    setText("trigger-stats-live-blue", "…");
-    setText("trigger-stats-live-fail", "…");
-    setText("trigger-stats-live-take-profit", "…");
-    setText("trigger-stats-live-stop-loss", "…");
-    setText("trigger-stats-live-pnl", "…");
-  }
+  if (cached) fillTriggerStatsCountRows(cached, false);
+  else fillTriggerStatsCountRows(null, true);
 }
 
 async function fetchTriggerLiveStats(triggerId) {
@@ -11131,12 +11256,22 @@ function recordTriggerDemoStats(triggerId, result, pnlUsd, exitReason) {
   const trigger = findUserTrigger(triggerId);
   if (!trigger || trigger.paused !== false || trigger.runMode === "trade") return;
   const demo = normalizeTriggerDemoStats(trigger.demoStats);
-  if (result === "success") demo.success += 1;
-  else if (result === "blue") demo.blue += 1;
-  else demo.fail += 1;
-  if (exitReason === "tp") demo.takeProfit += 1;
-  else if (exitReason === "sl") demo.stopLoss += 1;
-  demo.pnlUsd += Number.isFinite(pnlUsd) ? pnlUsd : 0;
+  const pnl = Number.isFinite(pnlUsd) ? pnlUsd : 0;
+  const heldWin = result === "blue";
+  const heldLoss = result === "fail" && exitReason === "window-end";
+  const earlySell =
+    !heldWin &&
+    !heldLoss &&
+    (exitReason === "tp" ||
+      exitReason === "sl" ||
+      result === "success" ||
+      (result === "fail" && exitReason !== "window-end"));
+  // success is legacy (removed from Stats); Win/Loss/Sell/Stop Loss below.
+  if (heldWin) demo.blue += 1;
+  else if (heldLoss) demo.fail += 1;
+  if (earlySell && pnl > 0) demo.takeProfit += 1;
+  else if (earlySell && pnl <= 0) demo.stopLoss += 1;
+  demo.pnlUsd += pnl;
   patchUserTrigger(triggerId, { demoStats: demo });
   updateTriggerCardStats(triggerId);
 }

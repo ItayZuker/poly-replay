@@ -87,13 +87,13 @@
 
       const statsBody = document.createElement("div");
       statsBody.className = "trigger-card-stats-body";
-      // Row order: stats dots → Stop Loss → P/L (right-aligned), equal gaps.
+      // Row order: Sell/Win/Loss dots → Stop Loss → P/L (right-aligned), equal gaps.
       statsBody.innerHTML =
         '<div class="trigger-card-stats-main">' +
         '<span class="trigger-card-stats-counts">' +
-        '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
-        '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
-        '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Sell (profitable early exit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         "</span>" +
         "</div>" +
         '<div class="trigger-card-stats-exits">' +

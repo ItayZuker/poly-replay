@@ -258,19 +258,23 @@ async function main(): Promise<void> {
           ? "window-end"
           : null;
 
+    // Win/Loss/Sell/Stop Loss (success field is legacy / unused in UI).
     let result: "success" | "fail" | "blue";
+    const pnlN = Number.isFinite(pnl) ? pnl : 0;
     if (blue > 0) {
       result = "blue";
       row.after.blue += 1;
-    } else if (green > 0) {
-      result = "success";
-      row.after.success += 1;
+    } else if (exitReason === "window-end") {
+      result = "fail";
+      row.after.fail += 1;
+    } else if (green > 0 || exitReason === "tp" || exitReason === "sl") {
+      result = green > 0 ? "success" : "fail";
+      if (pnlN > 0) row.after.takeProfit += 1;
+      else row.after.stopLoss += 1;
     } else {
       result = "fail";
       row.after.fail += 1;
     }
-    if (exitReason === "tp") row.after.takeProfit += 1;
-    if (exitReason === "sl") row.after.stopLoss += 1;
     if (Number.isFinite(pnl)) row.after.pnlUsd += pnl;
     row.cardIds.push(cardId);
 

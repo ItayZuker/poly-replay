@@ -469,9 +469,9 @@
       main.className = "trigger-card-stats-main";
       main.innerHTML =
         '<span class="trigger-card-stats-counts">' +
-        '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
-        '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
-        '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Sell (profitable early exit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         "</span>" +
         '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>';
 
@@ -479,12 +479,12 @@
 
       const applyStats = (next) => {
         const s = normalizeStats(next);
-        const successEl = stack.querySelector('[data-stat="success"]');
+        const sellEl = stack.querySelector('[data-stat="takeProfit"]');
         const blueEl = stack.querySelector('[data-stat="blue"]');
         const failEl = stack.querySelector('[data-stat="fail"]');
         const slEl = stack.querySelector('[data-stat="stopLoss"]');
         const pnlEl = stack.querySelector('[data-stat="pnl"]');
-        if (successEl) successEl.textContent = String(s.success);
+        if (sellEl) sellEl.textContent = String(s.takeProfit ?? 0);
         if (blueEl) blueEl.textContent = String(s.blue ?? 0);
         if (failEl) failEl.textContent = String(s.fail);
         if (slEl) slEl.textContent = String(s.stopLoss);

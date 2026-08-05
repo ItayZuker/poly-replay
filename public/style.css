@@ -6606,6 +6606,14 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   line-height: 1.4;
 }
 
+.trigger-stats-active-note {
+  margin-top: 16px;
+}
+
+.trigger-stats-active-table {
+  margin-top: 8px;
+}
+
 .trigger-stats-table {
   width: 100%;
   border-collapse: collapse;
@@ -6631,9 +6639,31 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   color: var(--text);
 }
 
+.trigger-stats-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .trigger-stats-table td {
   font-variant-numeric: tabular-nums;
   color: var(--text);
+}
+
+.trigger-stats-table td.trigger-stats-pct {
+  width: 5.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.trigger-stats-table td.trigger-stats-pnl-cell {
+  text-align: right;
+}
+
+.trigger-stats-table .trigger-card-stats-pnl {
+  margin-left: 0;
+  display: inline-block;
+  font-size: 0.85rem;
 }
 
 .modal-card.trigger-create-card {

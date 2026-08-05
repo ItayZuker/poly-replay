@@ -1,6 +1,11 @@
 {
-  "current": "1.48.2",
+  "current": "1.49.0",
   "releases": [
+    {
+      "version": "1.49.0",
+      "releasedAt": "2026-08-05T08:44:18.701Z",
+      "notes": "Trigger Stats: Loss/Sell/Win/Stop Loss meanings and labels (remove Success); % share; color dots; P/L chip; Trade+Active Weeks/Days/Hours with avg P/L. Docs updated."
+    },
     {
       "version": "1.48.2",
       "releasedAt": "2026-08-05T07:17:46.948Z",

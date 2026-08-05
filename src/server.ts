@@ -67,7 +67,11 @@ import {
   getTriggerLiveStats,
   recordTriggerLiveStatsEvent,
 } from "./db/trigger-live-stats-repository.js";
-import { ensureTriggerModeTimelineIndexes } from "./db/trigger-mode-timeline-repository.js";
+import {
+  ensureTriggerModeTimelineIndexes,
+  listTriggerModeEvents,
+  sumTriggerActiveMs,
+} from "./db/trigger-mode-timeline-repository.js";
 import {
   deleteUserTrigger,
   listUserTriggers,
@@ -1507,7 +1511,9 @@ app.get("/api/triggers/:id/stats", async (req, res) => {
       return;
     }
     const stats = await getTriggerLiveStats(userId, triggerId);
-    res.json(stats);
+    const timeline = await listTriggerModeEvents(userId, [triggerId]);
+    const activeMs = sumTriggerActiveMs(timeline);
+    res.json({ ...stats, activeMs });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });

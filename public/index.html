@@ -1721,28 +1721,81 @@
           <table class="trigger-stats-table" aria-label="Trigger trade stats">
             <tbody>
               <tr>
-                <th scope="row">Success (TP)</th>
-                <td id="trigger-stats-live-success">—</td>
-              </tr>
-              <tr>
-                <th scope="row">Held win</th>
-                <td id="trigger-stats-live-blue">—</td>
-              </tr>
-              <tr>
-                <th scope="row">Fail</th>
+                <th scope="row">
+                  <span class="trigger-stats-label">
+                    <span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span>
+                    Loss
+                  </span>
+                </th>
+                <td id="trigger-stats-live-fail-pct" class="trigger-stats-pct">—</td>
                 <td id="trigger-stats-live-fail">—</td>
               </tr>
               <tr>
-                <th scope="row">Take Profit</th>
+                <th scope="row">
+                  <span class="trigger-stats-label">
+                    <span class="trigger-card-stats-dot is-success" aria-hidden="true"></span>
+                    Sell
+                  </span>
+                </th>
+                <td id="trigger-stats-live-take-profit-pct" class="trigger-stats-pct">—</td>
                 <td id="trigger-stats-live-take-profit">—</td>
               </tr>
               <tr>
+                <th scope="row">
+                  <span class="trigger-stats-label">
+                    <span class="trigger-card-stats-dot is-held" aria-hidden="true"></span>
+                    Win
+                  </span>
+                </th>
+                <td id="trigger-stats-live-blue-pct" class="trigger-stats-pct">—</td>
+                <td id="trigger-stats-live-blue">—</td>
+              </tr>
+              <tr>
                 <th scope="row">Stop Loss</th>
+                <td id="trigger-stats-live-stop-loss-pct" class="trigger-stats-pct">—</td>
                 <td id="trigger-stats-live-stop-loss">—</td>
               </tr>
               <tr>
                 <th scope="row">P/L</th>
-                <td id="trigger-stats-live-pnl">—</td>
+                <td class="trigger-stats-pct" aria-hidden="true"></td>
+                <td class="trigger-stats-pnl-cell">
+                  <span id="trigger-stats-live-pnl" class="trigger-card-stats-pnl">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="trigger-stats-note trigger-stats-active-note" id="trigger-stats-active-note">
+            Time in Trade + Active from the mode timeline (Demo does not count), with average P/L over that span.
+          </p>
+          <table class="trigger-stats-table trigger-stats-active-table" aria-label="Trigger active time and average P/L">
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col">Active</th>
+                <th scope="col">Avg P/L</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Weeks</th>
+                <td id="trigger-stats-active-weeks">—</td>
+                <td class="trigger-stats-pnl-cell">
+                  <span id="trigger-stats-avg-pnl-week" class="trigger-card-stats-pnl">—</span>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Days</th>
+                <td id="trigger-stats-active-days">—</td>
+                <td class="trigger-stats-pnl-cell">
+                  <span id="trigger-stats-avg-pnl-day" class="trigger-card-stats-pnl">—</span>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Hours</th>
+                <td id="trigger-stats-active-hours">—</td>
+                <td class="trigger-stats-pnl-cell">
+                  <span id="trigger-stats-avg-pnl-hour" class="trigger-card-stats-pnl">—</span>
+                </td>
               </tr>
             </tbody>
           </table>
