@@ -1512,8 +1512,9 @@ app.get("/api/triggers/:id/stats", async (req, res) => {
     }
     const stats = await getTriggerLiveStats(userId, triggerId);
     const timeline = await listTriggerModeEvents(userId, [triggerId]);
-    const activeMs = sumTriggerActiveMs(timeline);
-    res.json({ ...stats, activeMs });
+    const activeMs = sumTriggerActiveMs(timeline, Date.now(), "trade");
+    const demoActiveMs = sumTriggerActiveMs(timeline, Date.now(), "demo");
+    res.json({ ...stats, activeMs, demoActiveMs });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });

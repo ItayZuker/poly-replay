@@ -6606,8 +6606,24 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   line-height: 1.4;
 }
 
+.trigger-stats-subtabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 0 14px;
+}
+
+.trigger-stats-section-title {
+  margin: 0 0 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+#trigger-stats-active-heading {
+  margin-top: 28px;
+}
+
 .trigger-stats-active-table {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .trigger-stats-table {

@@ -4688,6 +4688,8 @@ let triggerCreateBuyOrderType = "FOK";
 let triggerCreateWindowArea = { start: 0, end: 1 };
 /** Active side tab in the create/edit dialog: "buy" | "sell". */
 let triggerCreateActiveTab = "buy";
+/** Stats sub-tab: "demo" | "live" */
+let triggerCreateStatsSubTab = "live";
 let triggerWindowAreaDrag = null;
 
 const USER_TRIGGERS_STORAGE_KEY = "detector-triggers-v1";
@@ -5948,7 +5950,12 @@ function normalizeTriggerDemoStats(raw) {
   const activeMsRaw = Number(raw?.activeMs);
   const activeMs =
     Number.isFinite(activeMsRaw) && activeMsRaw >= 0 ? Math.floor(activeMsRaw) : null;
-  return { success, fail, blue, takeProfit, stopLoss, pnlUsd, activeMs };
+  const demoActiveMsRaw = Number(raw?.demoActiveMs);
+  const demoActiveMs =
+    Number.isFinite(demoActiveMsRaw) && demoActiveMsRaw >= 0
+      ? Math.floor(demoActiveMsRaw)
+      : null;
+  return { success, fail, blue, takeProfit, stopLoss, pnlUsd, activeMs, demoActiveMs };
 }
 
 /** Offset 100 = that exit path is disabled. */
@@ -7156,6 +7163,24 @@ const MS_PER_HOUR = 3600_000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 const MS_PER_WEEK = 7 * MS_PER_DAY;
 
+function syncTriggerStatsActiveHeading(subTab) {
+  const isDemo = subTab === "demo";
+  const outcomes = $("trigger-stats-outcomes-table");
+  if (outcomes) {
+    outcomes.setAttribute(
+      "aria-label",
+      isDemo ? "Demo Total outcome stats" : "Live Total outcome stats",
+    );
+  }
+  const active = $("trigger-stats-active-table");
+  if (active) {
+    active.setAttribute(
+      "aria-label",
+      isDemo ? "Demo Average active time and P/L" : "Live Average active time and P/L",
+    );
+  }
+}
+
 function fillTriggerStatsActiveRows(stats, pending) {
   const setText = (id, text) => {
     const el = $(id);
@@ -7268,27 +7293,103 @@ function fillTriggerStatsCountRows(stats, pending) {
   fillTriggerStatsActiveRows(stats, false);
 }
 
-function syncTriggerStatsPanel() {
+function resolveTriggerStatsDefaultSubTab(trigger) {
+  // Pause → Live; Active Demo → Demo; Active Trade → Live.
+  if (!trigger) return "live";
+  const paused = trigger.paused !== false;
+  if (paused) return "live";
+  return trigger.runMode === "trade" ? "live" : "demo";
+}
+
+function currentTriggerForStatsPanel() {
+  if (!triggerCreateEditingId) return null;
   if (triggerCreateHost === "replay") {
-    const replay = triggerCreateEditingId
-      ? window.ScheduleReplayTriggers?.find?.(triggerCreateEditingId)
-      : null;
-    const stats = replay?.replayStats || {
-      success: 0,
-      fail: 0,
-      blue: 0,
-      takeProfit: 0,
-      stopLoss: 0,
-      pnlUsd: 0,
-    };
-    fillTriggerStatsCountRows(stats, false);
+    return window.ScheduleReplayTriggers?.find?.(triggerCreateEditingId) || null;
+  }
+  return userTriggers.find((t) => String(t?.id) === String(triggerCreateEditingId)) || null;
+}
+
+function setTriggerCreateStatsSubTab(subTab, { sync = true } = {}) {
+  const id = subTab === "demo" ? "demo" : "live";
+  triggerCreateStatsSubTab = id;
+  const panel = $("trigger-tab-panel-stats");
+  if (panel) {
+    for (const tab of panel.querySelectorAll("[data-trigger-stats-sub]")) {
+      const active = tab.getAttribute("data-trigger-stats-sub") === id;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+      tab.tabIndex = active ? 0 : -1;
+    }
+  }
+  syncTriggerStatsActiveHeading(id);
+  if (sync) syncTriggerStatsPanel();
+}
+
+function applyDefaultTriggerStatsSubTab() {
+  setTriggerCreateStatsSubTab(resolveTriggerStatsDefaultSubTab(currentTriggerForStatsPanel()), {
+    sync: false,
+  });
+}
+
+function syncTriggerStatsPanel() {
+  syncTriggerStatsActiveHeading(triggerCreateStatsSubTab);
+  const isDemo = triggerCreateStatsSubTab === "demo";
+
+  if (triggerCreateHost === "replay") {
+    if (isDemo) {
+      const replay = triggerCreateEditingId
+        ? window.ScheduleReplayTriggers?.find?.(triggerCreateEditingId)
+        : null;
+      const stats = normalizeTriggerDemoStats(
+        replay?.replayStats || {
+          success: 0,
+          fail: 0,
+          blue: 0,
+          takeProfit: 0,
+          stopLoss: 0,
+          pnlUsd: 0,
+        },
+      );
+      // Replay has no mode timeline; Active stays empty.
+      fillTriggerStatsCountRows({ ...stats, activeMs: null }, false);
+    } else {
+      fillTriggerStatsCountRows(
+        { success: 0, fail: 0, blue: 0, takeProfit: 0, stopLoss: 0, pnlUsd: 0, activeMs: 0 },
+        false,
+      );
+    }
     return;
   }
+
   if (!triggerCreateEditingId) {
-    fillTriggerStatsCountRows(null, false);
+    fillTriggerStatsCountRows(
+      { success: 0, fail: 0, blue: 0, takeProfit: 0, stopLoss: 0, pnlUsd: 0, activeMs: 0 },
+      false,
+    );
     return;
   }
+
   const cached = triggerLiveStatsCache[String(triggerCreateEditingId)];
+  if (isDemo) {
+    const trigger = currentTriggerForStatsPanel();
+    const demo = normalizeTriggerDemoStats(trigger?.demoStats);
+    if (!cached) {
+      // Outcomes are on the card; Active duration comes from the stats API.
+      fillTriggerStatsCountRows({ ...demo, activeMs: null }, false);
+      fillTriggerStatsActiveRows(null, true);
+      return;
+    }
+    const demoActiveMs = Number(cached.demoActiveMs);
+    fillTriggerStatsCountRows(
+      {
+        ...demo,
+        activeMs: Number.isFinite(demoActiveMs) && demoActiveMs >= 0 ? demoActiveMs : 0,
+      },
+      false,
+    );
+    return;
+  }
+
   if (cached) fillTriggerStatsCountRows(cached, false);
   else fillTriggerStatsCountRows(null, true);
 }
@@ -7335,8 +7436,9 @@ function setTriggerCreateActiveTab(tabId) {
     });
   }
   if (id === "stats") {
+    applyDefaultTriggerStatsSubTab();
     syncTriggerStatsPanel();
-    if (triggerCreateEditingId) {
+    if (triggerCreateHost !== "replay" && triggerCreateEditingId) {
       void fetchTriggerLiveStats(triggerCreateEditingId).then(() => syncTriggerStatsPanel());
     }
   }
@@ -7390,6 +7492,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
     trigger?.windowArea?.end ?? trigger?.windowAreaEnd,
   );
   setTriggerCreateActiveTab("buy");
+  applyDefaultTriggerStatsSubTab();
   syncTriggerCreateColorIconContrast();
   syncTriggerCreateSideUi();
   syncTriggerCreateBuyOrderTypeUi();
@@ -7588,6 +7691,7 @@ function resetTriggerCreateForm() {
   applyTriggerSellToInputs(10, 10, "FAK");
   triggerCreateWindowArea = { start: 0, end: 1 };
   setTriggerCreateActiveTab("buy");
+  applyDefaultTriggerStatsSubTab();
   syncTriggerCreateColorIconContrast();
   syncTriggerCreateSideUi();
   syncTriggerZeroDurationUi();
@@ -7597,6 +7701,7 @@ function resetTriggerCreateForm() {
   syncTriggerPriceTrendControls();
   renderAllTriggerPriceRanges();
   syncTriggerWindowAreaUi();
+  syncTriggerStatsPanel();
 }
 
 function openTriggerCreateModal() {
@@ -7727,6 +7832,30 @@ function bindTriggerCreateModal() {
     e.preventDefault();
     const next = tabs[nextIdx];
     setTriggerCreateActiveTab(next.getAttribute("data-trigger-tab"));
+    next.focus();
+  });
+  const statsSubTabs = $("trigger-tab-panel-stats")?.querySelector(".trigger-stats-subtabs");
+  statsSubTabs?.addEventListener("click", (e) => {
+    const tab = e.target.closest?.("[data-trigger-stats-sub]");
+    if (!tab || !statsSubTabs.contains(tab)) return;
+    setTriggerCreateStatsSubTab(tab.getAttribute("data-trigger-stats-sub"));
+  });
+  statsSubTabs?.addEventListener("keydown", (e) => {
+    const current = e.target.closest?.("[data-trigger-stats-sub]");
+    if (!current || !statsSubTabs.contains(current)) return;
+    const tabs = [...statsSubTabs.querySelectorAll("[data-trigger-stats-sub]")];
+    const idx = tabs.indexOf(current);
+    if (idx < 0) return;
+    let nextIdx = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") nextIdx = (idx + 1) % tabs.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      nextIdx = (idx - 1 + tabs.length) % tabs.length;
+    } else if (e.key === "Home") nextIdx = 0;
+    else if (e.key === "End") nextIdx = tabs.length - 1;
+    if (nextIdx < 0) return;
+    e.preventDefault();
+    const next = tabs[nextIdx];
+    setTriggerCreateStatsSubTab(next.getAttribute("data-trigger-stats-sub"));
     next.focus();
   });
   $("trigger-create-name")?.addEventListener("input", () => {
