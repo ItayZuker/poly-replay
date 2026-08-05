@@ -11,7 +11,7 @@
 | **WebSocket** | Server ↔ exchanges | CLOB book + Chainlink (server only) |
 
 ```flow
-# Browser ↔ Poly Real
+# Browser ↔ Poly Replay
 Browser -> REST /api -> Server
 Server -> SSE /api/stream -> Browser
 ```
