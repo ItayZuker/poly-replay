@@ -933,6 +933,108 @@ body {
   --topbar-height: 45px;
 }
 
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.header-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.app-header > .app-title,
+.app-header > .header-nav,
+.app-header > .schedule-week-summary,
+.app-header > .header-end,
+.app-header > .schedule-highlighted-summary {
+  flex-shrink: 0;
+}
+
+/* Keep stats + timer/profile grouped on the right in the single-row layout. */
+.app-header > .schedule-week-summary {
+  margin-left: auto;
+}
+
+/*
+ * Compact header uses grid so title + timer/profile stay locked on row 1
+ * (end never wraps under the title). Nav / stats move to lower rows instead.
+ */
+.app-header.is-compact {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title highlight stats end"
+    "nav nav nav nav";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 8px;
+  height: auto;
+  min-height: var(--topbar-height, 45px);
+}
+
+.app-header.is-compact:not(:has(.schedule-highlighted-summary:not([hidden]))):not(.is-stats-row) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title stats end"
+    "nav nav nav";
+}
+
+.app-header.is-compact > .app-title {
+  grid-area: title;
+  margin-right: 0;
+}
+
+.app-header.is-compact > .schedule-week-summary {
+  grid-area: stats;
+  margin-left: 0;
+  min-width: 0;
+  justify-self: end;
+}
+
+.app-header.is-compact > .schedule-highlighted-summary {
+  grid-area: highlight;
+  min-width: 0;
+}
+
+.app-header.is-compact > .header-end {
+  grid-area: end;
+  justify-self: end;
+}
+
+.app-header.is-compact > .header-nav {
+  grid-area: nav;
+  width: 100%;
+  min-width: 0;
+}
+
+/* When row 1 is still tight, stats take a full-width row above the nav. */
+.app-header.is-compact.is-stats-row {
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "title end"
+    "stats stats"
+    "nav nav";
+}
+
+.app-header.is-compact.is-stats-row:has(.schedule-highlighted-summary:not([hidden])) {
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "title highlight end"
+    "stats stats stats"
+    "nav nav nav";
+}
+
+.app-header.is-compact.is-stats-row > .schedule-week-summary {
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+}
+
 .header-stats-progress {
   position: absolute;
   left: 0;
@@ -1519,6 +1621,8 @@ body {
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #484f58 transparent;
 }
 
 .schedule-live-triggers-note {
@@ -1566,7 +1670,42 @@ body {
   box-sizing: border-box;
 }
 
-.schedule-replay-controls > .schedule-replay-latency {
+.schedule-replay-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  flex-shrink: 0;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.schedule-replay-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.schedule-replay-settings-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.schedule-replay-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, #000);
+  box-sizing: border-box;
+}
+
+.schedule-replay-settings-body > .schedule-replay-latency {
   flex-shrink: 0;
 }
 
@@ -1637,6 +1776,8 @@ body {
   flex: 1 1 auto;
   overflow: auto;
   min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #484f58 transparent;
 }
 
 .schedule-replay-trigger-card {
@@ -1654,11 +1795,11 @@ body {
   opacity: 0.72;
 }
 
-/* Trade/Active + Stop Loss + dots share one row-gap; refresh spans the two stats rows. */
+/* Pause/Active, then Live-matching rows: dots → Stop Loss → P/L; reset centers on dots+Stop Loss. */
 .schedule-replay-trigger-card .schedule-trigger-card-stack {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto auto auto auto;
   row-gap: 6px;
   column-gap: 8px;
   align-items: center;
@@ -1679,16 +1820,30 @@ body {
   align-self: center;
 }
 
-.schedule-replay-trigger-card .schedule-trigger-card-stack > .trigger-card-stats-exits {
+.schedule-replay-trigger-card .schedule-trigger-card-stack > .trigger-card-stats-main {
   grid-column: 2;
   grid-row: 2;
+  width: 100%;
   min-width: 0;
 }
 
-.schedule-replay-trigger-card .schedule-trigger-card-stack > .trigger-card-stats-main {
+.schedule-replay-trigger-card .schedule-trigger-card-stack > .trigger-card-stats-exits {
   grid-column: 2;
   grid-row: 3;
   min-width: 0;
+}
+
+.schedule-replay-trigger-card .schedule-trigger-card-stack > .trigger-card-stats-pnl-row {
+  grid-column: 2;
+  grid-row: 4;
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  min-width: 0;
+}
+
+.schedule-replay-trigger-card .trigger-card-stats-pnl-row .trigger-card-stats-pnl {
+  margin-left: 0;
 }
 
 .schedule-replay-trigger-card .trigger-pause-mode {
@@ -1973,7 +2128,7 @@ body {
   min-height: 36px;
   padding: 0 12px;
   border: 1px solid var(--accent);
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--accent);
   color: #fff;
   font-size: 0.85rem;
@@ -1996,7 +2151,7 @@ body {
 
 @keyframes schedule-replay-spin {
   to {
-    transform: rotate(360deg);
+    transform: rotate(-360deg);
   }
 }
 
@@ -3804,6 +3959,20 @@ body.is-schedule-dragging .schedule-utc-header.is-fill-drop-target::after {
   opacity: 1;
 }
 
+.schedule-column-highlight {
+  position: absolute;
+  inset: 0;
+  background: rgba(88, 166, 255, 0.12);
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.08s ease;
+}
+
+.schedule-column-highlight.is-active {
+  opacity: 1;
+}
+
 .schedule-week-scroll {
   flex: 1 1 0;
   min-width: 1260px;
@@ -3854,6 +4023,15 @@ body.is-schedule-dragging .schedule-utc-header.is-fill-drop-target::after {
   font-weight: 500;
   color: var(--muted);
   flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.08s ease, color 0.08s ease;
+}
+
+.schedule-day-header.is-col-hover,
+.schedule-day-header.is-col-pinned {
+  background: rgba(88, 166, 255, 0.16);
+  color: var(--text);
 }
 
 .schedule-day-header.is-balance-positive {
@@ -4104,13 +4282,6 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 .schedule-heatmap-value.is-empty {
   color: #484f58;
   text-shadow: none;
-}
-
-.header-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 .header-settings-btn {
@@ -4815,6 +4986,11 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Keep dots immediately left of P/L, with that pair (and action) on the right. */
+.schedule-week-summary > .schedule-week-stats-dots {
+  margin-left: auto;
 }
 
 .schedule-week-pnl {
@@ -7902,6 +8078,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar,
 .schedule-week-scroll::-webkit-scrollbar,
 .schedule-setups-list::-webkit-scrollbar,
+.schedule-live-triggers-list::-webkit-scrollbar,
+.schedule-replay-triggers-list::-webkit-scrollbar,
 .schedule-replay-prediction-settings::-webkit-scrollbar,
 .modal-card.trigger-create-card .modal-body::-webkit-scrollbar {
   width: 6px;
@@ -7912,6 +8090,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-track,
 .schedule-week-scroll::-webkit-scrollbar-track,
 .schedule-setups-list::-webkit-scrollbar-track,
+.schedule-live-triggers-list::-webkit-scrollbar-track,
+.schedule-replay-triggers-list::-webkit-scrollbar-track,
 .schedule-replay-prediction-settings::-webkit-scrollbar-track,
 .modal-card.trigger-create-card .modal-body::-webkit-scrollbar-track {
   background: transparent;
@@ -7921,6 +8101,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-thumb,
 .schedule-week-scroll::-webkit-scrollbar-thumb,
 .schedule-setups-list::-webkit-scrollbar-thumb,
+.schedule-live-triggers-list::-webkit-scrollbar-thumb,
+.schedule-replay-triggers-list::-webkit-scrollbar-thumb,
 .schedule-replay-prediction-settings::-webkit-scrollbar-thumb,
 .modal-card.trigger-create-card .modal-body::-webkit-scrollbar-thumb {
   background: #484f58;
@@ -7933,6 +8115,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-thumb:hover,
 .schedule-week-scroll::-webkit-scrollbar-thumb:hover,
 .schedule-setups-list::-webkit-scrollbar-thumb:hover,
+.schedule-live-triggers-list::-webkit-scrollbar-thumb:hover,
+.schedule-replay-triggers-list::-webkit-scrollbar-thumb:hover,
 .schedule-replay-prediction-settings::-webkit-scrollbar-thumb:hover,
 .modal-card.trigger-create-card .modal-body::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
@@ -7944,6 +8128,8 @@ body.is-trigger-price-dragging * {
 .positions-body::-webkit-scrollbar-corner,
 .schedule-week-scroll::-webkit-scrollbar-corner,
 .schedule-setups-list::-webkit-scrollbar-corner,
+.schedule-live-triggers-list::-webkit-scrollbar-corner,
+.schedule-replay-triggers-list::-webkit-scrollbar-corner,
 .schedule-replay-prediction-settings::-webkit-scrollbar-corner,
 .modal-card.trigger-create-card .modal-body::-webkit-scrollbar-corner {
   background: transparent;

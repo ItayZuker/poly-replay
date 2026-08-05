@@ -333,7 +333,7 @@
     if (!replayTriggers.length) {
       const empty = document.createElement("div");
       empty.className = "schedule-replay-triggers-note";
-      empty.textContent = "No triggers yet — Add Trigger to apply on each simulated window.";
+      empty.textContent = "No triggers yet — + New to apply on each simulated window.";
       list.appendChild(empty);
       return;
     }
@@ -460,11 +460,7 @@
         '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
         "</svg>";
 
-      const exits = document.createElement("div");
-      exits.className = "trigger-card-stats-exits";
-      exits.innerHTML =
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>';
-
+      // Same row order as Live Schedule: dots → Stop Loss → right-aligned P/L.
       const main = document.createElement("div");
       main.className = "trigger-card-stats-main";
       main.innerHTML =
@@ -472,10 +468,19 @@
         '<span class="trigger-card-stats-item is-count" title="Sell (profitable early exit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
-        "</span>" +
+        "</span>";
+
+      const exits = document.createElement("div");
+      exits.className = "trigger-card-stats-exits";
+      exits.innerHTML =
+        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>';
+
+      const pnlRow = document.createElement("div");
+      pnlRow.className = "trigger-card-stats-pnl-row";
+      pnlRow.innerHTML =
         '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>';
 
-      stack.append(controls, resetBtn, exits, main);
+      stack.append(controls, resetBtn, main, exits, pnlRow);
 
       const applyStats = (next) => {
         const s = normalizeStats(next);
