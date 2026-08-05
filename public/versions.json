@@ -1,6 +1,11 @@
 {
-  "current": "1.50.0",
+  "current": "1.51.0",
   "releases": [
+    {
+      "version": "1.51.0",
+      "releasedAt": "2026-08-05T10:17:03.486Z",
+      "notes": "Trigger Stats: Demo Stats / Live Stats sub-tabs (default from Pause/Demo/Trade); Total + Average tables; Demo+Active duration via demoActiveMs. Docs updated."
+    },
     {
       "version": "1.50.0",
       "releasedAt": "2026-08-05T09:18:01.580Z",

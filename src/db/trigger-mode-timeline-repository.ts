@@ -110,15 +110,18 @@ export async function listTriggerModeEvents(
 }
 
 /**
- * Total milliseconds the trigger was Trade + Active (not paused).
- * Demo (even when Active) does not count. Open Trade+Active interval
- * continues through `untilMs` (default now).
+ * Total milliseconds the trigger was Active in `mode` (not paused).
+ * Default `trade` = Trade + Active only (Demo Active excluded).
+ * Pass `demo` for Demo + Active. An open matching interval continues
+ * through `untilMs` (default now).
  */
 export function sumTriggerActiveMs(
   eventsForTrigger: TriggerModeTimelineEvent[],
   untilMs: number = Date.now(),
+  mode: "trade" | "demo" = "trade",
 ): number {
   if (!eventsForTrigger.length || !Number.isFinite(untilMs)) return 0;
+  const wantMode = mode === "demo" ? "demo" : "trade";
   const sorted = [...eventsForTrigger].sort((a, b) => {
     if (a.atMs !== b.atMs) return a.atMs - b.atMs;
     return 0;
@@ -127,8 +130,8 @@ export function sumTriggerActiveMs(
   let activeStart: number | null = null;
   for (const ev of sorted) {
     if (ev.atMs > untilMs) break;
-    const tradingActive = !ev.paused && ev.runMode === "trade";
-    if (tradingActive) {
+    const matchingActive = !ev.paused && ev.runMode === wantMode;
+    if (matchingActive) {
       if (activeStart == null) activeStart = ev.atMs;
     } else if (activeStart != null) {
       total += Math.max(0, ev.atMs - activeStart);

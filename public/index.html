@@ -1773,101 +1773,139 @@
           data-trigger-tab-panel="stats"
           hidden
         >
-          <table class="trigger-stats-table" aria-label="Trigger trade stats">
-            <colgroup>
-              <col class="trigger-stats-col-label" />
-              <col class="trigger-stats-col-mid" />
-              <col class="trigger-stats-col-value" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th scope="col"></th>
-                <th scope="col" class="trigger-stats-pct">%</th>
-                <th scope="col">Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th scope="row">
-                  <span class="trigger-stats-label">
-                    <span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span>
-                    Loss
-                  </span>
-                </th>
-                <td id="trigger-stats-live-fail-pct" class="trigger-stats-pct">—</td>
-                <td id="trigger-stats-live-fail">—</td>
-              </tr>
-              <tr>
-                <th scope="row">
-                  <span class="trigger-stats-label">
-                    <span class="trigger-card-stats-dot is-success" aria-hidden="true"></span>
-                    Sell
-                  </span>
-                </th>
-                <td id="trigger-stats-live-take-profit-pct" class="trigger-stats-pct">—</td>
-                <td id="trigger-stats-live-take-profit">—</td>
-              </tr>
-              <tr>
-                <th scope="row">
-                  <span class="trigger-stats-label">
-                    <span class="trigger-card-stats-dot is-held" aria-hidden="true"></span>
-                    Win
-                  </span>
-                </th>
-                <td id="trigger-stats-live-blue-pct" class="trigger-stats-pct">—</td>
-                <td id="trigger-stats-live-blue">—</td>
-              </tr>
-              <tr>
-                <th scope="row">Stop Loss</th>
-                <td id="trigger-stats-live-stop-loss-pct" class="trigger-stats-pct">—</td>
-                <td id="trigger-stats-live-stop-loss">—</td>
-              </tr>
-              <tr>
-                <th scope="row">P/L</th>
-                <td class="trigger-stats-pct" aria-hidden="true"></td>
-                <td class="trigger-stats-pnl-cell">
-                  <span id="trigger-stats-live-pnl" class="trigger-card-stats-pnl">—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <table class="trigger-stats-table trigger-stats-active-table" aria-label="Trigger active time and average P/L">
-            <colgroup>
-              <col class="trigger-stats-col-label" />
-              <col class="trigger-stats-col-mid" />
-              <col class="trigger-stats-col-value" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th scope="col"></th>
-                <th scope="col" class="trigger-stats-pct">Active</th>
-                <th scope="col">Avg P/L</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th scope="row">Weeks</th>
-                <td id="trigger-stats-active-weeks" class="trigger-stats-pct">—</td>
-                <td class="trigger-stats-pnl-cell">
-                  <span id="trigger-stats-avg-pnl-week" class="trigger-card-stats-pnl">—</span>
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">Days</th>
-                <td id="trigger-stats-active-days" class="trigger-stats-pct">—</td>
-                <td class="trigger-stats-pnl-cell">
-                  <span id="trigger-stats-avg-pnl-day" class="trigger-card-stats-pnl">—</span>
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">Hours</th>
-                <td id="trigger-stats-active-hours" class="trigger-stats-pct">—</td>
-                <td class="trigger-stats-pnl-cell">
-                  <span id="trigger-stats-avg-pnl-hour" class="trigger-card-stats-pnl">—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div
+            class="settings-tabs trigger-stats-subtabs"
+            role="tablist"
+            aria-label="Demo or Live stats"
+          >
+            <button
+              type="button"
+              class="settings-tab trigger-stats-subtab"
+              id="trigger-stats-sub-demo"
+              role="tab"
+              aria-selected="false"
+              aria-controls="trigger-stats-tables"
+              data-trigger-stats-sub="demo"
+              tabindex="-1"
+            >
+              Demo Stats
+            </button>
+            <button
+              type="button"
+              class="settings-tab trigger-stats-subtab is-active"
+              id="trigger-stats-sub-live"
+              role="tab"
+              aria-selected="true"
+              aria-controls="trigger-stats-tables"
+              data-trigger-stats-sub="live"
+              tabindex="0"
+            >
+              Live Stats
+            </button>
+          </div>
+          <div id="trigger-stats-tables">
+            <div class="trigger-stats-section-title" id="trigger-stats-total-heading">Total</div>
+            <table class="trigger-stats-table" id="trigger-stats-outcomes-table" aria-label="Total outcome stats">
+              <colgroup>
+                <col class="trigger-stats-col-label" />
+                <col class="trigger-stats-col-mid" />
+                <col class="trigger-stats-col-value" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col"></th>
+                  <th scope="col" class="trigger-stats-pct">%</th>
+                  <th scope="col">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">
+                    <span class="trigger-stats-label">
+                      <span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span>
+                      Loss
+                    </span>
+                  </th>
+                  <td id="trigger-stats-live-fail-pct" class="trigger-stats-pct">—</td>
+                  <td id="trigger-stats-live-fail">—</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="trigger-stats-label">
+                      <span class="trigger-card-stats-dot is-success" aria-hidden="true"></span>
+                      Sell
+                    </span>
+                  </th>
+                  <td id="trigger-stats-live-take-profit-pct" class="trigger-stats-pct">—</td>
+                  <td id="trigger-stats-live-take-profit">—</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <span class="trigger-stats-label">
+                      <span class="trigger-card-stats-dot is-held" aria-hidden="true"></span>
+                      Win
+                    </span>
+                  </th>
+                  <td id="trigger-stats-live-blue-pct" class="trigger-stats-pct">—</td>
+                  <td id="trigger-stats-live-blue">—</td>
+                </tr>
+                <tr>
+                  <th scope="row">Stop Loss</th>
+                  <td id="trigger-stats-live-stop-loss-pct" class="trigger-stats-pct">—</td>
+                  <td id="trigger-stats-live-stop-loss">—</td>
+                </tr>
+                <tr>
+                  <th scope="row">P/L</th>
+                  <td class="trigger-stats-pct" aria-hidden="true"></td>
+                  <td class="trigger-stats-pnl-cell">
+                    <span id="trigger-stats-live-pnl" class="trigger-card-stats-pnl">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="trigger-stats-section-title" id="trigger-stats-active-heading">Average</div>
+            <table
+              class="trigger-stats-table trigger-stats-active-table"
+              id="trigger-stats-active-table"
+              aria-label="Average active time and P/L"
+            >
+              <colgroup>
+                <col class="trigger-stats-col-label" />
+                <col class="trigger-stats-col-mid" />
+                <col class="trigger-stats-col-value" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col"></th>
+                  <th scope="col" class="trigger-stats-pct">Active</th>
+                  <th scope="col">Avg P/L</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Weeks</th>
+                  <td id="trigger-stats-active-weeks" class="trigger-stats-pct">—</td>
+                  <td class="trigger-stats-pnl-cell">
+                    <span id="trigger-stats-avg-pnl-week" class="trigger-card-stats-pnl">—</span>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Days</th>
+                  <td id="trigger-stats-active-days" class="trigger-stats-pct">—</td>
+                  <td class="trigger-stats-pnl-cell">
+                    <span id="trigger-stats-avg-pnl-day" class="trigger-card-stats-pnl">—</span>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Hours</th>
+                  <td id="trigger-stats-active-hours" class="trigger-stats-pct">—</td>
+                  <td class="trigger-stats-pnl-cell">
+                    <span id="trigger-stats-avg-pnl-hour" class="trigger-card-stats-pnl">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
         </div>
       </div>
