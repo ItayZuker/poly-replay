@@ -18,7 +18,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 - Each cell aggregates outcomes for that UTC weekday×hour from the **latest calendar day** that still has fills in the ~14-day history window (Live) — same override rule as Replay/Heatmap recordings. A new ISO week (Monday) does **not** wipe Tue–Sun; only that weekday×hour is replaced when it plays again:
   - **Trigger Trade** when the trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade+Active (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
   - **Legacy phase / schedule-placement** fills still in the ledger (from before Trigger-only Schedule). They stay on the board until that weekday×hour is overridden by a newer day
-- Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). There is no per-day Clear control
+- Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). The header’s bottom border is **green** when that day’s total P/L is positive and **red** when negative (default border when flat / no data). There is no per-day Clear control
 - Current UTC cell is highlighted
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. Manual quote-box buys are removed (legacy manual fills still count in Market/Live only — not on Schedule hour cells)
 
@@ -33,7 +33,7 @@ Replay placements never send live orders. Live Trigger Trade requires **Allow tr
 | Hour cells | Live Trigger Trade (timeline-gated) | Before **Run**: gray = recorded window count (or **No Recordings**); after **Run**: green/red/blue + gray = windows that did not trigger |
 | Header total | Same summary chrome | Totals update as replay results arrive |
 
-In **Live**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). In **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Latency** / **Fill Success** / **Triggers**, then the Live/Replay switcher. A blue border frames the whole screen in Replay. Switching Live ↔ Replay paints each workspace’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
+In **Live**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). Each Live trigger card shows (under the title) three equally spaced rows: green/blue/red stats, then **Stop Loss**, then right-aligned **P/L** — no Reset/Refresh control (Trade stats update from the server automatically). In **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Latency** / **Fill Success** / **Triggers**, then the Live/Replay switcher. A blue border frames the whole screen in Replay. Switching Live ↔ Replay paints each workspace’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
 
 | Control | Meaning |
 |---------|---------|

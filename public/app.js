@@ -6678,6 +6678,22 @@ function renderTriggersList() {
     statsRow.className = "trigger-card-stats";
     statsRow.setAttribute("aria-label", runMode === "trade" ? "Trade stats" : "Demo stats");
 
+    const statsBody = document.createElement("div");
+    statsBody.className = "trigger-card-stats-body";
+    // Stats dots (+ Demo reset right), then Stop Loss row with right-aligned P/L chip.
+    statsBody.innerHTML =
+      '<div class="trigger-card-stats-main">' +
+      '<span class="trigger-card-stats-counts">' +
+      '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+      "</span>" +
+      "</div>" +
+      '<div class="trigger-card-stats-exits">' +
+      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
+      '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>' +
+      "</div>";
+
     if (runMode === "demo") {
       const resetBtn = document.createElement("button");
       resetBtn.type = "button";
@@ -6694,21 +6710,9 @@ function renderTriggersList() {
         e.stopPropagation();
         resetTriggerDemoStats(triggerId);
       });
-      statsRow.appendChild(resetBtn);
+      statsBody.querySelector(".trigger-card-stats-main")?.appendChild(resetBtn);
     }
 
-    const statsBody = document.createElement("div");
-    statsBody.className = "trigger-card-stats-body";
-    statsBody.innerHTML =
-      '<div class="trigger-card-stats-exits">' +
-      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
-      "</div>" +
-      '<div class="trigger-card-stats-main">' +
-      '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
-      '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
-      '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
-      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">P/L</span><span class="trigger-card-stats-value" data-stat="pnl">$0.00</span></span>' +
-      "</div>";
     statsRow.appendChild(statsBody);
 
     main.append(header, controls, liveRow, statsRow);
@@ -8961,6 +8965,15 @@ function syncTradeToggleLabel(labelId, name, on) {
   if (el) el.textContent = `${name} · ${on ? "On" : "Off"}`;
 }
 
+function syncAllowTradeSegment(on) {
+  const offBtn = $("start-trading-off");
+  const onBtn = $("start-trading-on");
+  offBtn?.classList.toggle("is-active", !on);
+  onBtn?.classList.toggle("is-active", Boolean(on));
+  offBtn?.setAttribute("aria-pressed", String(!on));
+  onBtn?.setAttribute("aria-pressed", String(Boolean(on)));
+}
+
 function syncWalletControls(config) {
   const autoTradeOn = Boolean(config?.autoTrade);
   const useScheduleOn = Boolean(config?.useSchedule);
@@ -8974,7 +8987,7 @@ function syncWalletControls(config) {
   if (useScheduleField) useScheduleField.hidden = !autoTradeOn;
   // Allow trade stays visible per market (header control), even when Auto Trade is off.
   if (startTradingField) startTradingField.hidden = false;
-  syncTradeToggleLabel("start-trading-label", "Allow trade", Boolean(config?.startTrading));
+  syncAllowTradeSegment(Boolean(config?.startTrading));
   syncTradeToggleLabel("auto-trade-label", "Auto Trade", autoTradeOn);
   syncTradeToggleLabel("use-schedule-label", "Use Schedule", useScheduleOn);
   if (unitSelect) {
@@ -12346,10 +12359,27 @@ function bindTradeToggles() {
     });
   });
 
+  const setAllowTradeFromSegment = (on) => {
+    if (startTradingInput.checked === on) {
+      syncAllowTradeSegment(on);
+      return;
+    }
+    startTradingInput.checked = on;
+    startTradingInput.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  $("start-trading-off")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    setAllowTradeFromSegment(false);
+  });
+  $("start-trading-on")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    setAllowTradeFromSegment(true);
+  });
+
   startTradingInput.addEventListener("change", async () => {
     // Allow trade only switches real vs demo — leave Auto Trade / Use Schedule alone.
     // Turning Allow trade off forces Prediction Trade off and Trigger cards off Trade.
-    syncTradeToggleLabel("start-trading-label", "Allow trade", startTradingInput.checked);
+    syncAllowTradeSegment(startTradingInput.checked);
     syncPredictionTradeEnabled();
     if (!startTradingInput.checked) {
       forceTradeTriggersToDemo("Allow trade off");

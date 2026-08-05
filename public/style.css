@@ -1524,6 +1524,32 @@ body {
   flex-shrink: 0;
 }
 
+/* Live Schedule trigger cards: dots → Stop Loss → P/L, equal row gaps. */
+.schedule-live-trigger-card .trigger-card-stats {
+  align-items: stretch;
+}
+
+.schedule-live-trigger-card .trigger-card-stats-body {
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.schedule-live-trigger-card .trigger-card-stats-main {
+  width: 100%;
+}
+
+.schedule-live-trigger-card .trigger-card-stats-pnl-row {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  min-width: 0;
+}
+
+.schedule-live-trigger-card .trigger-card-stats-pnl-row .trigger-card-stats-pnl {
+  margin-left: 0;
+}
+
 .schedule-replay-controls {
   display: flex;
   flex-direction: column;
@@ -3823,6 +3849,14 @@ body.is-schedule-dragging .schedule-utc-header.is-fill-drop-target::after {
   font-weight: 500;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+.schedule-day-header.is-balance-positive {
+  border-bottom-color: var(--up, #2ea043);
+}
+
+.schedule-day-header.is-balance-negative {
+  border-bottom-color: var(--down, #f85149);
 }
 
 .schedule-day-title {
@@ -6382,7 +6416,7 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 .trigger-card-stats-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -6396,8 +6430,28 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 }
 
 .trigger-card-stats-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   width: 100%;
-  row-gap: 4px;
+  row-gap: 6px;
+}
+
+/* Market cards: Stop Loss + P/L share a row; wrap gap matches stats ↔ Stop Loss. */
+.trigger-card .trigger-card-stats-exits {
+  width: 100%;
+  column-gap: 12px;
+  row-gap: 6px;
+}
+
+.trigger-card .trigger-card-stats-exits .trigger-card-stats-pnl {
+  margin-left: auto;
+}
+
+/* Demo reset sits on the stats (dots) row, right-aligned. */
+.trigger-card .trigger-card-stats-main > .trigger-card-stats-reset {
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .trigger-card-stats-counts {
@@ -7634,6 +7688,21 @@ body.is-trigger-price-dragging * {
 .trade-panel-actions .wallet-control-field {
   margin: 0;
   gap: 8px;
+}
+
+.trade-panel-actions .wallet-control-field--segment {
+  position: relative;
+}
+
+.trade-panel-actions .trade-allow-toggle {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 88px;
+}
+
+.trade-panel-actions .trade-allow-toggle .trigger-run-mode-btn {
+  min-width: 40px;
+  padding: 4px 10px;
 }
 
 .log-clear-btn {

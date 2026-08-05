@@ -1,6 +1,11 @@
 {
-  "current": "1.48.1",
+  "current": "1.48.2",
   "releases": [
+    {
+      "version": "1.48.2",
+      "releasedAt": "2026-08-05T07:17:46.948Z",
+      "notes": "Allow trade Off/On switcher in Trade header; Market/Live trigger card stats layout (dots, Stop Loss, P/L chip, Demo reset); day header green/red bottom border by P/L; remove Live Schedule refresh control. Docs updated."
+    },
     {
       "version": "1.48.1",
       "releasedAt": "2026-08-04T10:07:28.237Z",

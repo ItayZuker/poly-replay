@@ -85,51 +85,24 @@
       statsRow.className = "trigger-card-stats";
       statsRow.setAttribute("aria-label", "Trade stats");
 
-      const refreshBtn = document.createElement("button");
-      refreshBtn.type = "button";
-      refreshBtn.className = "trigger-card-stats-reset";
-      refreshBtn.title = "Refresh Trade stats";
-      refreshBtn.setAttribute("aria-label", "Refresh Trade stats");
-      refreshBtn.innerHTML =
-        '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
-        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
-        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
-        "</svg>";
-      refreshBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (refreshBtn.disabled) return;
-        refreshBtn.disabled = true;
-        refreshBtn.classList.add("is-loading");
-        const done = () => {
-          refreshBtn.disabled = false;
-          refreshBtn.classList.remove("is-loading");
-          if (typeof window.fillTriggerCardStatsRow === "function") {
-            window.fillTriggerCardStatsRow(statsRow, trigger);
-          }
-        };
-        if (typeof window.fetchTriggerLiveStats === "function") {
-          void window.fetchTriggerLiveStats(id).then(done, done);
-        } else {
-          done();
-        }
-      });
-
       const statsBody = document.createElement("div");
       statsBody.className = "trigger-card-stats-body";
+      // Row order: stats dots → Stop Loss → P/L (right-aligned), equal gaps.
       statsBody.innerHTML =
-        '<div class="trigger-card-stats-exits">' +
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
-        "</div>" +
         '<div class="trigger-card-stats-main">' +
         '<span class="trigger-card-stats-counts">' +
         '<span class="trigger-card-stats-item is-count" title="Success (take-profit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="success">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Held win"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Fail"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         "</span>" +
+        "</div>" +
+        '<div class="trigger-card-stats-exits">' +
+        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
+        "</div>" +
+        '<div class="trigger-card-stats-pnl-row">' +
         '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>' +
         "</div>";
-      statsRow.append(refreshBtn, statsBody);
+      statsRow.appendChild(statsBody);
 
       card.append(header, statsRow);
       listEl.appendChild(card);

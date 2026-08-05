@@ -409,13 +409,22 @@
             <div class="panel-header-main">
               <h2 class="settings-panel-title">Trade</h2>
               <div class="trade-panel-actions">
-                <label id="wallet-start-trading-field" class="wallet-control-field wallet-control-field--toggle" for="start-trading">
-                  <span class="wallet-control-label" id="start-trading-label">Allow trade · Off</span>
-                  <span class="switch">
-                    <input type="checkbox" id="start-trading" />
-                    <span class="switch-slider"></span>
-                  </span>
-                </label>
+                <div
+                  id="wallet-start-trading-field"
+                  class="wallet-control-field wallet-control-field--segment"
+                  role="group"
+                  aria-label="Allow trade"
+                >
+                  <div class="trade-allow-toggle trigger-run-mode" id="start-trading-toggle">
+                    <button type="button" class="trigger-run-mode-btn is-active" data-allow-trade="off" id="start-trading-off">
+                      Off
+                    </button>
+                    <button type="button" class="trigger-run-mode-btn" data-allow-trade="on" id="start-trading-on">
+                      On
+                    </button>
+                  </div>
+                  <input type="checkbox" id="start-trading" class="visually-hidden" tabindex="-1" aria-hidden="true" />
+                </div>
               </div>
             </div>
           </div>

@@ -981,6 +981,7 @@
     const includeGray = isReplayWorkspace();
     for (const day of DAYS) {
       const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
+      const header = col?.querySelector(".schedule-day-header");
       const host = col?.querySelector(".schedule-day-header-stats");
       if (!host) continue;
       const { hasData, pnl, green, red, blue, gray } = dayColumnTotals(day);
@@ -996,6 +997,11 @@
       pnlEl.textContent = formatPlacementPnl(pnl, hasData);
       setPnlSignClass(pnlEl, pnl, hasData, true);
       host.append(dots, pnlEl);
+      if (header) {
+        header.classList.remove("is-balance-positive", "is-balance-negative");
+        if (hasData && Number(pnl) > 0) header.classList.add("is-balance-positive");
+        else if (hasData && Number(pnl) < 0) header.classList.add("is-balance-negative");
+      }
     }
   }
 
