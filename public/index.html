@@ -78,7 +78,7 @@
   <div id="auth-screen" class="auth-screen" hidden>
     <div class="auth-shell" aria-label="Home">
       <nav class="auth-tabs" role="tablist" aria-label="Home sections">
-        <h1 class="app-title">Poly Real</h1>
+        <h1 class="app-title">Poly Replay</h1>
         <button type="button" class="auth-tab is-active" role="tab" aria-selected="true" data-auth-tab="main" id="auth-tab-btn-main">
           <span class="auth-tab-label auth-tab-label--main">Main</span>
           <span class="auth-tab-label auth-tab-label--app" hidden>App</span>
@@ -103,7 +103,7 @@
         <div id="auth-tab-main" class="auth-tab-panel auth-tab-panel--main" role="tabpanel" aria-labelledby="auth-tab-btn-main">
           <div class="auth-main-rail">
             <div id="auth-home" class="auth-home">
-              <h1 class="auth-brand">Poly Real</h1>
+              <h1 class="auth-brand">Poly Replay</h1>
               <p class="auth-tagline">Schedule-driven Polymarket trading — preview, then go live.</p>
               <p class="auth-sub">Sign in to open your markets, schedule, and wallet.</p>
               <div class="auth-cta-row">
@@ -113,7 +113,7 @@
             </div>
 
             <div id="auth-login-panel" class="auth-panel" hidden>
-              <h1 class="auth-brand">Poly Real</h1>
+              <h1 class="auth-brand">Poly Replay</h1>
               <p class="auth-sub">Sign in to continue</p>
               <form id="auth-login-form" class="auth-form" autocomplete="on">
                 <label class="auth-field">
@@ -221,7 +221,7 @@
         <div id="auth-tab-versions" class="auth-tab-panel auth-tab-panel--versions" role="tabpanel" aria-labelledby="auth-tab-btn-versions" hidden>
           <div class="auth-versions-header">
             <h1 class="auth-brand">Versions</h1>
-            <p class="auth-sub">Release history for Poly Real (semver).</p>
+            <p class="auth-sub">Release history for Poly Replay (semver).</p>
             <p id="auth-versions-current" class="auth-versions-current"></p>
           </div>
           <div id="auth-versions-list" class="auth-versions-list"></div>
@@ -232,7 +232,7 @@
 
   <div class="app" id="app-shell" hidden>
     <header class="app-header controls">
-      <h1 class="app-title">Poly Real</h1>
+      <h1 class="app-title"><span class="app-title-poly">Poly</span> <span class="app-title-replay">Replay</span></h1>
       <select id="market-select"></select>
       <div class="page-toggle" role="group" aria-label="Page">
         <button type="button" class="page-toggle-btn is-active" data-page="simulator">Market</button>
@@ -576,73 +576,72 @@
       <section class="panel simulator-panel" aria-label="Simulator">
         <div class="simulator-panel-inner">
         <div class="simulator-box-scroll">
-        <div class="sim-row">
-          <div class="sim-box">
-            <div class="sim-cell">
-              <div class="sim-label">PTB</div>
-              <div id="graph-ptb" class="sim-value">—</div>
+          <div class="simulator-box-scroll-stack">
+            <div class="sim-row">
+              <div class="sim-box">
+                <div class="sim-cell">
+                  <div class="sim-label">PTB</div>
+                  <div id="graph-ptb" class="sim-value">—</div>
+                </div>
+              </div>
+              <div class="sim-box">
+                <div class="sim-cell">
+                  <div class="sim-label">Current</div>
+                  <div id="graph-current" class="sim-value">—</div>
+                </div>
+              </div>
+              <div class="sim-box">
+                <div class="sim-cell">
+                  <div class="sim-label">Gap</div>
+                  <div id="graph-gap" class="sim-value">—</div>
+                </div>
+              </div>
+              <div class="sim-box">
+                <div class="sim-cell">
+                  <div class="sim-label">Tick</div>
+                  <div id="graph-tick" class="sim-value">—</div>
+                </div>
+              </div>
             </div>
-          </div>
-          <div class="sim-box">
-            <div class="sim-cell">
-              <div class="sim-label">Current</div>
-              <div id="graph-current" class="sim-value">—</div>
-            </div>
-          </div>
-          <div class="sim-box">
-            <div class="sim-cell">
-              <div class="sim-label">Gap</div>
-              <div id="graph-gap" class="sim-value">—</div>
-            </div>
-          </div>
-          <div class="sim-box">
-            <div class="sim-cell">
-              <div class="sim-label">Tick</div>
-              <div id="graph-tick" class="sim-value">—</div>
-            </div>
-          </div>
-        </div>
-        </div>
-
-        <div class="simulator-box-scroll">
-        <div class="quote-row" aria-label="Live quotes (display only)">
-          <div class="quote-box quote-box-up quote-box-display quote-box-disabled" id="quote-up-buy-box">
-            <div class="quote-cell">
-              <div class="quote-label">Buy</div>
-              <div class="quote-values">
-                <span id="up-buy-locked" class="quote-locked" hidden></span>
-                <span id="up-buy" class="quote-live">—</span>
+            <div class="quote-row" aria-label="Live quotes (display only)">
+              <div class="quote-box quote-box-up quote-box-display quote-box-disabled" id="quote-up-buy-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Buy</div>
+                  <div class="quote-values">
+                    <span id="up-buy-locked" class="quote-locked" hidden></span>
+                    <span id="up-buy" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box quote-box-up quote-box-display quote-box-disabled" id="quote-up-sell-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Sell</div>
+                  <div class="quote-values">
+                    <span id="up-sell-locked" class="quote-locked" hidden></span>
+                    <span id="up-sell" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box quote-box-down quote-box-display quote-box-disabled" id="quote-down-buy-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Buy</div>
+                  <div class="quote-values">
+                    <span id="down-buy-locked" class="quote-locked" hidden></span>
+                    <span id="down-buy" class="quote-live">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="quote-box quote-box-down quote-box-display quote-box-disabled" id="quote-down-sell-box">
+                <div class="quote-cell">
+                  <div class="quote-label">Sell</div>
+                  <div class="quote-values">
+                    <span id="down-sell-locked" class="quote-locked" hidden></span>
+                    <span id="down-sell" class="quote-live">—</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-          <div class="quote-box quote-box-up quote-box-display quote-box-disabled" id="quote-up-sell-box">
-            <div class="quote-cell">
-              <div class="quote-label">Sell</div>
-              <div class="quote-values">
-                <span id="up-sell-locked" class="quote-locked" hidden></span>
-                <span id="up-sell" class="quote-live">—</span>
-              </div>
-            </div>
-          </div>
-          <div class="quote-box quote-box-down quote-box-display quote-box-disabled" id="quote-down-buy-box">
-            <div class="quote-cell">
-              <div class="quote-label">Buy</div>
-              <div class="quote-values">
-                <span id="down-buy-locked" class="quote-locked" hidden></span>
-                <span id="down-buy" class="quote-live">—</span>
-              </div>
-            </div>
-          </div>
-          <div class="quote-box quote-box-down quote-box-display quote-box-disabled" id="quote-down-sell-box">
-            <div class="quote-cell">
-              <div class="quote-label">Sell</div>
-              <div class="quote-values">
-                <span id="down-sell-locked" class="quote-locked" hidden></span>
-                <span id="down-sell" class="quote-live">—</span>
-              </div>
-            </div>
-          </div>
-        </div>
         </div>
 
         <div id="price-graph-wrap" class="price-graph-wrap">
@@ -1029,16 +1028,13 @@
               aria-label="Live Trade Triggers"
             >
               <div class="schedule-live-triggers-head">
-                <span class="schedule-live-triggers-title">Triggers</span>
+                <span class="schedule-live-triggers-title">Triggers <span class="schedule-live-triggers-title-suffix">(Trade + Active)</span></span>
               </div>
               <div
                 id="schedule-live-triggers-list"
                 class="schedule-live-triggers-list"
-                aria-label="Market Triggers"
+                aria-label="Trade + Active Market Triggers"
               ></div>
-              <p class="schedule-live-triggers-note" id="schedule-live-triggers-note">
-                <strong>Trade</strong> + <strong>Active</strong> Market Triggers only. Hour cells sum their Trade fills for the current UTC week.
-              </p>
             </div>
             </div>
             <div class="schedule-workspace-switcher-bar">

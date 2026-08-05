@@ -1,6 +1,6 @@
 # Overview
 
-Poly Real is Trigger-driven Polymarket **up/down** trading: define Market Triggers, arm them for Trade, watch Live hour-slot results on the Schedule grid, and test strategies in Replay.
+Poly Replay is Trigger-driven Polymarket **up/down** trading: define Market Triggers, arm them for Trade, watch Live hour-slot results on the Schedule grid, and test strategies in Replay.
 
 ## What you can do
 

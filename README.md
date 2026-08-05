@@ -1,4 +1,4 @@
-# Poly Real
+# Poly Replay
 
 Schedule-driven Polymarket up/down trading with optional market-data recording and Replay backtests.
 

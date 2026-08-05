@@ -911,15 +911,6 @@ body {
   height: 100vh;
 }
 
-.app:has(#page-schedule-heatmap.is-replay-workspace:not([hidden]))::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 3px solid var(--accent);
-  pointer-events: none;
-  z-index: 10000;
-}
-
 .app[hidden] {
   display: none;
 }
@@ -988,6 +979,15 @@ body {
   margin: 0;
   margin-right: 4px;
   white-space: nowrap;
+}
+
+.app:has(#page-simulator:not([hidden])) .app-title-poly,
+.app:has(#page-schedule-heatmap:not([hidden]):not(.is-replay-workspace)) .app-title-poly {
+  color: var(--down);
+}
+
+.app:has(#page-schedule-heatmap.is-replay-workspace:not([hidden])) .app-title-replay {
+  color: var(--accent);
 }
 
 .header-field {
@@ -1504,6 +1504,11 @@ body {
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--text);
+}
+
+.schedule-live-triggers-title-suffix {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .schedule-live-triggers-list {
@@ -5053,18 +5058,9 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   flex: 0 0 auto;
   min-width: 0;
   width: 100%;
-}
-
-.simulator-box-scroll-wrap:has(.sim-row) {
   position: relative;
   z-index: 0;
-}
-
-.simulator-box-scroll-wrap:has(.quote-row) {
-  margin-top: -4px;
   overflow: visible;
-  position: relative;
-  z-index: 1;
   box-sizing: border-box;
 }
 
@@ -5082,15 +5078,19 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   -ms-overflow-style: none;
 }
 
-.simulator-box-scroll:has(.quote-row) {
-  padding-top: 4px;
-  box-sizing: border-box;
-}
-
 .simulator-box-scroll::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* PTB/Current/Gap/Tick + BUY/SELL share one horizontal scroll; two rows stay stacked. */
+.simulator-box-scroll-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--box-gap);
+  min-width: max(100%, calc(4 * 180px + 3 * var(--box-gap)));
+  box-sizing: border-box;
 }
 
 .simulator-box-scrollbar-track {
@@ -5115,10 +5115,18 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   background: var(--muted);
 }
 
+.simulator-box-scroll-stack > .sim-row,
+.simulator-box-scroll-stack > .quote-row,
+.simulator-box-scroll > .sim-row,
+.simulator-box-scroll > .quote-row {
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+}
+
 .simulator-box-scroll > .sim-row,
 .simulator-box-scroll > .quote-row {
   min-width: max(100%, calc(4 * 180px + 3 * var(--box-gap)));
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
 }
 
 .simulator-box-scroll > .sim-row-3col {
