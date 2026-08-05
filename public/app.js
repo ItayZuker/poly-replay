@@ -12933,6 +12933,129 @@ function bindPageToggle() {
   delete document.documentElement.dataset.initialScheduleView;
 }
 
+function sumHeaderWidths(widths, gap) {
+  const parts = widths.filter((w) => w > 0);
+  if (!parts.length) return 0;
+  return parts.reduce((a, b) => a + b, 0) + Math.max(0, parts.length - 1) * gap;
+}
+
+function updateAppHeaderLayout() {
+  const header = document.querySelector(".app-header");
+  if (!header) return;
+
+  const headerCs = getComputedStyle(header);
+  const padX =
+    (parseFloat(headerCs.paddingLeft) || 0) + (parseFloat(headerCs.paddingRight) || 0);
+  const available = Math.max(0, header.clientWidth - padX);
+  const gap = parseFloat(headerCs.gap) || 10;
+
+  const probe = header.cloneNode(true);
+  probe.classList.remove("is-compact", "is-stats-row");
+  probe.setAttribute("aria-hidden", "true");
+  probe.style.cssText = [
+    "position:fixed",
+    "left:-10000px",
+    "top:0",
+    `width:${header.clientWidth}px`,
+    "height:45px",
+    "display:flex",
+    "flex-wrap:nowrap",
+    "align-items:center",
+    `gap:${gap}px`,
+    "visibility:hidden",
+    "pointer-events:none",
+    "z-index:-1",
+  ].join(";");
+  probe.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
+  document.body.appendChild(probe);
+
+  const pieceWidth = (sel) => {
+    const el = probe.querySelector(`:scope > ${sel}`);
+    if (!el || el.hasAttribute("hidden") || el.hidden) return 0;
+    if (getComputedStyle(el).display === "none") return 0;
+    el.style.flexShrink = "0";
+    el.style.marginLeft = "0";
+    return el.getBoundingClientRect().width;
+  };
+
+  const titleW = pieceWidth(".app-title");
+  const navW = pieceWidth(".header-nav");
+  const highlightedW = pieceWidth(".schedule-highlighted-summary");
+  const statsW = pieceWidth(".schedule-week-summary");
+  const endW = pieceWidth(".header-end");
+  probe.remove();
+
+  const singleNeeded = sumHeaderWidths(
+    [titleW, navW, highlightedW, statsW, endW],
+    gap
+  );
+  // First row after nav has wrapped: title + optional custom summary + stats + end.
+  const row1Needed = sumHeaderWidths([titleW, highlightedW, statsW, endW], gap);
+
+  const wasCompact = header.classList.contains("is-compact");
+  const wasStatsRow = header.classList.contains("is-stats-row");
+  // Enter on overflow; leave only once there is spare room (avoids boundary flicker).
+  const compact = wasCompact || wasStatsRow
+    ? singleNeeded > available - 16
+    : singleNeeded > available + 0.5;
+  const statsRow = !compact
+    ? false
+    : wasStatsRow
+      ? row1Needed > available - 16
+      : row1Needed > available + 0.5;
+
+  if (wasCompact === compact && wasStatsRow === statsRow) return;
+  header.classList.toggle("is-compact", compact);
+  header.classList.toggle("is-stats-row", statsRow);
+}
+
+function initAppHeaderLayout() {
+  const header = document.querySelector(".app-header");
+  if (!header) return;
+
+  let raf = 0;
+  let lastWidth = header.clientWidth;
+  const schedule = () => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      updateAppHeaderLayout();
+    });
+  };
+
+  schedule();
+  window.addEventListener("resize", schedule);
+
+  if (typeof ResizeObserver === "function") {
+    // Only react to width changes on the header itself — height changes from
+    // toggling layout classes must not re-trigger the layout decision.
+    const headerRo = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width ?? header.clientWidth;
+      if (Math.abs(w - lastWidth) < 0.5) return;
+      lastWidth = w;
+      schedule();
+    });
+    headerRo.observe(header);
+
+    const contentRo = new ResizeObserver(schedule);
+    header
+      .querySelectorAll(
+        ".app-title, .header-nav, .header-end, #market-select, .page-toggle, #schedule-week-summary, #schedule-highlighted-summary"
+      )
+      .forEach((el) => contentRo.observe(el));
+  }
+
+  if (typeof MutationObserver === "function") {
+    const highlighted = header.querySelector("#schedule-highlighted-summary");
+    if (highlighted) {
+      new MutationObserver(schedule).observe(highlighted, {
+        attributes: true,
+        attributeFilter: ["hidden", "class"],
+      });
+    }
+  }
+}
+
 async function init() {
   loadPositionsHiddenIds();
   demoPositionCards = loadDemoPositionCards();
@@ -12969,10 +13092,12 @@ async function init() {
   bindSetupSaveModal();
   bindModalKeyboardShortcuts();
   bindSetupListMenus();
+  initAppHeaderLayout();
   void loadHeatmap();
   await loadScheduleSetups();
   if (window.SchedulePlacements) void window.SchedulePlacements.loadPlacements();
   await loadMarkets();
+  updateAppHeaderLayout();
   const res = await fetch(`/api/window?series=${encodeURIComponent(selectedSeries)}`, {
     credentials: "same-origin",
   });

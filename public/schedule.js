@@ -4,13 +4,15 @@
   const DROP_DURATIONS = [2, 1.5, 1];
   const MIN_DURATION = 1;
   const STATS_CACHE_STORAGE_KEY = "poly-real:schedule-placement-stats";
-  const REPLAY_LATENCY_STORAGE_KEY = "poly-real:schedule-replay-latency-ms";
-  const REPLAY_FILL_SUCCESS_STORAGE_KEY = "poly-real:schedule-replay-fill-success-pct";
+  const REPLAY_LATENCY_STORAGE_KEY = "poly-real:schedule-replay-latency-ms-v3";
+  const REPLAY_FILL_SUCCESS_STORAGE_KEY = "poly-real:schedule-replay-fill-success-pct-v3";
+  const REPLAY_LATENCY_EDITED_KEY = "poly-real:schedule-replay-latency-ms-v3-edited";
+  const REPLAY_FILL_SUCCESS_EDITED_KEY = "poly-real:schedule-replay-fill-success-pct-v3-edited";
   const REPLAY_PREDICTION_STORAGE_KEY = "poly-real:schedule-replay-prediction";
   /** Last Replay Run hour-cell stats — survive refresh; cleared on next Run. */
   const REPLAY_HOUR_STATS_STORAGE_BASE = "schedule-replay-hour-stats-v1";
-  const DEFAULT_REPLAY_LATENCY_MS = 150;
-  const DEFAULT_REPLAY_FILL_SUCCESS_PCT = 100;
+  const DEFAULT_REPLAY_LATENCY_MS = 20;
+  const DEFAULT_REPLAY_FILL_SUCCESS_PCT = 90;
   const DEFAULT_REPLAY_PREDICTION = {
     enabled: true,
     maxQuoteCents: 90,
@@ -60,6 +62,10 @@
   let pinnedUtcHours = new Set();
   /** Transient UTC hour under the pointer, or null when not hovering the column. */
   let hoveredUtcHour = null;
+  /** Pinned day columns (mon–sun). */
+  let pinnedDays = new Set();
+  /** Transient day under the pointer, or null when not hovering a day header. */
+  let hoveredDay = null;
 
   function snapStartTime(frac) {
     const slot = Math.max(0, Math.min(47, Math.round(frac * 48)));
@@ -584,6 +590,83 @@
       if (pinnedUtcHours.has(hour)) pinnedUtcHours.delete(hour);
       else pinnedUtcHours.add(hour);
       updateUtcRowHighlight();
+    });
+  }
+
+  function highlightedDays() {
+    const days = new Set(pinnedDays);
+    if (hoveredDay) days.add(hoveredDay);
+    return days;
+  }
+
+  function setDayColumnHover(day) {
+    hoveredDay = day;
+    updateDayColumnHighlight();
+  }
+
+  function restoreDayColumnHover() {
+    hoveredDay = null;
+    updateDayColumnHighlight();
+  }
+
+  function updateDayColumnHighlight() {
+    const active = highlightedDays();
+    document.querySelectorAll(".schedule-day-column").forEach((column) => {
+      const day = String(column.dataset.day || "").toLowerCase();
+      if (!day) return;
+      const header = column.querySelector(".schedule-day-header");
+      const pinned = pinnedDays.has(day);
+      const hover = hoveredDay === day;
+      header?.classList.toggle("is-col-pinned", pinned);
+      header?.classList.toggle("is-col-hover", hover);
+      column.classList.toggle("is-col-pinned", pinned);
+      column.classList.toggle("is-col-hover", hover);
+
+      const wrap = column.querySelector(".schedule-day-body-wrap");
+      if (!wrap) return;
+      wrap.querySelectorAll(".schedule-column-highlight").forEach((el) => el.remove());
+      if (!active.has(day)) return;
+      const highlight = document.createElement("div");
+      highlight.className = "schedule-column-highlight is-active";
+      if (pinned) highlight.classList.add("is-pinned");
+      highlight.setAttribute("aria-hidden", "true");
+      wrap.appendChild(highlight);
+    });
+  }
+
+  function bindDayColumnHover() {
+    const grid = document.querySelector(".schedule-week-grid");
+    if (!grid || grid.dataset.dayColHoverBound === "1") return;
+    grid.dataset.dayColHoverBound = "1";
+    grid.addEventListener("mouseover", (e) => {
+      const header = e.target?.closest?.(".schedule-day-header");
+      if (!header || !grid.contains(header)) return;
+      const day = String(header.closest(".schedule-day-column")?.dataset?.day || "").toLowerCase();
+      if (!DAYS.includes(day)) return;
+      setDayColumnHover(day);
+    });
+    grid.addEventListener("mouseout", (e) => {
+      const fromHeader = e.target?.closest?.(".schedule-day-header");
+      if (!fromHeader || !grid.contains(fromHeader)) return;
+      const toHeader = e.relatedTarget?.closest?.(".schedule-day-header");
+      if (toHeader && grid.contains(toHeader)) {
+        const day = String(toHeader.closest(".schedule-day-column")?.dataset?.day || "").toLowerCase();
+        if (DAYS.includes(day)) {
+          setDayColumnHover(day);
+          return;
+        }
+      }
+      restoreDayColumnHover();
+    });
+    grid.addEventListener("click", (e) => {
+      if (document.body.classList.contains("is-schedule-dragging")) return;
+      const header = e.target?.closest?.(".schedule-day-header");
+      if (!header || !grid.contains(header)) return;
+      const day = String(header.closest(".schedule-day-column")?.dataset?.day || "").toLowerCase();
+      if (!DAYS.includes(day)) return;
+      if (pinnedDays.has(day)) pinnedDays.delete(day);
+      else pinnedDays.add(day);
+      updateDayColumnHighlight();
     });
   }
 
@@ -3534,16 +3617,17 @@
   }
 
   const REPLAY_SPIN_ICON =
-    '<svg class="schedule-replay-spin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
-    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 9"/>' +
-    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 3v6h-6"/>' +
-    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20.5 12a8.5 8.5 0 0 1-14.3 6.2L3 15"/>' +
-    '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 21v-6h6"/>' +
+    '<svg class="schedule-summary-reset-icon schedule-replay-spin-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3"/>' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5"/>' +
     "</svg>";
 
   function readReplayLatencyMs() {
     const input = document.getElementById("schedule-replay-latency-input");
-    const raw = input ? Number(input.value) : Number.NaN;
+    const text = input ? String(input.value ?? "").trim() : "";
+    // Number("") is 0 — treat blank as default, not zero.
+    if (!text) return DEFAULT_REPLAY_LATENCY_MS;
+    const raw = Number(text);
     if (!Number.isFinite(raw)) return DEFAULT_REPLAY_LATENCY_MS;
     return Math.max(0, Math.min(10000, Math.floor(raw)));
   }
@@ -3551,6 +3635,7 @@
   function persistReplayLatencyMs(ms) {
     try {
       localStorage.setItem(REPLAY_LATENCY_STORAGE_KEY, String(ms));
+      localStorage.setItem(REPLAY_LATENCY_EDITED_KEY, "1");
     } catch {
       // ignore
     }
@@ -3558,7 +3643,9 @@
 
   function readReplayFillSuccessPct() {
     const input = document.getElementById("schedule-replay-fill-success-input");
-    const raw = input ? Number(input.value) : Number.NaN;
+    const text = input ? String(input.value ?? "").trim() : "";
+    if (!text) return DEFAULT_REPLAY_FILL_SUCCESS_PCT;
+    const raw = Number(text);
     if (!Number.isFinite(raw)) return DEFAULT_REPLAY_FILL_SUCCESS_PCT;
     return Math.max(0, Math.min(100, raw));
   }
@@ -3566,6 +3653,7 @@
   function persistReplayFillSuccessPct(pct) {
     try {
       localStorage.setItem(REPLAY_FILL_SUCCESS_STORAGE_KEY, String(pct));
+      localStorage.setItem(REPLAY_FILL_SUCCESS_EDITED_KEY, "1");
     } catch {
       // ignore
     }
@@ -3881,33 +3969,9 @@
     if (input) input.dataset.userEdited = "1";
   }
 
-  /** Prefill Latency / Fill success from live metrics unless the user edited them. */
+  /** Replay Latency / Fill Success use fixed defaults (not live metrics). */
   function syncReplayInputsFromLive() {
-    if (!isReplayWorkspace() || replayRunning) return;
-
-    const latencyInput = document.getElementById("schedule-replay-latency-input");
-    if (latencyInput && latencyInput.dataset.userEdited !== "1") {
-      const liveMs = window.getSimLatencyMs?.();
-      if (Number.isFinite(liveMs)) {
-        const ms = Math.max(0, Math.min(10000, Math.floor(liveMs)));
-        if (latencyInput.value !== String(ms)) {
-          latencyInput.value = String(ms);
-          persistReplayLatencyMs(ms);
-        }
-      }
-    }
-
-    const fillInput = document.getElementById("schedule-replay-fill-success-input");
-    if (fillInput && fillInput.dataset.userEdited !== "1") {
-      const livePct = window.getLiveFillSuccessPct?.();
-      if (typeof livePct === "number" && Number.isFinite(livePct)) {
-        const pct = Math.max(0, Math.min(100, Math.round(livePct * 10) / 10));
-        if (fillInput.value !== String(pct)) {
-          fillInput.value = String(pct);
-          persistReplayFillSuccessPct(pct);
-        }
-      }
-    }
+    // no-op — kept for callers; values stay at defaults / user edits only
   }
 
   function applyReplayRunLockedInputs() {
@@ -4131,10 +4195,13 @@
     const latencyInput = document.getElementById("schedule-replay-latency-input");
     if (latencyInput && latencyInput.dataset.bound !== "1") {
       latencyInput.dataset.bound = "1";
+      latencyInput.value = String(DEFAULT_REPLAY_LATENCY_MS);
       try {
-        const stored = Number(localStorage.getItem(REPLAY_LATENCY_STORAGE_KEY));
-        if (Number.isFinite(stored)) {
-          latencyInput.value = String(Math.max(0, Math.min(10000, Math.floor(stored))));
+        if (localStorage.getItem(REPLAY_LATENCY_EDITED_KEY) === "1") {
+          const stored = Number(localStorage.getItem(REPLAY_LATENCY_STORAGE_KEY));
+          if (Number.isFinite(stored)) {
+            latencyInput.value = String(Math.max(0, Math.min(10000, Math.floor(stored))));
+          }
         }
       } catch {
         // keep default
@@ -4145,6 +4212,9 @@
           return;
         }
         markReplayInputUserEdited(latencyInput);
+        if (!String(latencyInput.value ?? "").trim()) {
+          latencyInput.value = String(DEFAULT_REPLAY_LATENCY_MS);
+        }
         const ms = readReplayLatencyMs();
         latencyInput.value = String(ms);
         persistReplayLatencyMs(ms);
@@ -4163,10 +4233,13 @@
     const fillInput = document.getElementById("schedule-replay-fill-success-input");
     if (fillInput && fillInput.dataset.bound !== "1") {
       fillInput.dataset.bound = "1";
+      fillInput.value = String(DEFAULT_REPLAY_FILL_SUCCESS_PCT);
       try {
-        const stored = Number(localStorage.getItem(REPLAY_FILL_SUCCESS_STORAGE_KEY));
-        if (Number.isFinite(stored)) {
-          fillInput.value = String(Math.max(0, Math.min(100, stored)));
+        if (localStorage.getItem(REPLAY_FILL_SUCCESS_EDITED_KEY) === "1") {
+          const stored = Number(localStorage.getItem(REPLAY_FILL_SUCCESS_STORAGE_KEY));
+          if (Number.isFinite(stored)) {
+            fillInput.value = String(Math.max(0, Math.min(100, stored)));
+          }
         }
       } catch {
         // keep default
@@ -4177,6 +4250,9 @@
           return;
         }
         markReplayInputUserEdited(fillInput);
+        if (!String(fillInput.value ?? "").trim()) {
+          fillInput.value = String(DEFAULT_REPLAY_FILL_SUCCESS_PCT);
+        }
         const pct = readReplayFillSuccessPct();
         fillInput.value = String(pct);
         persistReplayFillSuccessPct(pct);
@@ -4201,8 +4277,6 @@
     window.ScheduleReplayTriggers?.init?.();
     window.ScheduleLiveTriggers?.init?.();
 
-    // Prefer live feed latency / 7-day fill success when available.
-    syncReplayInputsFromLive();
   }
 
   function syncReplayRunButton() {
@@ -4464,8 +4538,6 @@
       replayRunLockedFillSuccessPct = null;
       replayRunLockedPrediction = null;
       syncReplayRunButton();
-      // Unlock live prefill again now that the run's frozen values are released.
-      syncReplayInputsFromLive();
       // Full completion only: fill remaining cards as no-data.
       // Early stop: leave unfinished cards without stats so they don't look like zero-trade results.
       if (gotDoneEvent && !signal.aborted) {
@@ -4561,6 +4633,8 @@
     initPlacementLayers();
     initDayHeaderControls();
     bindUtcRowHover();
+    bindDayColumnHover();
+    updateDayColumnHighlight();
     bindHighlightedSummaryClear();
     bindWeekSummaryReset();
     bindHeaderSummaryRange();

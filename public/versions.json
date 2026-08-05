@@ -1,6 +1,11 @@
 {
-  "current": "1.52.0",
+  "current": "1.53.0",
   "releases": [
+    {
+      "version": "1.53.0",
+      "releasedAt": "2026-08-05T14:43:27.333Z",
+      "notes": "Responsive app header (market/toggle wrap, then full-width stats; timer/profile stay top-right); Schedule day-column hover/pin; Replay Settings defaults Latency 20 / Fill Success 90 and trigger card stats layout. Docs updated."
+    },
     {
       "version": "1.52.0",
       "releasedAt": "2026-08-05T11:59:20.644Z",
