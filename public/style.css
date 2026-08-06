@@ -1260,12 +1260,20 @@ body {
     background: transparent;
   }
 
+  .app-header.is-mobile-header .page-toggle-btn--combined {
+    display: none;
+  }
+
+  .app-header.is-mobile-header .page-toggle-btn--split {
+    display: flex;
+  }
+
   .app-header.is-mobile-header .page-toggle-btn,
   .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav > .page-toggle > .page-toggle-btn {
-    flex: 1 1 50%;
+    flex: 1 1 33.333%;
     flex-shrink: 1;
-    width: 50%;
-    max-width: 50%;
+    width: 33.333%;
+    max-width: 33.333%;
     min-width: 0;
     height: 100%;
     justify-content: center;
@@ -1274,7 +1282,7 @@ body {
     box-sizing: border-box;
     font-size: 0.75rem;
     font-weight: 600;
-    padding: 0 8px;
+    padding: 0 6px;
     color: var(--muted);
     background: var(--panel);
     white-space: nowrap;
@@ -1876,12 +1884,22 @@ body {
 }
 
 @media (max-width: 720px) {
+  .app-page-schedule .schedule-page-body {
+    order: 1;
+  }
+
+  .app-page-schedule .schedule-page-subheader {
+    order: 2;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+  }
+
   .app-page-schedule .schedule-side-toggle-btn {
     display: inline-flex;
   }
 
   .app-page-schedule .schedule-page-subheader .schedule-view-toggle {
-    max-width: none;
+    display: none;
   }
 
   .app-page-schedule .schedule-setups-panel {
@@ -5781,6 +5799,11 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   display: flex;
   align-items: center;
   transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+/* Mobile: Market | Schedule | Heatmap. Desktop: Market | Schedule / Heatmap. */
+.page-toggle-btn--split {
+  display: none;
 }
 
 .page-toggle-btn:hover:not(.is-active):not(:disabled) {

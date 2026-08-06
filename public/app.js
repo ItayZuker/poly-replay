@@ -1142,6 +1142,10 @@ async function saveWalletField(body) {
 
 let walletReady = false;
 let showAppPage = null;
+/** @type {(view: string, options?: { persist?: boolean }) => void} */
+let showScheduleView = () => {};
+/** @type {(page?: string) => void} */
+let syncPageToggleActive = () => {};
 
 function isWalletReadyFromUser(user) {
   if (!user) return false;
@@ -1159,7 +1163,8 @@ function applyWalletGate(ready) {
   const buttons = document.querySelectorAll(".page-toggle-btn");
   for (const btn of buttons) {
     const page = btn.dataset.page;
-    const locked = !walletReady && (page === "simulator" || page === "schedule");
+    const locked =
+      !walletReady && (page === "simulator" || page === "schedule" || page === "heatmap");
     btn.disabled = locked;
     btn.classList.toggle("is-wallet-locked", locked);
     btn.title = locked
@@ -9610,7 +9615,10 @@ function bindScheduleViewToggle() {
     }
     if (window.SchedulePlacements) window.SchedulePlacements.onViewChange();
     else window.ScheduleHourSlots?.syncView?.();
+    syncPageToggleActive();
   };
+
+  showScheduleView = showView;
 
   for (const btn of buttons) {
     btn.addEventListener("click", () => {
@@ -13232,8 +13240,40 @@ function bindPageToggle() {
   const settingsBtn = $("settings-page-btn");
   if (!simulatorPage || !schedulePage || !settingsPage || !buttons.length) return;
 
+  const currentAppPage = () => {
+    if (!settingsPage.hidden) return "settings";
+    if (!schedulePage.hidden) return "schedule";
+    return "simulator";
+  };
+
+  const syncActive = (page = currentAppPage()) => {
+    const isSimulator = page === "simulator";
+    const isSchedule = page === "schedule";
+    const isSettings = page === "settings";
+    const scheduleView = schedulePage.classList.contains("is-heatmap-view")
+      ? "heatmap"
+      : "schedule";
+    for (const btn of buttons) {
+      const btnPage = btn.dataset.page;
+      const scheduleTab = btn.dataset.scheduleTab;
+      let active = false;
+      if (btnPage === "simulator") active = isSimulator;
+      else if (btnPage === "heatmap" || scheduleTab === "heatmap") {
+        active = isSchedule && scheduleView === "heatmap";
+      } else if (scheduleTab === "schedule") {
+        active = isSchedule && scheduleView === "schedule";
+      } else if (btnPage === "schedule") {
+        // Desktop combined tab stays active for either Schedule or Heatmap view.
+        active = isSchedule;
+      }
+      btn.classList.toggle("is-active", active);
+    }
+    if (settingsBtn) settingsBtn.classList.toggle("is-active", isSettings);
+  };
+  syncPageToggleActive = syncActive;
+
   const showPage = (page, options = {}) => {
-    let next = page;
+    let next = page === "heatmap" ? "schedule" : page;
     if (!walletReady && (next === "simulator" || next === "schedule")) {
       next = "settings";
     } else if (options.persist !== false) {
@@ -13245,10 +13285,7 @@ function bindPageToggle() {
     simulatorPage.hidden = !isSimulator;
     schedulePage.hidden = !isSchedule;
     settingsPage.hidden = !isSettings;
-    for (const btn of buttons) {
-      btn.classList.toggle("is-active", btn.dataset.page === next);
-    }
-    if (settingsBtn) settingsBtn.classList.toggle("is-active", isSettings);
+    syncActive(next);
 
     if (isSimulator) {
       if (windowState) {
@@ -13294,8 +13331,20 @@ function bindPageToggle() {
 
   for (const btn of buttons) {
     btn.addEventListener("click", () => {
+      if (btn.disabled || btn.classList.contains("is-active")) return;
       const page = btn.dataset.page;
-      if (!page || btn.disabled || btn.classList.contains("is-active")) return;
+      const scheduleTab = btn.dataset.scheduleTab;
+      if (page === "heatmap" || scheduleTab === "heatmap") {
+        showPage("schedule");
+        showScheduleView("heatmap");
+        return;
+      }
+      if (scheduleTab === "schedule") {
+        showPage("schedule");
+        showScheduleView("schedule");
+        return;
+      }
+      if (!page) return;
       showPage(page);
     });
   }
