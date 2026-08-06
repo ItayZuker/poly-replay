@@ -3227,6 +3227,7 @@ function syncMarketMobileStack() {
 
   syncMobileCountdownPlacement();
   syncMobileWalletPlacement();
+  syncScheduleMobileSide();
   // Re-run header layout so mobile always stacks Market/Schedule as bottom tabs.
   if (typeof updateAppHeaderLayout === "function") {
     updateAppHeaderLayout();
@@ -3259,6 +3260,50 @@ function initMarketMobileStack() {
   } else if (typeof mq.addListener === "function") {
     mq.addListener(onChange);
   }
+}
+
+/** Sync Schedule left-panel collapse chrome for mobile (subheader toggle + aria). */
+function syncScheduleMobileSide() {
+  const page = $("page-schedule-heatmap");
+  const toggleBtn = $("schedule-side-toggle");
+  if (!page) return;
+
+  const mobile = isMarketMobileStack();
+  if (!mobile) {
+    page.classList.remove("is-schedule-side-collapsed");
+    if (toggleBtn) {
+      toggleBtn.setAttribute("aria-expanded", "true");
+      toggleBtn.setAttribute("aria-label", "Hide side panel");
+      toggleBtn.title = "Hide side panel";
+    }
+    return;
+  }
+
+  const collapsed = page.classList.contains("is-schedule-side-collapsed");
+  if (toggleBtn) {
+    toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    const label = collapsed ? "Show side panel" : "Hide side panel";
+    toggleBtn.setAttribute("aria-label", label);
+    toggleBtn.title = label;
+  }
+}
+
+function setScheduleSideCollapsed(collapsed) {
+  const page = $("page-schedule-heatmap");
+  if (!page) return;
+  page.classList.toggle("is-schedule-side-collapsed", Boolean(collapsed));
+  syncScheduleMobileSide();
+}
+
+function initScheduleMobileSide() {
+  const toggleBtn = $("schedule-side-toggle");
+  toggleBtn?.addEventListener("click", () => {
+    if (!isMarketMobileStack()) return;
+    const page = $("page-schedule-heatmap");
+    const collapsed = page?.classList.contains("is-schedule-side-collapsed");
+    setScheduleSideCollapsed(!collapsed);
+  });
+  syncScheduleMobileSide();
 }
 
 function resizeChartCanvasFor(canvas) {
@@ -4780,9 +4825,7 @@ function syncMobileWalletPlacement() {
   const title = appHeader?.querySelector(".app-title");
   if (!walletHeader || !walletPanel || !appHeader || !title) return;
 
-  // Only park Wallet in the header on mobile when stats already occupy row 2.
-  const showInHeader =
-    isMarketMobileStack() && appHeader.classList.contains("is-stats-row");
+  const showInHeader = isMarketMobileStack();
   const wasInHeader = walletHeader.parentElement === appHeader;
   appHeader.classList.toggle("is-mobile-wallet", showInHeader);
 
@@ -13363,11 +13406,14 @@ function updateAppHeaderLayout() {
     : wasCompact || wasStatsRow || wasNavStack
       ? singleNeeded > available - 16
       : singleNeeded > available + 0.5;
-  const statsRow = !compact
-    ? false
-    : wasStatsRow
-      ? row1Needed > available - 16
-      : row1Needed > available + 0.5;
+  // On mobile, always put stats on its own row so Wallet can sit on row 1 with the title.
+  const statsRow = mobileHeader
+    ? true
+    : !compact
+      ? false
+      : wasStatsRow
+        ? row1Needed > available - 16
+        : row1Needed > available + 0.5;
   // When nav is on its own row and market + page toggle no longer fit side by side,
   // stack them so each takes a full-width row (switcher drops below the dropdown).
   // On mobile, always stack so Market/Schedule sit as bottom-edge tabs.
@@ -13443,6 +13489,7 @@ async function init() {
   initColumnSplitter();
   initLeftRowSplitter();
   initMarketMobileStack();
+  initScheduleMobileSide();
   bindLeftColumnRail();
   bindMarketColumnRail();
   bindTriggerCreateModal();
