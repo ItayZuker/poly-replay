@@ -234,7 +234,9 @@
     <header class="app-header controls">
       <h1 class="app-title"><span class="app-title-poly">Poly</span> <span class="app-title-replay">Replay</span></h1>
       <div class="header-nav">
-        <select id="market-select"></select>
+        <div class="header-market-row">
+          <select id="market-select"></select>
+        </div>
         <div class="page-toggle" role="group" aria-label="Page">
           <button type="button" class="page-toggle-btn is-active" data-page="simulator">Market</button>
           <button type="button" class="page-toggle-btn" data-page="schedule">Schedule / Heatmap</button>
@@ -401,7 +403,31 @@
                 </button>
                 <span id="wallet-status" class="wallet-header-status">—</span>
               </div>
-              <span id="wallet-balance" class="wallet-header-balance">—</span>
+              <span class="wallet-header-balance-slot">
+                <span id="wallet-balance" class="wallet-header-balance">—</span>
+                <svg
+                  class="wallet-balance-spinner"
+                  viewBox="0 0 16 16"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M2.5 3.5v3h3M13.5 12.5v-3h-3"
+                  />
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5"
+                  />
+                </svg>
+              </span>
             </div>
           </div>
         </section>
@@ -417,6 +443,7 @@
                   role="group"
                   aria-label="Allow trade"
                 >
+                  <span class="trade-allow-inline-label" aria-hidden="true">Trade</span>
                   <div class="trade-allow-toggle trigger-run-mode" id="start-trading-toggle">
                     <button type="button" class="trigger-run-mode-btn is-active" data-allow-trade="off" id="start-trading-off">
                       Off
@@ -1568,10 +1595,10 @@
                   <select
                     id="trigger-end-mode"
                     class="trigger-price-side is-buy"
-                    aria-label="End condition: UP/DOWN price range or UP/DOWN price change"
+                    aria-label="End condition: UP/DOWN range or UP/DOWN change"
                   >
-                    <option value="range" selected>UP/DOWN Price Range</option>
-                    <option value="change-side">UP/DOWN Price Change</option>
+                    <option value="range" selected>UP/DOWN Range</option>
+                    <option value="change-side">UP/DOWN Change</option>
                   </select>
                 </label>
                 <div

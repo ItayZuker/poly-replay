@@ -15,6 +15,7 @@ import {
   listClobBookTicks,
   listClobRawTicks,
   windowsHavingChainlinkTicks,
+  windowsHavingReplayTickFiles,
 } from "./db/tick-repository.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
@@ -84,7 +85,9 @@ import { closeMongoClient } from "./db/mongo-client.js";
 import {
   getHeatmapState,
   getReplaySlotWindowCounts,
+  listActiveReplaySlotWindows,
   loadAllHeatmapWindows,
+  replayUsableWindowKey,
   setHeatmapUpdateListener,
 } from "./heatmap-service.js";
 import type {
@@ -1624,11 +1627,36 @@ app.get("/api/heatmap", (req, res) => {
   }
 });
 
-/** Replay Schedule: recorded window counts per UTC weekday×hour (latest day per slot). */
-app.get("/api/schedule-replay-slot-counts", (req, res) => {
+/** Replay Schedule: usable recorded window counts per UTC weekday×hour (latest day per slot). */
+app.get("/api/schedule-replay-slot-counts", async (req, res) => {
   try {
     const series = parseSeriesParam(req);
-    res.json(getReplaySlotWindowCounts(series));
+    const active = listActiveReplaySlotWindows(series);
+    const bySeries = new Map<string, number[]>();
+    for (const w of active) {
+      const list = bySeries.get(w.series) ?? [];
+      list.push(w.windowStart);
+      bySeries.set(w.series, list);
+    }
+    const usable = new Set<string>();
+    const workerBase = replayWorkerBaseUrl();
+    for (const [ser, starts] of bySeries) {
+      const uniqueStarts = [...new Set(starts)];
+      let present: number[] | null = null;
+      if (workerBase) {
+        present = await fetchRemoteTickPresence(workerBase, ser, uniqueStarts, {
+          requireBook: true,
+        });
+      }
+      if (present == null) {
+        const market = await getMarket(ser);
+        present = market
+          ? await windowsHavingReplayTickFiles(market, uniqueStarts)
+          : [];
+      }
+      for (const ws of present) usable.add(replayUsableWindowKey(ser, ws));
+    }
+    res.json(getReplaySlotWindowCounts(series, usable));
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2009,11 +2037,12 @@ function replayWorkerBaseUrl(): string | null {
   }
 }
 
-/** Ask the recorder which window starts still have Chainlink tick files. */
-async function fetchRemoteChainlinkPresence(
+/** Ask the recorder which window starts still have tick files. */
+async function fetchRemoteTickPresence(
   workerBase: string,
   series: string,
   windowStarts: number[],
+  options?: { requireBook?: boolean },
 ): Promise<number[] | null> {
   if (windowStarts.length === 0) return [];
   const remoteHeaders: Record<string, string> = {
@@ -2027,7 +2056,11 @@ async function fetchRemoteChainlinkPresence(
     const remoteRes = await fetch(`${workerBase}/api/internal/ticks/presence`, {
       method: "POST",
       headers: remoteHeaders,
-      body: JSON.stringify({ series, windowStarts }),
+      body: JSON.stringify({
+        series,
+        windowStarts,
+        requireBook: options?.requireBook === true,
+      }),
     });
     const body = (await remoteRes.json().catch(() => ({}))) as {
       present?: unknown;
@@ -2048,6 +2081,15 @@ async function fetchRemoteChainlinkPresence(
     logService.warn("replay", `Recorder tick presence error: ${String(err)}`);
     return null;
   }
+}
+
+/** @deprecated Prefer fetchRemoteTickPresence — Chainlink-only presence for Live Open Replay. */
+async function fetchRemoteChainlinkPresence(
+  workerBase: string,
+  series: string,
+  windowStarts: number[],
+): Promise<number[] | null> {
+  return fetchRemoteTickPresence(workerBase, series, windowStarts);
 }
 
 async function runPlacementPlay(
@@ -2588,8 +2630,9 @@ app.get("/api/internal/ticks", async (req, res) => {
 });
 
 /**
- * Recorder worker: which window starts still have Chainlink tick files.
- * Used by Live Open Replay so trading executors (no DATA_DIR ticks) can filter windows.
+ * Recorder worker: which window starts still have tick files.
+ * Default = Chainlink only (Live Open Replay). `requireBook: true` = CLOB book + Chainlink
+ * (Replay Schedule idle counts / Replay Open Replay usability).
  */
 app.post("/api/internal/ticks/presence", async (req, res) => {
   if (!assertReplayWorkerAuth(req)) {
@@ -2611,8 +2654,11 @@ app.post("/api/internal/ticks/presence", async (req, res) => {
     const windowStarts = Array.isArray(raw)
       ? raw.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n))
       : [];
-    const present = await windowsHavingChainlinkTicks(market, windowStarts);
-    res.status(200).json({ series, present });
+    const requireBook = req.body?.requireBook === true;
+    const present = requireBook
+      ? await windowsHavingReplayTickFiles(market, windowStarts)
+      : await windowsHavingChainlinkTicks(market, windowStarts);
+    res.status(200).json({ series, present, requireBook });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

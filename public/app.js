@@ -1022,6 +1022,7 @@ function renderWalletAccount(data) {
     statusEl.title = "";
     balanceEl.textContent = formatUsdcBalance(data.collateralBalance);
   }
+  syncMobileWalletBalanceDisplay();
 
   renderSettingsWalletAccount(data);
 }
@@ -1517,21 +1518,115 @@ function bindSettingsEditors() {
   }
 }
 
-function bindWalletBalanceRefresh() {
+let walletBalanceRefreshing = false;
+
+async function refreshWalletBalance() {
+  if (walletBalanceRefreshing) return;
   const btn = $("wallet-balance-refresh");
-  if (!btn || btn.dataset.bound === "1") return;
-  btn.dataset.bound = "1";
-  btn.addEventListener("click", async () => {
-    if (btn.disabled) return;
+  const balanceEl = $("wallet-balance");
+  const appHeader = document.querySelector(".app-header");
+  const mobileHeader = Boolean(appHeader?.classList.contains("is-mobile-wallet"));
+
+  walletBalanceRefreshing = true;
+  if (btn) {
     btn.disabled = true;
     btn.classList.add("is-loading");
-    try {
-      await loadWalletAccount();
-    } finally {
+  }
+  if (mobileHeader) {
+    appHeader.classList.add("is-wallet-refreshing");
+    balanceEl?.setAttribute("aria-busy", "true");
+  }
+  try {
+    await loadWalletAccount();
+  } finally {
+    walletBalanceRefreshing = false;
+    if (btn) {
       btn.disabled = false;
       btn.classList.remove("is-loading");
     }
-  });
+    appHeader?.classList.remove("is-wallet-refreshing");
+    balanceEl?.removeAttribute("aria-busy");
+  }
+}
+
+/** Mobile header: balance slot shows balance or "No Connection"; no Connected label. */
+function syncMobileWalletBalanceDisplay() {
+  const statusEl = $("wallet-status");
+  const balanceEl = $("wallet-balance");
+  const appHeader = document.querySelector(".app-header");
+  if (!statusEl || !balanceEl) return;
+
+  const mobileHeader = Boolean(appHeader?.classList.contains("is-mobile-wallet"));
+  if (mobileHeader) {
+    if (statusEl.classList.contains("wallet-header-status--error")) {
+      balanceEl.textContent = "No Connection";
+      balanceEl.classList.add("is-no-connection");
+      balanceEl.title = statusEl.title || "No Connection";
+    } else {
+      balanceEl.classList.remove("is-no-connection");
+      if (balanceEl.textContent === "No Connection") {
+        balanceEl.textContent = "—";
+      }
+    }
+  } else if (balanceEl.classList.contains("is-no-connection")) {
+    balanceEl.textContent = "—";
+    balanceEl.classList.remove("is-no-connection");
+    balanceEl.title = "";
+  }
+
+  syncMobileWalletBalanceRefreshAffordance();
+}
+
+function syncMobileWalletBalanceRefreshAffordance() {
+  const statusEl = $("wallet-status");
+  const balanceEl = $("wallet-balance");
+  const appHeader = document.querySelector(".app-header");
+  if (!balanceEl) return;
+
+  const mobileHeader = Boolean(appHeader?.classList.contains("is-mobile-wallet"));
+  const canRefresh =
+    mobileHeader &&
+    Boolean(statusEl?.classList.contains("wallet-header-status--ok")) &&
+    !balanceEl.classList.contains("is-no-connection");
+
+  balanceEl.classList.toggle("is-refresh-control", canRefresh);
+  if (canRefresh) {
+    balanceEl.setAttribute("role", "button");
+    balanceEl.setAttribute("tabindex", "0");
+    balanceEl.title = "Refresh balance";
+    balanceEl.setAttribute("aria-label", "Refresh wallet balance");
+  } else {
+    balanceEl.removeAttribute("role");
+    balanceEl.removeAttribute("tabindex");
+    balanceEl.removeAttribute("aria-label");
+    if (!balanceEl.classList.contains("is-no-connection")) {
+      balanceEl.title = "";
+    }
+  }
+}
+
+function bindWalletBalanceRefresh() {
+  const btn = $("wallet-balance-refresh");
+  const balanceEl = $("wallet-balance");
+  if (btn && btn.dataset.bound !== "1") {
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      void refreshWalletBalance();
+    });
+  }
+  if (balanceEl && balanceEl.dataset.refreshBound !== "1") {
+    balanceEl.dataset.refreshBound = "1";
+    balanceEl.addEventListener("click", () => {
+      if (!balanceEl.classList.contains("is-refresh-control")) return;
+      void refreshWalletBalance();
+    });
+    balanceEl.addEventListener("keydown", (e) => {
+      if (!balanceEl.classList.contains("is-refresh-control")) return;
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      void refreshWalletBalance();
+    });
+  }
 }
 
 const HEATMAP_METRIC_DEFS = [
@@ -2120,9 +2215,17 @@ const MIN_COLUMN_PCT = 0;
 const MAX_COLUMN_PCT = 100;
 const LEFT_COVERED_PCT = 0.5;
 const RIGHT_COVERED_PCT = 99.5;
+const MARKET_MOBILE_MQ = "(max-width: 720px)";
+const MARKET_MOBILE_SECTION_PX = 280;
 
 /** Row-split helpers filled by initLeftRowSplitter. */
 let leftColumnLayout = null;
+
+function isMarketMobileStack() {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(MARKET_MOBILE_MQ).matches
+    : window.innerWidth <= 720;
+}
 
 function setColumnSplit(pct) {
   const page = $("page-simulator");
@@ -2156,6 +2259,13 @@ function syncLeftColumnRail() {
   const page = $("page-simulator");
   const rail = $("left-column-rail");
   if (!page || !rail) return;
+  // Mobile stack shows all sections under the graph — no cover rail.
+  if (page.classList.contains("is-mobile-stack") || isMarketMobileStack()) {
+    rail.hidden = true;
+    rail.classList.remove("is-visible");
+    page.classList.remove("is-left-covered");
+    return;
+  }
   // Use split % only — measuring width during first paint can be ~0 and falsely show the rail.
   const covered = getColumnSplitPct() <= LEFT_COVERED_PCT;
   rail.hidden = !covered;
@@ -2168,6 +2278,13 @@ function syncMarketColumnRail() {
   const page = $("page-simulator");
   const rail = $("market-column-rail");
   if (!page || !rail) return;
+  if (page.classList.contains("is-mobile-stack") || isMarketMobileStack()) {
+    rail.hidden = true;
+    rail.classList.remove("is-visible");
+    page.classList.remove("is-market-covered");
+    syncMarketRailLivePulse();
+    return;
+  }
   const covered = getColumnSplitPct() >= RIGHT_COVERED_PCT;
   rail.hidden = !covered;
   rail.classList.toggle("is-visible", covered);
@@ -2222,6 +2339,10 @@ function clampLeftColumnRailTop(preferredTop) {
 }
 
 function openLeftSection(section) {
+  if (isMarketMobileStack()) {
+    leftColumnLayout?.openMobileSection?.(section);
+    return;
+  }
   setColumnSplit(50);
   // Two frames so --split-left-pct layout is settled before measuring.
   requestAnimationFrame(() => {
@@ -2467,7 +2588,8 @@ function initLeftRowSplitter() {
 
   const getMetrics = () => {
     const colRect = leftColumn.getBoundingClientRect();
-    const walletHeaderH = walletHeader.offsetHeight;
+    // Wallet header may be relocated into the app header on mobile.
+    const walletHeaderH = leftColumn.contains(walletHeader) ? walletHeader.offsetHeight : 0;
     const tradeHeaderH = tradeHeader.offsetHeight;
     const prevHeaderH = prevHeader.offsetHeight;
     const triggersHeaderH = triggersHeader.offsetHeight;
@@ -2593,7 +2715,68 @@ function initLeftRowSplitter() {
     applyHeights(maxContent, 0, 0, 0, 0);
   };
 
-  leftColumnLayout = { applyHeights, maximizeSection, readHeights, getMetrics, reflowHeights };
+  const syncMobileAccordionAria = () => {
+    const heights = readHeights();
+    const setExpanded = (header, open) => {
+      header.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    setExpanded(prevHeader, heights.prev > 0);
+    setExpanded(triggersHeader, heights.triggers > 0);
+    setExpanded(bookHeader, heights.book > 0);
+    setExpanded(logHeader, heights.log > 0);
+  };
+
+  const openMobileSection = (section) => {
+    const openPx = MARKET_MOBILE_SECTION_PX;
+    if (section === "positions") {
+      applyHeights(0, openPx, 0, 0, 0);
+    } else if (section === "triggers") {
+      applyHeights(0, 0, openPx, 0, 0);
+    } else if (section === "book") {
+      applyHeights(0, 0, 0, openPx, 0);
+    } else if (section === "log") {
+      applyHeights(0, 0, 0, 0, openPx);
+    } else {
+      applyHeights(0, openPx, 0, 0, 0);
+    }
+    syncMobileAccordionAria();
+  };
+
+  const toggleMobileSection = (section) => {
+    const heights = readHeights();
+    const openPx = MARKET_MOBILE_SECTION_PX;
+    const key =
+      section === "positions"
+        ? "prev"
+        : section === "triggers"
+          ? "triggers"
+          : section === "book"
+            ? "book"
+            : section === "log"
+              ? "log"
+              : null;
+    if (!key) return;
+    const next = {
+      trade: 0,
+      prev: heights.prev,
+      triggers: heights.triggers,
+      book: heights.book,
+      log: heights.log,
+    };
+    next[key] = heights[key] > 0 ? 0 : openPx;
+    applyHeights(next.trade, next.prev, next.triggers, next.book, next.log);
+    syncMobileAccordionAria();
+  };
+
+  leftColumnLayout = {
+    applyHeights,
+    maximizeSection,
+    openMobileSection,
+    toggleMobileSection,
+    readHeights,
+    getMetrics,
+    reflowHeights,
+  };
 
   const initDefaultHeights = () => {
     const { maxContent } = getMetrics();
@@ -2825,7 +3008,7 @@ function initLeftRowSplitter() {
   };
 
   const startPrevDrag = (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isMarketMobileStack()) return;
     dragging = true;
     dragKind = "prev";
     activeHandle = prevDragHandle;
@@ -2846,7 +3029,7 @@ function initLeftRowSplitter() {
   };
 
   const startTriggersDrag = (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isMarketMobileStack()) return;
     dragging = true;
     dragKind = "triggers";
     activeHandle = triggersDragHandle;
@@ -2868,7 +3051,7 @@ function initLeftRowSplitter() {
   };
 
   const startBookDrag = (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isMarketMobileStack()) return;
     dragging = true;
     dragKind = "book";
     activeHandle = bookDragHandle;
@@ -2890,7 +3073,7 @@ function initLeftRowSplitter() {
   };
 
   const startLogDrag = (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isMarketMobileStack()) return;
     dragging = true;
     dragKind = "log";
     activeHandle = logDragHandle;
@@ -2938,6 +3121,35 @@ function initLeftRowSplitter() {
   bindHandle(bookDragHandle, startBookDrag);
   bindHandle(logDragHandle, startLogDrag);
   window.addEventListener("blur", stopDragging);
+
+  const isAccordionClickTarget = (target) => {
+    if (!(target instanceof Element)) return false;
+    return Boolean(
+      target.closest(
+        "button, a, input, select, textarea, label, .panel-header-drag-handle"
+      )
+    );
+  };
+
+  const bindMobileAccordion = (header, section) => {
+    header.addEventListener("click", (e) => {
+      if (!isMarketMobileStack()) return;
+      if (isAccordionClickTarget(e.target)) return;
+      toggleMobileSection(section);
+    });
+    header.addEventListener("keydown", (e) => {
+      if (!isMarketMobileStack()) return;
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (isAccordionClickTarget(e.target)) return;
+      e.preventDefault();
+      toggleMobileSection(section);
+    });
+  };
+
+  bindMobileAccordion(prevHeader, "positions");
+  bindMobileAccordion(triggersHeader, "triggers");
+  bindMobileAccordion(bookHeader, "book");
+  bindMobileAccordion(logHeader, "log");
 }
 
 function initColumnSplitter() {
@@ -2961,7 +3173,7 @@ function initColumnSplitter() {
   };
 
   splitter.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isMarketMobileStack()) return;
     dragging = true;
     splitter.classList.add("is-dragging");
     document.body.classList.add("is-column-resizing");
@@ -2978,6 +3190,7 @@ function initColumnSplitter() {
   window.addEventListener("blur", stopDragging);
 
   splitter.addEventListener("keydown", (e) => {
+    if (isMarketMobileStack()) return;
     const current = Number(page.style.getPropertyValue("--split-left-pct")) || 50;
     if (e.key === "ArrowLeft") {
       setColumnSplit(current - 2);
@@ -2987,6 +3200,59 @@ function initColumnSplitter() {
       e.preventDefault();
     }
   });
+}
+
+function syncMarketMobileStack() {
+  const page = $("page-simulator");
+  if (!page) return;
+  const mobile = isMarketMobileStack();
+  const wasMobile = page.classList.contains("is-mobile-stack");
+  page.classList.toggle("is-mobile-stack", mobile);
+  document.querySelector(".app")?.classList.toggle("is-mobile-header", mobile);
+  document.querySelector(".app-header")?.classList.toggle("is-mobile-header", mobile);
+
+  const accordionHeaders = page.querySelectorAll(
+    ".positions-panel-header, .triggers-panel-header, .book-panel-header, .log-panel-header"
+  );
+  accordionHeaders.forEach((header) => {
+    if (!mobile) header.removeAttribute("aria-expanded");
+  });
+
+  syncMobileTradeTogglePlacement();
+  syncMobileCountdownPlacement();
+  syncMobileWalletPlacement();
+  // Re-run header layout so mobile always stacks Market/Schedule as bottom tabs.
+  if (typeof updateAppHeaderLayout === "function") {
+    updateAppHeaderLayout();
+  }
+
+  if (mobile && !wasMobile) {
+    leftColumnLayout?.openMobileSection?.("positions");
+  } else if (!mobile && wasMobile) {
+    leftColumnLayout?.reflowHeights?.();
+  }
+
+  syncLeftColumnRail();
+  syncMarketColumnRail();
+  requestAnimationFrame(() => {
+    resizeChartCanvas();
+    if (windowState) drawPriceChart(windowState);
+  });
+}
+
+function initMarketMobileStack() {
+  syncMarketMobileStack();
+  if (typeof window.matchMedia !== "function") {
+    window.addEventListener("resize", syncMarketMobileStack);
+    return;
+  }
+  const mq = window.matchMedia(MARKET_MOBILE_MQ);
+  const onChange = () => syncMarketMobileStack();
+  if (typeof mq.addEventListener === "function") {
+    mq.addEventListener("change", onChange);
+  } else if (typeof mq.addListener === "function") {
+    mq.addListener(onChange);
+  }
 }
 
 function resizeChartCanvasFor(canvas) {
@@ -4476,6 +4742,11 @@ function updateCountdown(state) {
   $("countdown").textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function formatMarketSelectLabel(label) {
+  // Dropdown: "5 minutes" → "5 Min".
+  return String(label ?? "").replace(/\bminutes?\b/gi, "Min");
+}
+
 function populateMarketSelect() {
   const sel = $("market-select");
   sel.innerHTML = "";
@@ -4489,9 +4760,107 @@ function populateMarketSelect() {
   for (const m of markets) {
     const opt = document.createElement("option");
     opt.value = m._id;
-    opt.textContent = m.label;
+    opt.textContent = formatMarketSelectLabel(m.label);
     if (m._id === selectedSeries) opt.selected = true;
     sel.appendChild(opt);
+  }
+}
+
+/** On mobile, move Wallet status/balance into the app header (right of Poly Replay). */
+function syncMobileWalletPlacement() {
+  const walletHeader = document.querySelector(".wallet-panel-header");
+  const walletPanel = document.querySelector(".wallet-panel");
+  const appHeader = document.querySelector(".app-header");
+  const title = appHeader?.querySelector(".app-title");
+  if (!walletHeader || !walletPanel || !appHeader || !title) return;
+
+  // Only park Wallet in the header on mobile when stats already occupy row 2.
+  const showInHeader =
+    isMarketMobileStack() && appHeader.classList.contains("is-stats-row");
+  const wasInHeader = walletHeader.parentElement === appHeader;
+  appHeader.classList.toggle("is-mobile-wallet", showInHeader);
+
+  if (showInHeader) {
+    if (!wasInHeader) {
+      title.after(walletHeader);
+      walletPanel.classList.add("is-header-relocated");
+      leftColumnLayout?.reflowHeights?.();
+    }
+    syncMobileWalletBalanceDisplay();
+    return;
+  }
+
+  if (wasInHeader) {
+    walletPanel.insertBefore(walletHeader, walletPanel.firstChild);
+    walletPanel.classList.remove("is-header-relocated");
+    appHeader.classList.remove("is-wallet-refreshing");
+    leftColumnLayout?.reflowHeights?.();
+  }
+  syncMobileWalletBalanceDisplay();
+}
+
+/**
+ * On mobile, park Allow trade Off/On between the market dropdown and countdown.
+ */
+function syncMobileTradeTogglePlacement() {
+  const field = $("wallet-start-trading-field");
+  const actions = document.querySelector(".trade-panel-actions");
+  const tradePanel = document.querySelector(".trade-panel");
+  const marketRow = document.querySelector(".header-market-row");
+  const select = $("market-select");
+  const appHeader = document.querySelector(".app-header");
+  if (!field || !actions || !marketRow || !select || !appHeader) return;
+
+  const mobile = isMarketMobileStack();
+  appHeader.classList.toggle("is-mobile-trade-toggle", mobile);
+  tradePanel?.classList.toggle("is-allow-trade-relocated", mobile);
+
+  if (mobile) {
+    if (field.parentElement !== marketRow) {
+      // Keep order: select → Trade + Allow trade → countdown.
+      select.after(field);
+    } else if (field.previousElementSibling !== select) {
+      select.after(field);
+    }
+    return;
+  }
+
+  if (field.parentElement !== actions) {
+    actions.insertBefore(field, actions.firstChild);
+  }
+  appHeader.classList.remove("is-mobile-trade-toggle");
+}
+
+/**
+ * On mobile, park the window countdown on the market dropdown row (right-aligned),
+ * after the Allow trade switcher when present.
+ */
+function syncMobileCountdownPlacement() {
+  const countdown = $("countdown");
+  const marketRow = document.querySelector(".header-market-row");
+  const headerEnd = document.querySelector(".header-end");
+  const settingsBtn = $("settings-page-btn");
+  const tradeField = $("wallet-start-trading-field");
+  if (!countdown || !marketRow || !headerEnd) return;
+
+  const mobile = isMarketMobileStack();
+  if (!mobile) {
+    if (countdown.parentElement !== headerEnd) {
+      if (settingsBtn && settingsBtn.parentElement === headerEnd) {
+        headerEnd.insertBefore(countdown, settingsBtn);
+      } else {
+        headerEnd.insertBefore(countdown, headerEnd.firstChild);
+      }
+    }
+    return;
+  }
+
+  // Order: select → Allow trade → countdown (right).
+  if (countdown.parentElement !== marketRow) {
+    marketRow.appendChild(countdown);
+  }
+  if (tradeField && tradeField.parentElement === marketRow) {
+    tradeField.after(countdown);
   }
 }
 
@@ -7618,7 +7987,7 @@ function syncTriggerCreateColorDraft() {
 }
 
 function syncTriggerCreateSideUi() {
-  // Editor is BUY-only (Ask quotes). Left: UP/DOWN Range / Price; right: UP/DOWN Price Range / Change.
+  // Editor is BUY-only (Ask quotes). Left: UP/DOWN Range / Price; right: UP/DOWN Range / Change.
   triggerCreatePriceSide = "buy";
   const startMode = normalizeTriggerStartMode(triggerCreateStartMode);
   const endMode = normalizeTriggerEndMode(triggerCreateEndMode);
@@ -12950,7 +13319,7 @@ function updateAppHeaderLayout() {
   const gap = parseFloat(headerCs.gap) || 10;
 
   const probe = header.cloneNode(true);
-  probe.classList.remove("is-compact", "is-stats-row");
+  probe.classList.remove("is-compact", "is-stats-row", "is-nav-stack");
   probe.setAttribute("aria-hidden", "true");
   probe.style.cssText = [
     "position:fixed",
@@ -12983,6 +13352,27 @@ function updateAppHeaderLayout() {
   const highlightedW = pieceWidth(".schedule-highlighted-summary");
   const statsW = pieceWidth(".schedule-week-summary");
   const endW = pieceWidth(".header-end");
+
+  const navProbe = probe.querySelector(":scope > .header-nav");
+  const navGap = navProbe ? parseFloat(getComputedStyle(navProbe).gap) || gap : gap;
+  const navChildWidth = (sel) => {
+    if (!navProbe) return 0;
+    const el = navProbe.querySelector(sel);
+    if (!el || el.hasAttribute("hidden") || el.hidden) return 0;
+    if (getComputedStyle(el).display === "none") return 0;
+    el.style.flexShrink = "0";
+    el.style.width = "max-content";
+    el.style.maxWidth = "none";
+    return el.getBoundingClientRect().width;
+  };
+  const marketRowW =
+    navChildWidth(".header-market-row") || navChildWidth("#market-select, select");
+  const pageToggleW = navChildWidth(".page-toggle");
+  // Countdown may sit as a direct nav sibling (right-aligned); don't double-count
+  // when it is already inside .header-market-row.
+  const countdownNavW = navProbe?.querySelector(":scope > .countdown")
+    ? navChildWidth(":scope > .countdown")
+    : 0;
   probe.remove();
 
   const singleNeeded = sumHeaderWidths(
@@ -12991,22 +13381,43 @@ function updateAppHeaderLayout() {
   );
   // First row after nav has wrapped: title + optional custom summary + stats + end.
   const row1Needed = sumHeaderWidths([titleW, highlightedW, statsW, endW], gap);
+  const navRowNeeded = sumHeaderWidths([marketRowW, pageToggleW, countdownNavW], navGap);
 
   const wasCompact = header.classList.contains("is-compact");
   const wasStatsRow = header.classList.contains("is-stats-row");
+  const wasNavStack = header.classList.contains("is-nav-stack");
+  const mobileHeader = isMarketMobileStack();
   // Enter on overflow; leave only once there is spare room (avoids boundary flicker).
-  const compact = wasCompact || wasStatsRow
-    ? singleNeeded > available - 16
-    : singleNeeded > available + 0.5;
+  // On mobile, always use the multi-row header so Market/Schedule can be bottom tabs.
+  const compact = mobileHeader
+    ? true
+    : wasCompact || wasStatsRow || wasNavStack
+      ? singleNeeded > available - 16
+      : singleNeeded > available + 0.5;
   const statsRow = !compact
     ? false
     : wasStatsRow
       ? row1Needed > available - 16
       : row1Needed > available + 0.5;
+  // When nav is on its own row and market + page toggle no longer fit side by side,
+  // stack them so each takes a full-width row (switcher drops below the dropdown).
+  // On mobile, always stack so Market/Schedule sit as bottom-edge tabs.
+  const navStack = !compact ? false : mobileHeader ? true : wasNavStack
+    ? navRowNeeded > available - 16
+    : navRowNeeded > available + 0.5;
 
-  if (wasCompact === compact && wasStatsRow === statsRow) return;
+  if (wasCompact === compact && wasStatsRow === statsRow && wasNavStack === navStack) {
+    syncMobileTradeTogglePlacement();
+    syncMobileCountdownPlacement();
+    syncMobileWalletPlacement();
+    return;
+  }
   header.classList.toggle("is-compact", compact);
   header.classList.toggle("is-stats-row", statsRow);
+  header.classList.toggle("is-nav-stack", navStack);
+  syncMobileTradeTogglePlacement();
+  syncMobileCountdownPlacement();
+  syncMobileWalletPlacement();
 }
 
 function initAppHeaderLayout() {
@@ -13040,7 +13451,7 @@ function initAppHeaderLayout() {
     const contentRo = new ResizeObserver(schedule);
     header
       .querySelectorAll(
-        ".app-title, .header-nav, .header-end, #market-select, .page-toggle, #schedule-week-summary, #schedule-highlighted-summary"
+        ".app-title, .header-nav, .header-end, .header-market-row, #market-select, .page-toggle, #schedule-week-summary, #schedule-highlighted-summary"
       )
       .forEach((el) => contentRo.observe(el));
   }
@@ -13064,6 +13475,7 @@ async function init() {
   initChart();
   initColumnSplitter();
   initLeftRowSplitter();
+  initMarketMobileStack();
   bindLeftColumnRail();
   bindMarketColumnRail();
   bindTriggerCreateModal();

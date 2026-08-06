@@ -118,6 +118,17 @@ export async function listChainlinkTicks(
     .sort((a, b) => a.tMs - b.tMs);
 }
 
+async function windowHasNonEmptyTickFile(
+  filePath: string,
+): Promise<boolean> {
+  try {
+    const st = await fs.stat(filePath);
+    return st.isFile() && st.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Which window starts have a non-empty Chainlink tick file (cheap disk check). */
 export async function windowsHavingChainlinkTicks(
   market: MarketDocument,
@@ -127,12 +138,48 @@ export async function windowsHavingChainlinkTicks(
   await Promise.all(
     windowStarts.map(async (windowStart) => {
       if (!Number.isFinite(windowStart)) return;
-      try {
-        const st = await fs.stat(chainlinkTicksPath(market._id, windowStart));
-        if (st.isFile() && st.size > 0) present.push(windowStart);
-      } catch {
-        // missing / unreadable
+      if (await windowHasNonEmptyTickFile(chainlinkTicksPath(market._id, windowStart))) {
+        present.push(windowStart);
       }
+    }),
+  );
+  return present.sort((a, b) => a - b);
+}
+
+/** Which window starts have a non-empty CLOB book tick file (cheap disk check). */
+export async function windowsHavingClobBookTicks(
+  market: MarketDocument,
+  windowStarts: number[],
+): Promise<number[]> {
+  const present: number[] = [];
+  await Promise.all(
+    windowStarts.map(async (windowStart) => {
+      if (!Number.isFinite(windowStart)) return;
+      if (await windowHasNonEmptyTickFile(clobBookTicksPath(market._id, windowStart))) {
+        present.push(windowStart);
+      }
+    }),
+  );
+  return present.sort((a, b) => a - b);
+}
+
+/**
+ * Replay-usable windows: non-empty CLOB book **and** Chainlink tick files.
+ * Missing either side is treated as no recording for Schedule Replay.
+ */
+export async function windowsHavingReplayTickFiles(
+  market: MarketDocument,
+  windowStarts: number[],
+): Promise<number[]> {
+  const present: number[] = [];
+  await Promise.all(
+    windowStarts.map(async (windowStart) => {
+      if (!Number.isFinite(windowStart)) return;
+      const [hasBook, hasChainlink] = await Promise.all([
+        windowHasNonEmptyTickFile(clobBookTicksPath(market._id, windowStart)),
+        windowHasNonEmptyTickFile(chainlinkTicksPath(market._id, windowStart)),
+      ]);
+      if (hasBook && hasChainlink) present.push(windowStart);
     }),
   );
   return present.sort((a, b) => a - b);
