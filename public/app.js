@@ -2621,7 +2621,8 @@ function initLeftRowSplitter() {
 
   const applyHeights = (trade, prev, triggers, book, log) => {
     const { colRect, chrome, maxContent } = getMetrics();
-    let t = Math.max(0, trade);
+    // Trade panel is hidden — Allow trade is on Settings → User.
+    let t = 0;
     let p = Math.max(0, prev);
     let tr = Math.max(0, triggers);
     let b = Math.max(0, book);
@@ -2686,6 +2687,12 @@ function initLeftRowSplitter() {
     triggersBody.classList.toggle("is-scrollable", tr > 0 && hasTriggerCards);
     bookBody.classList.toggle("is-scrollable", b > 0);
     logBody.classList.toggle("is-scrollable", l > 0);
+    if (document.getElementById("page-simulator")?.classList.contains("is-mobile-stack")) {
+      prevHeader.setAttribute("aria-expanded", p > 0 ? "true" : "false");
+      triggersHeader.setAttribute("aria-expanded", tr > 0 ? "true" : "false");
+      bookHeader.setAttribute("aria-expanded", b > 0 ? "true" : "false");
+      logHeader.setAttribute("aria-expanded", l > 0 ? "true" : "false");
+    }
   };
 
   const reflowHeights = () => {
@@ -2711,8 +2718,8 @@ function initLeftRowSplitter() {
       applyHeights(0, 0, 0, 0, maxContent);
       return;
     }
-    // trade / wallet / default — expand Trade content
-    applyHeights(maxContent, 0, 0, 0, 0);
+    // trade / wallet / default — Trade panel is gone; open Positions
+    applyHeights(0, maxContent, 0, 0, 0);
   };
 
   const syncMobileAccordionAria = () => {
@@ -3218,7 +3225,6 @@ function syncMarketMobileStack() {
     if (!mobile) header.removeAttribute("aria-expanded");
   });
 
-  syncMobileTradeTogglePlacement();
   syncMobileCountdownPlacement();
   syncMobileWalletPlacement();
   // Re-run header layout so mobile always stacks Market/Schedule as bottom tabs.
@@ -4800,47 +4806,13 @@ function syncMobileWalletPlacement() {
 }
 
 /**
- * On mobile, park Allow trade Off/On between the market dropdown and countdown.
- */
-function syncMobileTradeTogglePlacement() {
-  const field = $("wallet-start-trading-field");
-  const actions = document.querySelector(".trade-panel-actions");
-  const tradePanel = document.querySelector(".trade-panel");
-  const marketRow = document.querySelector(".header-market-row");
-  const select = $("market-select");
-  const appHeader = document.querySelector(".app-header");
-  if (!field || !actions || !marketRow || !select || !appHeader) return;
-
-  const mobile = isMarketMobileStack();
-  appHeader.classList.toggle("is-mobile-trade-toggle", mobile);
-  tradePanel?.classList.toggle("is-allow-trade-relocated", mobile);
-
-  if (mobile) {
-    if (field.parentElement !== marketRow) {
-      // Keep order: select → Trade + Allow trade → countdown.
-      select.after(field);
-    } else if (field.previousElementSibling !== select) {
-      select.after(field);
-    }
-    return;
-  }
-
-  if (field.parentElement !== actions) {
-    actions.insertBefore(field, actions.firstChild);
-  }
-  appHeader.classList.remove("is-mobile-trade-toggle");
-}
-
-/**
- * On mobile, park the window countdown on the market dropdown row (right-aligned),
- * after the Allow trade switcher when present.
+ * On mobile, park the window countdown on the market dropdown row (right-aligned).
  */
 function syncMobileCountdownPlacement() {
   const countdown = $("countdown");
   const marketRow = document.querySelector(".header-market-row");
   const headerEnd = document.querySelector(".header-end");
   const settingsBtn = $("settings-page-btn");
-  const tradeField = $("wallet-start-trading-field");
   if (!countdown || !marketRow || !headerEnd) return;
 
   const mobile = isMarketMobileStack();
@@ -4855,12 +4827,9 @@ function syncMobileCountdownPlacement() {
     return;
   }
 
-  // Order: select → Allow trade → countdown (right).
+  // Order: select → countdown (right).
   if (countdown.parentElement !== marketRow) {
     marketRow.appendChild(countdown);
-  }
-  if (tradeField && tradeField.parentElement === marketRow) {
-    tradeField.after(countdown);
   }
 }
 
@@ -9636,7 +9605,7 @@ function syncWalletControls(config) {
 
   if (sharesField) sharesField.hidden = autoTradeOn;
   if (useScheduleField) useScheduleField.hidden = !autoTradeOn;
-  // Allow trade stays visible per market (header control), even when Auto Trade is off.
+  // Allow trade lives under Settings → User (always visible there).
   if (startTradingField) startTradingField.hidden = false;
   syncAllowTradeSegment(Boolean(config?.startTrading));
   syncTradeToggleLabel("auto-trade-label", "Auto Trade", autoTradeOn);
@@ -13407,7 +13376,6 @@ function updateAppHeaderLayout() {
     : navRowNeeded > available + 0.5;
 
   if (wasCompact === compact && wasStatsRow === statsRow && wasNavStack === navStack) {
-    syncMobileTradeTogglePlacement();
     syncMobileCountdownPlacement();
     syncMobileWalletPlacement();
     return;
@@ -13415,7 +13383,6 @@ function updateAppHeaderLayout() {
   header.classList.toggle("is-compact", compact);
   header.classList.toggle("is-stats-row", statsRow);
   header.classList.toggle("is-nav-stack", navStack);
-  syncMobileTradeTogglePlacement();
   syncMobileCountdownPlacement();
   syncMobileWalletPlacement();
 }

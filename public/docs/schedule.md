@@ -23,7 +23,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 - Current UTC cell is highlighted
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. Manual quote-box buys are removed (legacy manual fills still count in Market/Live only — not on Schedule hour cells)
 
-Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on Market and a trigger on **Trade** + **Active**.
+Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on (Settings → **User**) and a trigger on **Trade** + **Active**.
 
 ## Live vs Replay
 

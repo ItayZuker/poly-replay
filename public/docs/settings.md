@@ -6,7 +6,7 @@
 
 ### User
 
-Display name and email for your account. Also log out, or permanently delete your account.
+Display name and email for your account. **Allow trade** (**Off** / **On**): Off = demo; On = real orders when other gates pass — turning **Off** also moves every Trigger card that was on **Trade** back to **Demo**. Also log out, or permanently delete your account.
 
 ### Stats
 
@@ -34,7 +34,7 @@ If either credential is missing, Market and Schedule stay locked until both are 
 ## Safety
 
 - Never share your private key
-- Start with **Allow trade** off (demo) after saving credentials
+- Start with **Allow trade** off (demo) under **User** after saving credentials
 - Confirm the funder matches the wallet you fund with USDC
 
 ## Process roles (server env)

@@ -1,6 +1,11 @@
 {
-  "current": "1.54.0",
+  "current": "1.55.0",
   "releases": [
+    {
+      "version": "1.55.0",
+      "releasedAt": "2026-08-06T10:32:59.751Z",
+      "notes": "Allow trade moved to Settings → User; mobile Market/Schedule tabs inset with accent border and active corner radius; section headers under the graph get top borders and expand/collapse chevrons; Trade left column removed; header market/stats label alignment. Docs updated."
+    },
     {
       "version": "1.54.0",
       "releasedAt": "2026-08-06T09:54:10.773Z",
