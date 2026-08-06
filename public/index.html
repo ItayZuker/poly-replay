@@ -343,7 +343,7 @@
         <div class="left-column-rail-handle" title="Drag" aria-hidden="true">
           <span></span><span></span>
         </div>
-        <button type="button" class="left-column-rail-btn" data-left-section="trade" title="Trade" aria-label="Open Trade">
+        <button type="button" class="left-column-rail-btn" data-left-section="trade" title="Trade" aria-label="Open Trade" hidden>
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 11.5 6.5 7l2.5 2.5L13 4.5M10 4.5h3v3" />
           </svg>
@@ -432,33 +432,15 @@
           </div>
         </section>
 
-        <section class="panel trade-panel" aria-label="Trade">
+        <!-- Trade panel kept in DOM (hidden) so left-column drag math stays stable.
+             Allow trade lives under Settings → User. -->
+        <section class="panel trade-panel" aria-label="Trade" hidden>
           <div class="trade-panel-header">
             <div class="panel-header-main">
               <h2 class="settings-panel-title">Trade</h2>
-              <div class="trade-panel-actions">
-                <div
-                  id="wallet-start-trading-field"
-                  class="wallet-control-field wallet-control-field--segment"
-                  role="group"
-                  aria-label="Allow trade"
-                >
-                  <span class="trade-allow-inline-label" aria-hidden="true">Trade</span>
-                  <div class="trade-allow-toggle trigger-run-mode" id="start-trading-toggle">
-                    <button type="button" class="trigger-run-mode-btn is-active" data-allow-trade="off" id="start-trading-off">
-                      Off
-                    </button>
-                    <button type="button" class="trigger-run-mode-btn" data-allow-trade="on" id="start-trading-on">
-                      On
-                    </button>
-                  </div>
-                  <input type="checkbox" id="start-trading" class="visually-hidden" tabindex="-1" aria-hidden="true" />
-                </div>
-              </div>
+              <div class="trade-panel-actions"></div>
             </div>
           </div>
-          <!-- Manual Size / Manual Override removed — only Trigger cards place orders.
-               Keep trade-body in layout (no hidden) so left-column header drag heights stay correct. -->
           <div id="trade-body" class="trade-panel-body is-collapsed">
             <label class="wallet-control-field wallet-control-field--toggle" for="auto-trade" hidden>
               <span class="wallet-control-label" id="auto-trade-label">Auto Trade · Off</span>
@@ -484,11 +466,25 @@
               data-drag-edge="prev"
               role="separator"
               aria-orientation="horizontal"
-              aria-label="Resize Trade and Positions sections"
+              aria-label="Resize Positions section"
               tabindex="0"
             ></div>
             <div class="panel-header-main">
-              <h2 class="positions-panel-title">Positions</h2>
+              <div class="panel-header-heading">
+                <span class="panel-header-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 12 12" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M3 4.5 6 7.5 9 4.5"
+                    />
+                  </svg>
+                </span>
+                <h2 class="positions-panel-title">Positions</h2>
+              </div>
               <div class="positions-panel-actions">
                 <button type="button" id="positions-clear" class="log-clear-btn">Clear</button>
               </div>
@@ -515,7 +511,21 @@
               tabindex="0"
             ></div>
             <div class="panel-header-main">
-              <h2 class="triggers-panel-title">Triggers</h2>
+              <div class="panel-header-heading">
+                <span class="panel-header-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 12 12" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M3 4.5 6 7.5 9 4.5"
+                    />
+                  </svg>
+                </span>
+                <h2 class="triggers-panel-title">Triggers</h2>
+              </div>
               <div class="triggers-panel-actions">
                 <button type="button" id="triggers-create-btn" class="log-clear-btn">Create Trigger</button>
               </div>
@@ -538,7 +548,21 @@
               tabindex="0"
             ></div>
             <div class="panel-header-main">
-              <h2 class="book-panel-title">Book</h2>
+              <div class="panel-header-heading">
+                <span class="panel-header-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 12 12" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M3 4.5 6 7.5 9 4.5"
+                    />
+                  </svg>
+                </span>
+                <h2 class="book-panel-title">Book</h2>
+              </div>
             </div>
           </div>
           <div id="book-body" class="book-body is-collapsed">
@@ -568,7 +592,21 @@
               tabindex="0"
             ></div>
             <div class="panel-header-main">
-              <h2 class="log-panel-title">Log</h2>
+              <div class="panel-header-heading">
+                <span class="panel-header-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 12 12" focusable="false">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M3 4.5 6 7.5 9 4.5"
+                    />
+                  </svg>
+                </span>
+                <h2 class="log-panel-title">Log</h2>
+              </div>
               <div class="log-panel-actions">
               <button type="button" id="log-clear" class="log-clear-btn">Clear</button>
               <button
@@ -777,6 +815,26 @@
               <div class="settings-card-actions">
                 <button type="button" id="settings-user-save" class="settings-primary-btn">Save profile</button>
                 <span id="settings-user-status" class="settings-inline-status" hidden></span>
+              </div>
+              <div class="settings-allow-trade">
+                <p class="settings-card-desc">Off = demo; On = real orders when other gates pass</p>
+                <div
+                  id="wallet-start-trading-field"
+                  class="wallet-control-field wallet-control-field--segment settings-allow-trade-field"
+                  role="group"
+                  aria-label="Allow trade"
+                >
+                  <span class="settings-field-label" id="allow-trade-label">Allow trade</span>
+                  <div class="trade-allow-toggle trigger-run-mode" id="start-trading-toggle">
+                    <button type="button" class="trigger-run-mode-btn is-active" data-allow-trade="off" id="start-trading-off">
+                      Off
+                    </button>
+                    <button type="button" class="trigger-run-mode-btn" data-allow-trade="on" id="start-trading-on">
+                      On
+                    </button>
+                  </div>
+                  <input type="checkbox" id="start-trading" class="visually-hidden" tabindex="-1" aria-hidden="true" />
+                </div>
               </div>
               <div class="settings-user-session">
                 <p class="settings-card-desc">Sign out of this browser, or permanently delete your account</p>

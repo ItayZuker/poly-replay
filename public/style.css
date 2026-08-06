@@ -931,6 +931,8 @@ body {
   flex-shrink: 0;
   --header-control-height: 28px;
   --topbar-height: 45px;
+  /* Shared text inset inside bordered header controls (market select + stats). */
+  --header-control-label-inset: 8px;
 }
 
 .header-nav {
@@ -957,62 +959,6 @@ body {
 .header-market-row > .countdown {
   flex: 0 0 auto;
   margin-left: auto;
-}
-
-.header-market-row > #wallet-start-trading-field {
-  flex: 0 0 auto;
-  margin-left: 0;
-}
-
-.trade-allow-inline-label {
-  display: none;
-}
-
-/* Mobile header: Trade label + Off/On (no outer field container). */
-.app-header.is-mobile-trade-toggle .header-market-row > #wallet-start-trading-field {
-  display: inline-flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  min-width: 0;
-  width: auto;
-}
-
-.app-header.is-mobile-trade-toggle .header-market-row .trade-allow-inline-label {
-  display: inline;
-  flex: 0 0 auto;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.app-header.is-mobile-trade-toggle .header-market-row .trade-allow-toggle {
-  height: var(--header-control-height);
-  flex: 0 0 auto;
-  width: auto;
-  min-width: 0;
-}
-
-.app-header.is-mobile-trade-toggle .header-market-row .trade-allow-toggle .trigger-run-mode-btn {
-  padding: 0 8px;
-  font-size: 0.7rem;
-  min-width: 0;
-}
-
-.app-header.is-mobile-trade-toggle .trade-panel-actions:not(:has(*)) {
-  display: none;
-}
-
-/* Trade title stays with the switcher in the header — hide the empty Trade section header. */
-.trade-panel.is-allow-trade-relocated > .trade-panel-header {
-  display: none;
 }
 
 .header-end {
@@ -1291,7 +1237,10 @@ body {
   }
 
   .app-header.is-mobile-header {
+    /* Keep side padding so tabs share the same inset as other header controls;
+       border-bottom spans full header width in active-tab blue. */
     padding-bottom: 0;
+    border-bottom: 1px solid var(--accent);
   }
 
   .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav {
@@ -1301,14 +1250,14 @@ body {
   .app-header.is-mobile-header .page-toggle,
   .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav > .page-toggle {
     display: flex;
-    width: calc(100% + 24px);
+    width: 100%;
     max-width: none;
-    height: 36px;
-    margin: 0 -12px 0;
+    height: var(--header-control-height);
+    margin: 0;
     border: none;
     border-radius: 0;
-    overflow: hidden;
-    background: var(--panel);
+    overflow: visible;
+    background: transparent;
   }
 
   .app-header.is-mobile-header .page-toggle-btn,
@@ -1318,6 +1267,7 @@ body {
     width: 50%;
     max-width: 50%;
     min-width: 0;
+    height: 100%;
     justify-content: center;
     border-radius: 0;
     border-top: 2px solid transparent;
@@ -1341,7 +1291,7 @@ body {
     background: var(--panel);
   }
 
-  /* Active = accent blue fill + visible top border; inactive = header bg.
+  /* Active = accent blue fill + top border + top corner radius; inactive = header bg.
      Match/exceed inactive-tab specificity so panel bg does not win. */
   .app-header.is-mobile-header .page-toggle-btn.is-active,
   .app-header.is-mobile-header.is-compact.is-nav-stack
@@ -1351,6 +1301,8 @@ body {
     background: var(--accent);
     color: #fff;
     border-top: 2px solid #79b8ff;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
     box-sizing: border-box;
   }
 
@@ -1793,6 +1745,27 @@ body {
   .app-page-simulator.is-mobile-stack .book-panel-header,
   .app-page-simulator.is-mobile-stack .log-panel-header {
     cursor: pointer;
+    /* Drag handles are hidden on mobile — restore a top edge on each section header. */
+    border-top: 1px solid var(--border);
+  }
+
+  .app-page-simulator.is-mobile-stack .panel-header-chevron {
+    display: inline-flex;
+  }
+
+  .app-page-simulator.is-mobile-stack
+    .positions-panel-header[aria-expanded="true"]
+    .panel-header-chevron,
+  .app-page-simulator.is-mobile-stack
+    .triggers-panel-header[aria-expanded="true"]
+    .panel-header-chevron,
+  .app-page-simulator.is-mobile-stack
+    .book-panel-header[aria-expanded="true"]
+    .panel-header-chevron,
+  .app-page-simulator.is-mobile-stack
+    .log-panel-header[aria-expanded="true"]
+    .panel-header-chevron {
+    transform: rotate(180deg);
   }
 
   .app-page-simulator.is-mobile-stack .positions-body:not(.is-collapsed),
@@ -4806,9 +4779,17 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 .app-page-settings {
   display: flex;
   overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   background:
     radial-gradient(1200px 480px at 10% -10%, rgba(88, 166, 255, 0.08), transparent 55%),
     var(--bg);
+}
+
+.app-page-settings::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .settings-page {
@@ -4950,6 +4931,50 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   margin: -4px 0 0;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.settings-allow-trade {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-allow-trade .settings-card-desc {
+  margin: 0;
+}
+
+.settings-allow-trade-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
+}
+
+.settings-allow-trade-field .settings-field-label {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-allow-trade-field .trade-allow-toggle {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 88px;
+}
+
+.settings-allow-trade-field .trade-allow-toggle .trigger-run-mode-btn {
+  min-width: 40px;
+  padding: 4px 10px;
 }
 
 .settings-user-session {
@@ -5330,7 +5355,7 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   gap: 10px;
   height: var(--header-control-height);
   box-sizing: border-box;
-  padding: 0 8px;
+  padding: 0 8px 0 var(--header-control-label-inset);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
@@ -5362,21 +5387,23 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   color: #e6edf3;
 }
 
-.schedule-summary-range {
+/* Beat .app-header select / .controls select so left inset is only the container’s 8px
+   (same as #market-select’s padding-left), keeping both labels on one vertical line. */
+.app-header select.schedule-summary-range {
   display: inline-block;
   box-sizing: border-box;
   height: 18px;
   max-height: 18px;
+  min-width: 0;
   max-width: none;
   margin: 0;
   padding: 0 12px 0 0;
-  /* Match wrap bg so Windows system select chrome blends away. */
-  border: 1px solid var(--bg) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  outline: none !important;
-  background-color: var(--bg) !important;
-  background-image: none !important;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  background-color: var(--bg);
+  background-image: none;
   color: inherit;
   font-family: inherit;
   font-size: 0.8rem;
@@ -5392,15 +5419,15 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   color-scheme: dark;
 }
 
-.schedule-summary-range:hover,
-.schedule-summary-range:focus,
-.schedule-summary-range:active,
-.schedule-summary-range:focus-visible {
-  border: 1px solid var(--bg) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  outline: none !important;
-  background-color: var(--bg) !important;
+.app-header select.schedule-summary-range:hover,
+.app-header select.schedule-summary-range:focus,
+.app-header select.schedule-summary-range:active,
+.app-header select.schedule-summary-range:focus-visible {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  background-color: var(--bg);
   color: inherit;
 }
 
@@ -5830,6 +5857,11 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   min-height: 0;
 }
 
+/* Author display:flex above beats the UA [hidden] rule — keep Trade removed from the stack. */
+.trade-panel[hidden] {
+  display: none !important;
+}
+
 .settings-panel-header {
   display: flex;
   flex-direction: column;
@@ -5855,6 +5887,29 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   justify-content: space-between;
   gap: 8px;
   padding: 10px 16px;
+}
+
+.panel-header-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.panel-header-chevron {
+  display: none;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+.panel-header-chevron svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .panel-header-drag-handle {
@@ -6369,6 +6424,7 @@ body.is-row-resizing .panel-header-drag-handle {
 .triggers-panel-header,
 .book-panel-header,
 .log-panel-header {
+  /* Desktop: drag handle is the top edge. Mobile stack adds border-top (handles hidden). */
   border-top: none;
 }
 
@@ -9518,6 +9574,19 @@ body.is-column-resizing * {
   box-sizing: border-box;
   min-width: 120px;
   padding: 0 8px;
+}
+
+/* After .controls select background shorthand — keep custom caret + shared label inset. */
+.app-header .header-market-row > #market-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 0 28px 0 var(--header-control-label-inset);
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 2.75L4 5.25L6.5 2.75' fill='none' stroke='%238b949e' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 8px 8px;
 }
 
 .toggle-switch {
