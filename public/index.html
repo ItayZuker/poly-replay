@@ -986,15 +986,34 @@
       </div>
 
       <div id="page-schedule-heatmap" class="app-page app-page-schedule" hidden>
-        <aside class="panel schedule-setups-panel" aria-label="Schedule triggers">
-          <div class="schedule-setups-header">
-            <div class="schedule-setups-toolbar">
-              <div class="schedule-view-toggle" role="group" aria-label="Schedule view">
-                <button type="button" class="schedule-view-toggle-btn is-active" data-schedule-view="schedule">Schedule</button>
-                <button type="button" class="schedule-view-toggle-btn" data-schedule-view="heatmap">Heatmap</button>
-              </div>
-            </div>
+        <header class="schedule-page-subheader" aria-label="Schedule tools">
+          <button
+            type="button"
+            id="schedule-side-toggle"
+            class="schedule-side-toggle-btn"
+            title="Hide side panel"
+            aria-label="Hide side panel"
+            aria-expanded="true"
+            aria-controls="schedule-setups-panel"
+          >
+            <svg class="schedule-side-toggle-icon" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M7.5 3 4.5 6 7.5 9"
+              />
+            </svg>
+          </button>
+          <div class="schedule-view-toggle" role="group" aria-label="Schedule view">
+            <button type="button" class="schedule-view-toggle-btn is-active" data-schedule-view="schedule">Schedule</button>
+            <button type="button" class="schedule-view-toggle-btn" data-schedule-view="heatmap">Heatmap</button>
           </div>
+        </header>
+        <div class="schedule-page-body">
+        <aside id="schedule-setups-panel" class="panel schedule-setups-panel" aria-label="Schedule triggers">
           <div id="schedule-setups-list" class="schedule-setups-list" hidden aria-hidden="true"></div>
           <div class="schedule-workspace-footer" id="schedule-workspace-footer">
             <div class="schedule-workspace-footer-body">
@@ -1209,6 +1228,7 @@
             </div>
           </div>
         </section>
+        </div>
       </div>
     </div>
   </div>

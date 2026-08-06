@@ -1,6 +1,11 @@
 {
-  "current": "1.55.0",
+  "current": "1.56.0",
   "releases": [
+    {
+      "version": "1.56.0",
+      "releasedAt": "2026-08-06T11:13:40.958Z",
+      "notes": "Schedule sub-header with Schedule/Heatmap toggle and mobile animated side-panel arrow; wallet balance always in mobile header; market dropdown label matches stats color. Docs updated."
+    },
     {
       "version": "1.55.0",
       "releasedAt": "2026-08-06T10:32:59.751Z",

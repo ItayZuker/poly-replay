@@ -1162,14 +1162,14 @@ body {
     animation: wallet-balance-spin 0.7s linear infinite;
   }
 
-  /* Wallet only joins row 1 when stats are already on row 2. */
-  .app-header.is-mobile-wallet.is-compact.is-stats-row > .wallet-panel-header {
+  /* Mobile: title | wallet | end, then stats, then Market/Schedule tabs. */
+  .app-header.is-mobile-wallet.is-compact > .wallet-panel-header {
     grid-area: wallet;
     justify-self: stretch;
     align-self: center;
   }
 
-  .app-header.is-mobile-wallet.is-compact.is-stats-row {
+  .app-header.is-mobile-wallet.is-compact {
     grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-areas:
       "title wallet end"
@@ -1177,7 +1177,7 @@ body {
       "nav nav nav";
   }
 
-  .app-header.is-mobile-wallet.is-compact.is-stats-row:has(
+  .app-header.is-mobile-wallet.is-compact:has(
       .schedule-highlighted-summary:not([hidden])
     ) {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
@@ -1794,10 +1794,74 @@ body {
 
 .app-page-schedule {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  position: relative;
   min-height: 0;
   background: var(--bg);
   --schedule-toolbar-height: 52px;
+}
+
+.schedule-page-subheader {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  height: var(--schedule-toolbar-height);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  box-sizing: border-box;
+}
+
+.schedule-page-subheader .schedule-view-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  max-width: 320px;
+}
+
+.schedule-side-toggle-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100%;
+  width: auto;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.schedule-side-toggle-btn .schedule-side-toggle-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+}
+
+.schedule-side-toggle-btn:hover,
+.schedule-side-toggle-btn:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.app-page-schedule.is-schedule-side-collapsed .schedule-side-toggle-btn .schedule-side-toggle-icon {
+  transform: rotate(180deg);
+}
+
+.schedule-page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
 }
 
 .schedule-setups-panel {
@@ -1809,6 +1873,58 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .app-page-schedule .schedule-side-toggle-btn {
+    display: inline-flex;
+  }
+
+  .app-page-schedule .schedule-page-subheader .schedule-view-toggle {
+    max-width: none;
+  }
+
+  .app-page-schedule .schedule-setups-panel {
+    flex: 0 0 213px;
+    width: 213px;
+    max-width: min(213px, 40vw);
+    min-width: 0;
+    border-right-width: 1px;
+    opacity: 1;
+    overflow: hidden;
+    transition:
+      flex-basis 0.28s ease,
+      width 0.28s ease,
+      max-width 0.28s ease,
+      border-right-width 0.28s ease,
+      opacity 0.2s ease;
+  }
+
+  .app-page-schedule.is-schedule-side-collapsed .schedule-setups-panel {
+    flex-basis: 0;
+    width: 0;
+    max-width: 0;
+    min-width: 0;
+    border-right-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .app-page-schedule.is-schedule-side-collapsed .schedule-main-panel {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app-page-schedule .schedule-setups-panel {
+      transition: none;
+    }
+
+    .app-page-schedule .schedule-side-toggle-btn .schedule-side-toggle-icon {
+      transition: none;
+    }
+  }
 }
 
 .app-page-schedule.is-heatmap-view .schedule-setups-list,
@@ -1834,15 +1950,6 @@ body {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-}
-
-/* Heatmap: match Schedule/Heatmap toggle bottom edge to day/UTC header borders. */
-.app-page-schedule.is-heatmap-view .schedule-setups-header {
-  border-bottom: none;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-setups-toolbar {
-  border-bottom: 1px solid var(--border);
 }
 
 .schedule-add-setup-wrap {
@@ -9582,11 +9689,19 @@ body.is-column-resizing * {
   -webkit-appearance: none;
   -moz-appearance: none;
   padding: 0 28px 0 var(--header-control-label-inset);
+  /* Match stats range label (.schedule-summary-range-label). */
+  color: #8b949e;
   background-color: var(--bg);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 2.75L4 5.25L6.5 2.75' fill='none' stroke='%238b949e' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 8px 8px;
+}
+
+.app-header .header-market-row > #market-select:hover,
+.app-header .header-market-row > #market-select:focus,
+.app-header .header-market-row > #market-select:focus-visible {
+  color: #e6edf3;
 }
 
 .toggle-switch {
