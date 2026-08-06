@@ -52,9 +52,10 @@ export class RecordingManager {
   }
 
   /**
-   * Broader than Chainlink-only stall: if any recorder's active window has had
-   * no book/chainlink ticks for too long, discard that window, reconnect feeds,
-   * and restart the stuck recorder(s).
+   * Broader than Chainlink-only stall:
+   * - Full silence (no book + no Chainlink): discard window, reconnect both feeds, restart recorder(s).
+   * - CLOB-only silence (Chainlink still flowing): force-reconnect CLOB and re-subscribe tokens
+   *   without discarding the window (so Chainlink capture continues).
    */
   private async checkRecordingHealth(): Promise<void> {
     if (!canProcessRecord() || this.recorders.size === 0) return;
@@ -63,27 +64,46 @@ export class RecordingManager {
     const now = Date.now();
     if (now - this.lastRecoveryAtMs < RECOVERY_COOLDOWN_MS) return;
 
-    const stuck: MarketRecorder[] = [];
+    const fullSilence: MarketRecorder[] = [];
+    const clobSilence: MarketRecorder[] = [];
     for (const recorder of this.recorders.values()) {
-      if (recorder.needsHealthRecovery(now)) stuck.push(recorder);
+      if (recorder.needsHealthRecovery(now)) {
+        fullSilence.push(recorder);
+      } else if (recorder.needsClobRecovery(now)) {
+        clobSilence.push(recorder);
+      }
     }
-    if (stuck.length === 0) return;
+    if (fullSilence.length === 0 && clobSilence.length === 0) return;
 
     this.recoveryInFlight = true;
     this.lastRecoveryAtMs = now;
-    const labels = stuck.map((r) => r.getSeries()).join(", ");
     try {
-      logService.warn(
-        "recorder",
-        `Recording silence on ${labels} — discarding window(s), reconnecting feeds, restarting recorder(s)`,
-      );
-      for (const recorder of stuck) {
-        recorder.discardActiveWindow("recording silence (health watchdog)");
+      if (fullSilence.length > 0) {
+        const labels = fullSilence.map((r) => r.getSeries()).join(", ");
+        logService.warn(
+          "recorder",
+          `Recording silence on ${labels} — discarding window(s), reconnecting feeds, restarting recorder(s)`,
+        );
+        for (const recorder of fullSilence) {
+          recorder.discardActiveWindow("recording silence (health watchdog)");
+        }
+        chainlinkPriceFeed.forceReconnect();
+        clobMarketFeed.forceReconnect();
+        for (const recorder of fullSilence) {
+          await this.refreshMarket(recorder.getMarket());
+        }
       }
-      chainlinkPriceFeed.forceReconnect();
-      clobMarketFeed.forceReconnect();
-      for (const recorder of stuck) {
-        await this.refreshMarket(recorder.getMarket());
+
+      if (clobSilence.length > 0) {
+        const labels = clobSilence.map((r) => r.getSeries()).join(", ");
+        logService.warn(
+          "recorder",
+          `CLOB silence on ${labels} — reconnecting market WebSocket (keeping window; Chainlink still active)`,
+        );
+        clobMarketFeed.forceReconnect();
+        for (const recorder of clobSilence) {
+          recorder.resubscribeActiveClobTokens();
+        }
       }
     } catch (err) {
       logService.error("recorder", `Health recovery failed: ${String(err)}`);

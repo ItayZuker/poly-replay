@@ -54,6 +54,8 @@ const TRADERS_POLL_MS = 15_000;
 const NEXT_WINDOW_PREFETCH_SEC = 30;
 /** No book/chainlink ticks into the active window for this long → health recovery. */
 const RECORDING_SILENCE_MS = 60_000;
+/** No CLOB book ticks for this long (Chainlink may still be flowing) → CLOB reconnect. */
+const CLOB_SILENCE_MS = 20_000;
 /** Ignore silence right after a window opens (pair/book may still be warming up). */
 const WINDOW_START_GRACE_MS = 20_000;
 
@@ -101,6 +103,8 @@ export class MarketRecorder {
   private nextWindowPrefetchInFlight = false;
   /** Wall-clock time of the last book/chainlink tick appended for the active window. */
   private lastUsefulTickAtMs = 0;
+  /** Wall-clock time of the last CLOB book tick appended for the active window. */
+  private lastClobTickAtMs = 0;
   private windowBeganAtMs = 0;
   /** True while captureEndPrices/finalizeWindow run — silence is expected (no in-window ticks). */
   private finalizing = false;
@@ -124,19 +128,47 @@ export class MarketRecorder {
    * Not used after windowEnd / while finalizing — in-window ticks stop by design then.
    */
   needsHealthRecovery(nowMs = Date.now()): boolean {
-    if (!this.interval || !this.activeWindow || this.finalizing) return false;
-    if (nowMs >= this.activeWindow.windowEnd * 1000) return false;
-    if (this.windowBeganAtMs > 0 && nowMs - this.windowBeganAtMs < WINDOW_START_GRACE_MS) {
-      return false;
-    }
+    if (!this.isActiveWindowEligibleForHealth(nowMs)) return false;
     const last = this.lastUsefulTickAtMs || this.windowBeganAtMs;
     if (!last) return false;
     return nowMs - last >= RECORDING_SILENCE_MS;
   }
 
+  /**
+   * True when CLOB book ticks have gone silent while the window is still open.
+   * Chainlink-only flow must not mask a dead market WebSocket.
+   */
+  needsClobRecovery(nowMs = Date.now()): boolean {
+    if (!this.isActiveWindowEligibleForHealth(nowMs)) return false;
+    const last = this.lastClobTickAtMs || this.windowBeganAtMs;
+    if (!last) return false;
+    return nowMs - last >= CLOB_SILENCE_MS;
+  }
+
+  /** Re-subscribe the active window's YES/NO tokens after a CLOB reconnect. */
+  resubscribeActiveClobTokens(): void {
+    if (!this.activeYesTokenId || !this.activeNoTokenId) return;
+    clobMarketFeed.ensureSubscribed([this.activeYesTokenId, this.activeNoTokenId]);
+  }
+
+  private isActiveWindowEligibleForHealth(nowMs: number): boolean {
+    if (!this.interval || !this.activeWindow || this.finalizing) return false;
+    if (nowMs >= this.activeWindow.windowEnd * 1000) return false;
+    if (this.windowBeganAtMs > 0 && nowMs - this.windowBeganAtMs < WINDOW_START_GRACE_MS) {
+      return false;
+    }
+    return true;
+  }
+
   /** Health silence uses wall clock receipt time, not oracle/event stamps. */
   private noteUsefulTick(_eventTMs?: number): void {
     this.lastUsefulTickAtMs = Date.now();
+  }
+
+  private noteClobTick(_eventTMs?: number): void {
+    const now = Date.now();
+    this.lastClobTickAtMs = now;
+    this.lastUsefulTickAtMs = now;
   }
 
   getActiveWindow(): WindowHitRecord | null {
@@ -280,6 +312,7 @@ export class MarketRecorder {
     this.prefetchedNextWindowStart = null;
     this.nextWindowPrefetchInFlight = false;
     this.lastUsefulTickAtMs = 0;
+    this.lastClobTickAtMs = 0;
     this.windowBeganAtMs = 0;
     this.finalizing = false;
   }
@@ -342,7 +375,7 @@ export class MarketRecorder {
     if (!tick) return;
     this.clobBookBuffer.push(tick);
     this.clobBookCount += 1;
-    this.noteUsefulTick(tMs);
+    this.noteClobTick(tMs);
     this.onStateChange?.(this.market._id);
   }
 
@@ -493,6 +526,7 @@ export class MarketRecorder {
     const now = Date.now();
     this.windowBeganAtMs = now;
     this.lastUsefulTickAtMs = now;
+    this.lastClobTickAtMs = now;
     void ensureWindowTickDir(this.market._id, windowStart);
     this.startTradersPoll();
     logService.info(
