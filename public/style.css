@@ -940,6 +940,81 @@ body {
   flex-shrink: 0;
 }
 
+.header-market-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.header-market-row > #market-select,
+.header-market-row > select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.header-market-row > .countdown {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.header-market-row > #wallet-start-trading-field {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.trade-allow-inline-label {
+  display: none;
+}
+
+/* Mobile header: Trade label + Off/On (no outer field container). */
+.app-header.is-mobile-trade-toggle .header-market-row > #wallet-start-trading-field {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
+  width: auto;
+}
+
+.app-header.is-mobile-trade-toggle .header-market-row .trade-allow-inline-label {
+  display: inline;
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.app-header.is-mobile-trade-toggle .header-market-row .trade-allow-toggle {
+  height: var(--header-control-height);
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.app-header.is-mobile-trade-toggle .header-market-row .trade-allow-toggle .trigger-run-mode-btn {
+  padding: 0 8px;
+  font-size: 0.7rem;
+  min-width: 0;
+}
+
+.app-header.is-mobile-trade-toggle .trade-panel-actions:not(:has(*)) {
+  display: none;
+}
+
+/* Trade title stays with the switcher in the header — hide the empty Trade section header. */
+.trade-panel.is-allow-trade-relocated > .trade-panel-header {
+  display: none;
+}
+
 .header-end {
   display: flex;
   align-items: center;
@@ -953,6 +1028,11 @@ body {
 .app-header > .header-end,
 .app-header > .schedule-highlighted-summary {
   flex-shrink: 0;
+}
+
+.app-header > .wallet-panel-header {
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 /* Keep stats + timer/profile grouped on the right in the single-row layout. */
@@ -1033,6 +1113,251 @@ body {
   width: 100%;
   max-width: none;
   justify-self: stretch;
+}
+
+/* Mobile: Wallet status/balance sits on header row 1, right of Poly Replay. */
+@media (max-width: 720px) {
+  .wallet-panel.is-header-relocated {
+    display: none !important;
+  }
+
+  .app-header.is-mobile-wallet > .app-title {
+    align-self: center;
+    line-height: 1;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 0;
+    height: auto;
+    background: transparent;
+    border-bottom: none;
+    min-width: 0;
+    flex: 1 1 auto;
+    max-width: 100%;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .panel-header-main {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    min-width: 0;
+    width: 100%;
+    height: auto;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex-shrink: 1;
+    line-height: 1;
+  }
+
+  /* Hide refresh + Connected/status; balance slot shows balance or No Connection. */
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-title-row {
+    display: none !important;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-balance-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-left: auto;
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-balance {
+    font-size: 0.8rem;
+    line-height: 1;
+    margin-left: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-balance.is-no-connection {
+    color: var(--down, #f85149);
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-balance.is-refresh-control {
+    cursor: pointer;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-balance.is-refresh-control:hover,
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-header-balance.is-refresh-control:focus-visible {
+    text-decoration: underline;
+    outline: none;
+  }
+
+  .app-header.is-mobile-wallet > .wallet-panel-header .wallet-balance-spinner {
+    display: none;
+    width: 12px;
+    height: 12px;
+    color: var(--accent);
+  }
+
+  .app-header.is-mobile-wallet.is-wallet-refreshing > .wallet-panel-header .wallet-header-balance {
+    display: none;
+  }
+
+  .app-header.is-mobile-wallet.is-wallet-refreshing > .wallet-panel-header .wallet-balance-spinner {
+    display: block;
+    animation: wallet-balance-spin 0.7s linear infinite;
+  }
+
+  /* Wallet only joins row 1 when stats are already on row 2. */
+  .app-header.is-mobile-wallet.is-compact.is-stats-row > .wallet-panel-header {
+    grid-area: wallet;
+    justify-self: stretch;
+    align-self: center;
+  }
+
+  .app-header.is-mobile-wallet.is-compact.is-stats-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title wallet end"
+      "stats stats stats"
+      "nav nav nav";
+  }
+
+  .app-header.is-mobile-wallet.is-compact.is-stats-row:has(
+      .schedule-highlighted-summary:not([hidden])
+    ) {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "title wallet highlight end"
+      "stats stats stats stats"
+      "nav nav nav nav";
+  }
+}
+
+/* Market select + Market/Schedule toggle: stack to full-width rows when they no longer fit. */
+.app-header.is-compact.is-nav-stack > .header-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.app-header.is-compact.is-nav-stack > .header-nav > .header-market-row {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.app-header.is-compact.is-nav-stack > .header-nav > .header-market-row > #market-select,
+.app-header.is-compact.is-nav-stack > .header-nav > .header-market-row > select {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
+
+.app-header.is-compact.is-nav-stack > .header-nav > .page-toggle {
+  width: 100%;
+  max-width: none;
+}
+
+.app-header.is-compact.is-nav-stack > .header-nav > .page-toggle > .page-toggle-btn {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+/*
+ * Mobile: Market / Schedule as bottom-edge tabs; page content darker than header.
+ * Labels stay "Market" and "Schedule / Heatmap".
+ */
+@media (max-width: 720px) {
+  .app.is-mobile-header .app-body,
+  .app.is-mobile-header .app-page {
+    background: var(--bg);
+  }
+
+  .app.is-mobile-header .app-page-simulator.is-mobile-stack,
+  .app.is-mobile-header .app-page-simulator.is-mobile-stack > .left-column,
+  .app.is-mobile-header .app-page-simulator.is-mobile-stack > .simulator-panel,
+  .app.is-mobile-header .app-page-schedule {
+    background: var(--bg);
+  }
+
+  .app-header.is-mobile-header {
+    padding-bottom: 0;
+  }
+
+  .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav {
+    gap: 8px;
+  }
+
+  .app-header.is-mobile-header .page-toggle,
+  .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav > .page-toggle {
+    display: flex;
+    width: calc(100% + 24px);
+    max-width: none;
+    height: 36px;
+    margin: 0 -12px 0;
+    border: none;
+    border-radius: 0;
+    overflow: hidden;
+    background: var(--panel);
+  }
+
+  .app-header.is-mobile-header .page-toggle-btn,
+  .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav > .page-toggle > .page-toggle-btn {
+    flex: 1 1 50%;
+    flex-shrink: 1;
+    width: 50%;
+    max-width: 50%;
+    min-width: 0;
+    justify-content: center;
+    border-radius: 0;
+    border-top: 2px solid transparent;
+    box-sizing: border-box;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0 8px;
+    color: var(--muted);
+    background: var(--panel);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .app-header.is-mobile-header .page-toggle-btn + .page-toggle-btn {
+    border-left: 1px solid var(--border);
+  }
+
+  .app-header.is-mobile-header .page-toggle-btn:hover:not(.is-active):not(:disabled) {
+    color: var(--text);
+    background: var(--panel);
+  }
+
+  /* Active = accent blue fill + visible top border; inactive = header bg.
+     Match/exceed inactive-tab specificity so panel bg does not win. */
+  .app-header.is-mobile-header .page-toggle-btn.is-active,
+  .app-header.is-mobile-header.is-compact.is-nav-stack
+    > .header-nav
+    > .page-toggle
+    > .page-toggle-btn.is-active {
+    background: var(--accent);
+    color: #fff;
+    border-top: 2px solid #79b8ff;
+    box-sizing: border-box;
+  }
+
+  .app-header.is-mobile-header .page-toggle-btn.is-active + .page-toggle-btn,
+  .app-header.is-mobile-header .page-toggle-btn + .page-toggle-btn.is-active {
+    border-left-color: var(--border);
+  }
 }
 
 .header-stats-progress {
@@ -1340,6 +1665,157 @@ body {
   50% {
     border-color: rgba(88, 166, 255, 0.35);
     box-shadow: 0 0 0 5px rgba(88, 166, 255, 0);
+  }
+}
+
+/*
+ * Mobile Market: Buy/Sell quotes, then 200px chart, then PTB/Current/Gap/Tick;
+ * sections stacked below with tap-to-expand headers (no column splitter / drag).
+ * One page scroll includes the graph and all sections.
+ */
+@media (max-width: 720px) {
+  .app-page-simulator.is-mobile-stack {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .app-page-simulator.is-mobile-stack::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .app-page-simulator.is-mobile-stack > .simulator-panel {
+    order: -1;
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    height: auto;
+    max-height: none;
+  }
+
+  .app-page-simulator.is-mobile-stack > .simulator-panel .simulator-panel-inner {
+    min-width: 0;
+    height: auto;
+  }
+
+  /* Flatten wrappers so quote / chart / metrics can be reordered as siblings. */
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-wrap,
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll,
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack {
+    display: contents;
+  }
+
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-wrap > .simulator-box-scrollbar-track {
+    display: none !important;
+  }
+
+  /* Order: Buy/Sell → chart → PTB/Current/Gap/Tick */
+  .app-page-simulator.is-mobile-stack .simulator-panel-inner > .quote-row,
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack > .quote-row {
+    order: 1;
+  }
+
+  .app-page-simulator.is-mobile-stack .price-graph-wrap {
+    order: 2;
+    flex: 0 0 200px;
+    height: 200px;
+    min-height: 200px;
+    max-height: 200px;
+  }
+
+  .app-page-simulator.is-mobile-stack .simulator-panel-inner > .sim-row,
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack > .sim-row {
+    order: 3;
+  }
+
+  /* Metrics + quotes: stay in view as two rows of two. */
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack > .sim-row,
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack > .quote-row {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex: 0 0 auto;
+    height: auto;
+  }
+
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack > .sim-row {
+    min-height: var(--row-height);
+    grid-auto-rows: var(--row-height);
+  }
+
+  .app-page-simulator.is-mobile-stack .simulator-box-scroll-stack > .quote-row {
+    min-height: calc(var(--row-height) - 4px);
+    grid-auto-rows: calc(var(--row-height) - 4px);
+  }
+
+  .app-page-simulator.is-mobile-stack .simulator-panel .sim-box,
+  .app-page-simulator.is-mobile-stack .simulator-panel .quote-box {
+    min-width: 0;
+  }
+
+  .app-page-simulator.is-mobile-stack > .column-splitter {
+    display: none !important;
+  }
+
+  .app-page-simulator.is-mobile-stack > .left-column {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    overflow: visible;
+    --log-margin-top: 0px;
+  }
+
+  .app-page-simulator.is-mobile-stack > .left-column .left-column-inner {
+    height: auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .app-page-simulator.is-mobile-stack .left-column-rail,
+  .app-page-simulator.is-mobile-stack .market-column-rail {
+    display: none !important;
+  }
+
+  .app-page-simulator.is-mobile-stack .panel-header-drag-handle {
+    display: none !important;
+  }
+
+  .app-page-simulator.is-mobile-stack .positions-panel-header,
+  .app-page-simulator.is-mobile-stack .triggers-panel-header,
+  .app-page-simulator.is-mobile-stack .book-panel-header,
+  .app-page-simulator.is-mobile-stack .log-panel-header {
+    cursor: pointer;
+  }
+
+  .app-page-simulator.is-mobile-stack .positions-body:not(.is-collapsed),
+  .app-page-simulator.is-mobile-stack .triggers-body:not(.is-collapsed),
+  .app-page-simulator.is-mobile-stack .log-output:not(.is-collapsed) {
+    flex: 0 0 auto !important;
+    height: auto !important;
+    min-height: min(40vh, 280px) !important;
+    max-height: min(50vh, 420px) !important;
+    overflow-y: auto !important;
+  }
+
+  /* Book ladders need a definite height (not content-auto). */
+  .app-page-simulator.is-mobile-stack .book-body:not(.is-collapsed) {
+    flex: 0 0 min(40vh, 280px) !important;
+    height: min(40vh, 280px) !important;
+    min-height: min(40vh, 280px) !important;
+    max-height: min(50vh, 420px) !important;
+    overflow: hidden !important;
+  }
+
+  .app-page-simulator.is-mobile-stack .log-panel {
+    margin-top: 0;
   }
 }
 
@@ -5616,13 +6092,22 @@ body.is-row-resizing .panel-header-drag-handle {
   color: var(--accent);
 }
 
+.wallet-header-balance-slot {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
 .wallet-header-balance {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  margin-left: auto;
   text-align: right;
+}
+
+.wallet-balance-spinner {
+  display: none;
 }
 
 .wallet-balance-refresh-icon {

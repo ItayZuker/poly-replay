@@ -211,15 +211,41 @@ export function getHeatmapState(series?: string | null): HeatmapPublicState {
 export interface ReplaySlotWindowCount {
   day: HeatmapDayId;
   hour: number;
-  /** Recorded windows on the latest calendar day for this weekday×hour. */
+  /** Replay-usable windows on the latest calendar day for this weekday×hour. */
   windowCount: number;
+}
+
+/** Active heatmap windows for a series (latest day per weekday×hour). */
+export function listActiveReplaySlotWindows(series?: string | null): Array<{
+  series: string;
+  windowStart: number;
+  day: HeatmapDayId;
+  hour: number;
+}> {
+  pruneExpiredWindows();
+  const filter = series ? String(series).trim() : "";
+  return activeStoredWindows(filter || undefined).map((stored) => ({
+    series: stored.series,
+    windowStart: stored.windowStart,
+    day: stored.day,
+    hour: stored.hour,
+  }));
+}
+
+/** `series:windowStart` keys for Replay-usable windows (CLOB book + Chainlink on disk). */
+export function replayUsableWindowKey(series: string, windowStart: number): string {
+  return `${series}:${windowStart}`;
 }
 
 /**
  * Per UTC weekday×hour counts for Replay Schedule baseline (gray before Run).
  * Uses the same latest-day-per-slot window set as Heatmap / Replay Run.
+ * When `usableWindowKeys` is set, only those `series:windowStart` keys count.
  */
-export function getReplaySlotWindowCounts(series?: string | null): {
+export function getReplaySlotWindowCounts(
+  series?: string | null,
+  usableWindowKeys?: ReadonlySet<string> | null,
+): {
   cutoffUtc: number;
   slots: ReplaySlotWindowCount[];
 } {
@@ -228,6 +254,12 @@ export function getReplaySlotWindowCounts(series?: string | null): {
   const filter = series ? String(series).trim() : "";
   const counts = new Map<string, number>();
   for (const stored of activeStoredWindows(filter || undefined)) {
+    if (
+      usableWindowKeys &&
+      !usableWindowKeys.has(replayUsableWindowKey(stored.series, stored.windowStart))
+    ) {
+      continue;
+    }
     const key = bucketKey(stored.day, stored.hour);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }

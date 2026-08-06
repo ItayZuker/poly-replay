@@ -3,7 +3,10 @@ import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.
 import { getTradingSetupById } from "./db/trading-setup-repository.js";
 import type { SchedulePlacementListItem } from "./db/schedule-placement-repository.js";
 import { listReplayTicks } from "./db/replay-tick-repository.js";
-import { listChainlinkTicks, windowsHavingChainlinkTicks } from "./db/tick-repository.js";
+import {
+  listChainlinkTicks,
+  windowsHavingReplayTickFiles,
+} from "./db/tick-repository.js";
 import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
 import { selectLatestDayHourWindows } from "./day-hour-slots.js";
 import { defaultPhaseConfig, recordAskSamples } from "./phase-config.js";
@@ -506,12 +509,23 @@ function replayTicksHaveChainlinkPath(ticks: ReplayTickDocument[]): boolean {
   });
 }
 
+/** True when merged replay ticks include CLOB book quotes (Ask path for triggers). */
+function replayTicksHaveClobBookPath(ticks: ReplayTickDocument[]): boolean {
+  return ticks.some((t) => {
+    if (t.source === "clob-book") return true;
+    return (
+      (t.yesAsk != null && Number.isFinite(t.yesAsk)) ||
+      (t.noAsk != null && Number.isFinite(t.noAsk))
+    );
+  });
+}
+
 export interface RecordedWindowSimulation {
   result: SimLastWindow | null;
   markers: SimMarker[];
   windowStart: number;
   windowEnd: number;
-  /** False when tick files are missing/empty or have no Chainlink price path. */
+  /** False when CLOB book and/or Chainlink tick data is missing/empty. */
   hadTicks: boolean;
   /** Official / inferred market outcome for held-position trade dots. */
   windowOutcome?: WindowOutcome | null;
@@ -574,8 +588,12 @@ export async function simulateRecordedWindow(
   const windowEnd = window.windowEnd;
   const windowStart = window.windowStart;
 
-  // No Chainlink price path → exclude from Replay (book-only / empty files give false results).
-  if (ticks.length === 0 || !replayTicksHaveChainlinkPath(ticks)) {
+  // Missing CLOB book or Chainlink → exclude from Replay (either side alone is unusable).
+  if (
+    ticks.length === 0 ||
+    !replayTicksHaveChainlinkPath(ticks) ||
+    !replayTicksHaveClobBookPath(ticks)
+  ) {
     // Do not cache empties as sim results — missing files must stay distinguishable.
     return {
       result: null,
@@ -1224,7 +1242,7 @@ export async function backtestSchedulePlacements(
       }
       logService.info(
         "replay",
-        `Card ${cardIndex}/${plans.length} ${label} — ${plan.slotWindows.length} window(s) in slot but tick files missing on disk`,
+        `Card ${cardIndex}/${plans.length} ${label} — ${plan.slotWindows.length} window(s) in slot but CLOB/Chainlink tick files missing on disk`,
       );
       options.onPlacementComplete?.(computed);
     } else {
@@ -1652,7 +1670,7 @@ async function buildRecordingsOnlyPlayPayload(
   }
 
   const present = new Set(
-    await windowsHavingChainlinkTicks(
+    await windowsHavingReplayTickFiles(
       market,
       slotWindows.map((w) => w.windowStart),
     ),
