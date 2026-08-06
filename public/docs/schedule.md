@@ -1,10 +1,10 @@
 # Schedule & Heatmap
 
-A page sub-header holds the **Schedule** / **Heatmap** toggle (desktop). At the bottom of the left column, switch **Live** vs **Replay** workspace.
+App header tabs are **Market** | **Schedule** | **Heatmap** (Schedule and Heatmap are separate pages/views). On desktop, switch **Live** vs **Replay** at the bottom of the left column.
 
 Trading on this product is **Trigger-only**. Phase setups, placement cards, **Auto Trade**, and **Use Schedule** are removed. The week grid always shows every UTC hour cell with Trigger stats.
 
-**Mobile (narrow viewports):** Schedule vs Heatmap is chosen from the app header tabs (**Market** | **Schedule** | **Heatmap**) — the desktop sub-header view toggle is hidden. An arrow-only bar sits at the **bottom** of the screen and opens/closes the left column (width animates) so the week/heatmap table can use the full width. The arrow rotates when the panel is closed. Desktop keeps the combined **Schedule / Heatmap** header tab plus the top sub-header Schedule/Heatmap switcher, and always shows the side panel (no arrow button).
+**Mobile (narrow viewports):** a bottom bar holds the side-panel arrow (left) and, on **Schedule** only, the **Live** / **Replay** switcher (right-aligned — hidden on Heatmap). The arrow opens/closes the left column (width animates) so the week/heatmap table can use the full width; it rotates when the panel is closed. There is no Schedule/Heatmap sub-header. Desktop always shows the side panel (no bottom bar).
 
 ## Left column
 
@@ -36,7 +36,7 @@ Replay placements never send live orders. Live Trigger Trade requires **Allow tr
 | Hour cells | Live Trigger Trade (timeline-gated) | Before **Run**: gray = usable recorded window count (CLOB + Chainlink) or **No Recordings**; after **Run**: green/red/blue + gray = windows that did not trigger |
 | Header total | Same summary chrome | Totals update as replay results arrive |
 
-In **Live**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). Each Live trigger card shows (under the title) three equally spaced rows: green/blue/red stats (**Sell** / **Win** / **Loss**), then **Stop Loss**, then right-aligned **P/L** — no Reset/Refresh control (Trade stats update from the server automatically). In **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Triggers**, then **Settings** (Latency / Fill Success), then the Live/Replay switcher. The header title’s **Poly** is red on Market and on Live Schedule; **Replay** is blue while Replay is selected. Switching Live ↔ Replay paints each workspace’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
+In **Live**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). Each Live trigger card shows (under the title) three equally spaced rows: green/blue/red stats (**Sell** / **Win** / **Loss**), then **Stop Loss**, then right-aligned **P/L** — no Reset/Refresh control (Trade stats update from the server automatically). In **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Triggers**, then **Settings** (Latency / Fill Success); on desktop the Live/Replay switcher stays under that stack, and on mobile it sits in the bottom bar (right-aligned with the side-panel arrow). The header title’s **Poly** is red on Market and on Live Schedule; **Replay** is blue while Replay is selected. Switching Live ↔ Replay paints each workspace’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
 
 | Control | Meaning |
 |---------|---------|
@@ -83,6 +83,6 @@ Replay uses the same simulation engine as demo Trigger trading. Window times/out
 
 ## Heatmap
 
-Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay. Flat-price bad recordings are excluded. Slots with **no** recorded data show **No Recordings** (same label as idle Replay Schedule cells) instead of empty metric columns. Use it to see where activity was — it does not trade by itself. Schedule/Heatmap and Live/Replay are independent toggles.
+Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay. Flat-price bad recordings are excluded. Slots with **no** recorded data show **No Recordings** (same label as idle Replay Schedule cells) instead of empty metric columns. Use it to see where activity was — it does not trade by itself. Schedule vs Heatmap (header tabs) and Live/Replay are independent.
 
 The left **color index** cards (Crossings, Range, Wallets, New wallets) can be dragged up/down by their handle — that order is the left→right order of the colored columns in each heatmap hour cell. The order is saved in the browser.

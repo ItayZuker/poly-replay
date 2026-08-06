@@ -1220,8 +1220,8 @@ body {
 }
 
 /*
- * Mobile: Market / Schedule as bottom-edge tabs; page content darker than header.
- * Labels stay "Market" and "Schedule / Heatmap".
+ * Mobile: same segmented Market / Schedule / Heatmap control as desktop,
+ * full-width in the nav stack, with a gap above the header bottom border.
  */
 @media (max-width: 720px) {
   .app.is-mobile-header .app-body,
@@ -1237,10 +1237,8 @@ body {
   }
 
   .app-header.is-mobile-header {
-    /* Keep side padding so tabs share the same inset as other header controls;
-       border-bottom spans full header width in active-tab blue. */
-    padding-bottom: 0;
-    border-bottom: 1px solid var(--accent);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
   }
 
   .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav {
@@ -1254,37 +1252,26 @@ body {
     max-width: none;
     height: var(--header-control-height);
     margin: 0;
-    border: none;
-    border-radius: 0;
-    overflow: visible;
-    background: transparent;
-  }
-
-  .app-header.is-mobile-header .page-toggle-btn--combined {
-    display: none;
-  }
-
-  .app-header.is-mobile-header .page-toggle-btn--split {
-    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--bg);
   }
 
   .app-header.is-mobile-header .page-toggle-btn,
   .app-header.is-mobile-header.is-compact.is-nav-stack > .header-nav > .page-toggle > .page-toggle-btn {
-    flex: 1 1 33.333%;
-    flex-shrink: 1;
-    width: 33.333%;
-    max-width: 33.333%;
+    flex: 1 1 0;
     min-width: 0;
     height: 100%;
     justify-content: center;
     border-radius: 0;
-    border-top: 2px solid transparent;
+    border-top: none;
     box-sizing: border-box;
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 500;
     padding: 0 6px;
     color: var(--muted);
-    background: var(--panel);
+    background: transparent;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1296,11 +1283,9 @@ body {
 
   .app-header.is-mobile-header .page-toggle-btn:hover:not(.is-active):not(:disabled) {
     color: var(--text);
-    background: var(--panel);
+    background: rgba(88, 166, 255, 0.08);
   }
 
-  /* Active = accent blue fill + top border + top corner radius; inactive = header bg.
-     Match/exceed inactive-tab specificity so panel bg does not win. */
   .app-header.is-mobile-header .page-toggle-btn.is-active,
   .app-header.is-mobile-header.is-compact.is-nav-stack
     > .header-nav
@@ -1308,15 +1293,13 @@ body {
     > .page-toggle-btn.is-active {
     background: var(--accent);
     color: #fff;
-    border-top: 2px solid #79b8ff;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    box-sizing: border-box;
+    border-top: none;
+    border-radius: 0;
   }
 
   .app-header.is-mobile-header .page-toggle-btn.is-active + .page-toggle-btn,
   .app-header.is-mobile-header .page-toggle-btn + .page-toggle-btn.is-active {
-    border-left-color: var(--border);
+    border-left-color: transparent;
   }
 }
 
@@ -1809,8 +1792,9 @@ body {
   --schedule-toolbar-height: 52px;
 }
 
+/* Desktop: no schedule sub-header. Mobile: bottom arrow bar only. */
 .schedule-page-subheader {
-  display: flex;
+  display: none;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
@@ -1819,13 +1803,6 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   box-sizing: border-box;
-}
-
-.schedule-page-subheader .schedule-view-toggle {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
-  max-width: 320px;
 }
 
 .schedule-side-toggle-btn {
@@ -1889,7 +1866,11 @@ body {
   }
 
   .app-page-schedule .schedule-page-subheader {
+    display: flex;
     order: 2;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
     border-bottom: none;
     border-top: 1px solid var(--border);
   }
@@ -1898,8 +1879,24 @@ body {
     display: inline-flex;
   }
 
-  .app-page-schedule .schedule-page-subheader .schedule-view-toggle {
-    display: none;
+  /* Live/Replay moves into the bottom bar on mobile; right-aligned. */
+  .app-page-schedule .schedule-page-subheader .schedule-workspace-switcher-bar {
+    margin-left: auto;
+    border-top: none;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .app-page-schedule .schedule-page-subheader .schedule-workspace-switcher-toolbar {
+    height: 100%;
+    padding: 0;
+  }
+
+  .app-page-schedule .schedule-page-subheader .schedule-workspace-switcher {
+    width: auto;
+    min-width: 132px;
+    height: 100%;
+    min-height: 0;
   }
 
   .app-page-schedule .schedule-setups-panel {
@@ -2011,52 +2008,6 @@ body {
   color: #fff;
 }
 
-.schedule-view-toggle {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-.schedule-view-toggle-btn {
-  flex: 1;
-  width: 50%;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-  padding: 0 10px;
-  cursor: pointer;
-  text-align: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-.schedule-view-toggle-btn:hover:not(.is-active) {
-  color: var(--text);
-  background: rgba(88, 166, 255, 0.08);
-}
-
-.schedule-view-toggle-btn.is-active {
-  background: var(--accent);
-  color: #fff;
-}
-
-.schedule-view-toggle-btn + .schedule-view-toggle-btn {
-  border-left: 1px solid var(--border);
-}
-
-.schedule-view-toggle-btn.is-active + .schedule-view-toggle-btn,
-.schedule-view-toggle-btn + .schedule-view-toggle-btn.is-active {
-  border-left-color: transparent;
-}
-
 /* Phase setups list removed — Triggers fill the left column. */
 .schedule-setups-list,
 #schedule-setups-list,
@@ -2100,6 +2051,11 @@ body {
 }
 
 .app-page-schedule.is-heatmap-view .schedule-workspace-footer {
+  display: none !important;
+}
+
+/* Live/Replay is Schedule-only (hidden on Heatmap, including mobile bottom bar). */
+.app-page-schedule.is-heatmap-view .schedule-workspace-switcher-bar {
   display: none !important;
 }
 
@@ -5799,11 +5755,6 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   display: flex;
   align-items: center;
   transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-/* Mobile: Market | Schedule | Heatmap. Desktop: Market | Schedule / Heatmap. */
-.page-toggle-btn--split {
-  display: none;
 }
 
 .page-toggle-btn:hover:not(.is-active):not(:disabled) {
