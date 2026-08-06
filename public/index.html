@@ -239,12 +239,9 @@
         </div>
         <div class="page-toggle" role="group" aria-label="Page">
           <button type="button" class="page-toggle-btn is-active" data-page="simulator">Market</button>
-          <button type="button" class="page-toggle-btn page-toggle-btn--combined" data-page="schedule">
-            Schedule / Heatmap
-          </button>
           <button
             type="button"
-            class="page-toggle-btn page-toggle-btn--split"
+            class="page-toggle-btn"
             data-page="schedule"
             data-schedule-tab="schedule"
           >
@@ -252,7 +249,7 @@
           </button>
           <button
             type="button"
-            class="page-toggle-btn page-toggle-btn--split"
+            class="page-toggle-btn"
             data-page="heatmap"
             data-schedule-tab="heatmap"
           >
@@ -1004,7 +1001,7 @@
       </div>
 
       <div id="page-schedule-heatmap" class="app-page app-page-schedule" hidden>
-        <header class="schedule-page-subheader" aria-label="Schedule tools">
+        <header class="schedule-page-subheader" aria-label="Schedule side panel">
           <button
             type="button"
             id="schedule-side-toggle"
@@ -1025,10 +1022,6 @@
               />
             </svg>
           </button>
-          <div class="schedule-view-toggle" role="group" aria-label="Schedule view">
-            <button type="button" class="schedule-view-toggle-btn is-active" data-schedule-view="schedule">Schedule</button>
-            <button type="button" class="schedule-view-toggle-btn" data-schedule-view="heatmap">Heatmap</button>
-          </div>
         </header>
         <div class="schedule-page-body">
         <aside id="schedule-setups-panel" class="panel schedule-setups-panel" aria-label="Schedule triggers">

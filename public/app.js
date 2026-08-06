@@ -3267,11 +3267,23 @@ function initMarketMobileStack() {
   }
 }
 
+/** Keep Live/Replay switcher in the left column (desktop) or bottom bar (mobile). */
+function syncScheduleWorkspaceSwitcherHost() {
+  const bar = document.querySelector(".schedule-workspace-switcher-bar");
+  const mobileHost = document.querySelector(".schedule-page-subheader");
+  const desktopHost = $("schedule-workspace-footer");
+  if (!bar || !mobileHost || !desktopHost) return;
+  const host = isMarketMobileStack() ? mobileHost : desktopHost;
+  if (bar.parentElement !== host) host.appendChild(bar);
+}
+
 /** Sync Schedule left-panel collapse chrome for mobile (subheader toggle + aria). */
 function syncScheduleMobileSide() {
   const page = $("page-schedule-heatmap");
   const toggleBtn = $("schedule-side-toggle");
   if (!page) return;
+
+  syncScheduleWorkspaceSwitcherHost();
 
   const mobile = isMarketMobileStack();
   if (!mobile) {
@@ -3309,6 +3321,17 @@ function initScheduleMobileSide() {
     setScheduleSideCollapsed(!collapsed);
   });
   syncScheduleMobileSide();
+  if (typeof window.matchMedia !== "function") {
+    window.addEventListener("resize", syncScheduleMobileSide);
+    return;
+  }
+  const mq = window.matchMedia(MARKET_MOBILE_MQ);
+  const onChange = () => syncScheduleMobileSide();
+  if (typeof mq.addEventListener === "function") {
+    mq.addEventListener("change", onChange);
+  } else if (typeof mq.addListener === "function") {
+    mq.addListener(onChange);
+  }
 }
 
 function resizeChartCanvasFor(canvas) {
@@ -9590,8 +9613,7 @@ function initHeatmapLegend() {
 function bindScheduleViewToggle() {
   const list = $("schedule-setups-list");
   const heatmapPanel = $("schedule-heatmap-panel");
-  const buttons = document.querySelectorAll(".schedule-view-toggle-btn");
-  if (!heatmapPanel || !buttons.length) return;
+  if (!heatmapPanel) return;
 
   const showView = (view, options = {}) => {
     const next = view === "heatmap" ? "heatmap" : "schedule";
@@ -9604,9 +9626,6 @@ function bindScheduleViewToggle() {
       list.setAttribute("aria-hidden", "true");
     }
     heatmapPanel.hidden = isSchedule;
-    for (const btn of buttons) {
-      btn.classList.toggle("is-active", btn.dataset.scheduleView === next);
-    }
     if (options.persist !== false) saveScheduleViewPref(next);
     if (isSchedule) setWalletsListOpen(false);
     // Keep both UIs mounted. Only load heatmap the first time if not yet available.
@@ -9619,15 +9638,6 @@ function bindScheduleViewToggle() {
   };
 
   showScheduleView = showView;
-
-  for (const btn of buttons) {
-    btn.addEventListener("click", () => {
-      const view = btn.dataset.scheduleView;
-      if (!view || btn.classList.contains("is-active")) return;
-      showView(view);
-    });
-  }
-
   showView(loadScheduleViewPref(), { persist: false });
 }
 
@@ -13260,11 +13270,8 @@ function bindPageToggle() {
       if (btnPage === "simulator") active = isSimulator;
       else if (btnPage === "heatmap" || scheduleTab === "heatmap") {
         active = isSchedule && scheduleView === "heatmap";
-      } else if (scheduleTab === "schedule") {
+      } else if (btnPage === "schedule" || scheduleTab === "schedule") {
         active = isSchedule && scheduleView === "schedule";
-      } else if (btnPage === "schedule") {
-        // Desktop combined tab stays active for either Schedule or Heatmap view.
-        active = isSchedule;
       }
       btn.classList.toggle("is-active", active);
     }
