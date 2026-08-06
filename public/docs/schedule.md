@@ -1,10 +1,10 @@
 # Schedule & Heatmap
 
-A page sub-header holds the **Schedule** / **Heatmap** toggle. At the bottom of the left column, switch **Live** vs **Replay** workspace.
+A page sub-header holds the **Schedule** / **Heatmap** toggle (desktop). At the bottom of the left column, switch **Live** vs **Replay** workspace.
 
 Trading on this product is **Trigger-only**. Phase setups, placement cards, **Auto Trade**, and **Use Schedule** are removed. The week grid always shows every UTC hour cell with Trigger stats.
 
-**Mobile (narrow viewports):** the same sub-header also has an arrow-only button (same height as the view toggle) that opens/closes the left column (width animates) so the week/heatmap table can use the full width. The arrow rotates when the panel is closed. Desktop always shows the side panel (no arrow button).
+**Mobile (narrow viewports):** Schedule vs Heatmap is chosen from the app header tabs (**Market** | **Schedule** | **Heatmap**) — the desktop sub-header view toggle is hidden. An arrow-only bar sits at the **bottom** of the screen and opens/closes the left column (width animates) so the week/heatmap table can use the full width. The arrow rotates when the panel is closed. Desktop keeps the combined **Schedule / Heatmap** header tab plus the top sub-header Schedule/Heatmap switcher, and always shows the side panel (no arrow button).
 
 ## Left column
 

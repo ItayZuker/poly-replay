@@ -1,6 +1,11 @@
 {
-  "current": "1.56.0",
+  "current": "1.57.0",
   "releases": [
+    {
+      "version": "1.57.0",
+      "releasedAt": "2026-08-06T11:41:56.368Z",
+      "notes": "Mobile header tabs Market | Schedule | Heatmap; side-panel arrow bar moves to bottom; desktop keeps combined Schedule/Heatmap tab and sub-header switcher. Docs updated."
+    },
     {
       "version": "1.56.0",
       "releasedAt": "2026-08-06T11:13:40.958Z",

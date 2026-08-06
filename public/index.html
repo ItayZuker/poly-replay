@@ -239,7 +239,25 @@
         </div>
         <div class="page-toggle" role="group" aria-label="Page">
           <button type="button" class="page-toggle-btn is-active" data-page="simulator">Market</button>
-          <button type="button" class="page-toggle-btn" data-page="schedule">Schedule / Heatmap</button>
+          <button type="button" class="page-toggle-btn page-toggle-btn--combined" data-page="schedule">
+            Schedule / Heatmap
+          </button>
+          <button
+            type="button"
+            class="page-toggle-btn page-toggle-btn--split"
+            data-page="schedule"
+            data-schedule-tab="schedule"
+          >
+            Schedule
+          </button>
+          <button
+            type="button"
+            class="page-toggle-btn page-toggle-btn--split"
+            data-page="heatmap"
+            data-schedule-tab="heatmap"
+          >
+            Heatmap
+          </button>
         </div>
       </div>
       <div id="schedule-highlighted-summary" class="schedule-highlighted-summary" hidden>
