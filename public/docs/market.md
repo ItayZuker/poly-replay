@@ -28,7 +28,7 @@ Phase **Auto Trade**, **Use Schedule**, chart phase setups, **manual quote order
 
 Feed **Latency** is shown in the Settings page header. **Fill success** lives under Settings → **Stats**. See [Settings & wallet](doc:settings).
 
-**Available markets**, **Recording**, and per-series **retention** are managed in the separate **Admin CRM** (not in this trader UI). Only available series appear in the market picker; trading APIs reject unavailable series. Recording still runs only on non-`TRADING_EXECUTOR` processes. On the recorder, stalled Chainlink (~20s) discards the active window and reconnects; a broader silence watchdog (~60s with no book/Chainlink ticks) reconnects feeds and restarts that series’ recorder. See [Information flow](doc:data-flow).
+**Available markets**, **Recording**, and per-series **retention** are managed in the separate **Admin CRM** (not in this trader UI). Only available series appear in the market picker; trading APIs reject unavailable series. Recording still runs only on non-`TRADING_EXECUTOR` processes. On the recorder, stalled Chainlink (~20s) discards the active window and reconnects; a silence watchdog covers ~60s with no book+Chainlink (discard + reconnect both feeds + restart recorder) and ~20s CLOB-only silence while Chainlink still flows (reconnect market WS only, keep the window). See [Information flow](doc:data-flow).
 
 Live Trigger Trade: **Allow trade** on, trigger on **Trade** + **Active**. Hour-slot results appear on [Schedule](doc:schedule).
 

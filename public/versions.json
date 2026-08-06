@@ -1,6 +1,11 @@
 {
-  "current": "1.53.0",
+  "current": "1.53.1",
   "releases": [
+    {
+      "version": "1.53.1",
+      "releasedAt": "2026-08-06T05:37:46.214Z",
+      "notes": "Recording: recover from CLOB-only silence (~20s) without waiting for Chainlink to die; keep the window and reconnect the market WebSocket. Docs updated."
+    },
     {
       "version": "1.53.0",
       "releasedAt": "2026-08-05T14:43:27.333Z",
