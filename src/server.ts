@@ -1184,7 +1184,7 @@ app.get("/api/window", async (req, res) => {
   }
 });
 
-/** Official window outcome: completed crypto-price first, else explicit Gamma. */
+/** Official window outcome: explicit Gamma payout (~1/~0) — Polymarket settlement source. */
 app.get("/api/window-resolution", async (req, res) => {
   try {
     const slug = String(req.query.slug || "").trim();

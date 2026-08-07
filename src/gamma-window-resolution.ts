@@ -167,7 +167,7 @@ export async function fetchGammaWindowResolution(
 
 /**
  * Wait until Gamma marks the market explicitly resolved with settled ~1/~0 prices.
- * Prefer {@link waitForOfficialWindowResolution} for live finalize (crypto-price first).
+ * Prefer {@link waitForOfficialWindowResolution} for live finalize (Gamma payout).
  */
 export async function waitForGammaWindowResolution(
   slug: string,

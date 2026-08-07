@@ -25,6 +25,17 @@ export async function appendJsonlLines(filePath: string, docs: unknown[]): Promi
   await fs.appendFile(filePath, payload, "utf8");
 }
 
+/** Rewrite a JSONL file in place (full replace). */
+export async function writeJsonlFile(filePath: string, docs: unknown[]): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  if (docs.length === 0) {
+    await fs.writeFile(filePath, "", "utf8");
+    return;
+  }
+  const payload = docs.map((doc) => JSON.stringify(doc)).join("\n") + "\n";
+  await fs.writeFile(filePath, payload, "utf8");
+}
+
 /** Dropbox / AV can stall reads indefinitely; don't block Replay on one file. */
 const JSONL_READ_TIMEOUT_MS = 45_000;
 
