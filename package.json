@@ -1,6 +1,6 @@
 {
   "name": "poly-simulator",
-  "version": "1.59.0",
+  "version": "1.59.1",
   "description": "Schedule-driven Polymarket up/down trading with optional recording and Replay",
   "type": "module",
   "engines": {
@@ -17,7 +17,9 @@
     "migrate:heatmap-to-windows": "tsx src/scripts/migrate-heatmap-to-windows.ts",
     "set-password": "tsx src/scripts/set-user-password.ts",
     "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",
-    "repair:false-wins": "tsx src/scripts/repair-false-wins.ts"
+    "repair:false-wins": "tsx src/scripts/repair-false-wins.ts",
+    "repair:held-gamma": "tsx src/scripts/repair-held-settlements-from-gamma.ts",
+    "rebuild:trigger-live-stats": "tsx src/scripts/rebuild-trigger-live-stats.ts"
   },
   "dependencies": {
     "@polymarket/clob-client-v2": "^1.0.6",
