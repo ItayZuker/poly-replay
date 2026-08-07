@@ -1839,7 +1839,7 @@
     return null;
   }
 
-  /** Recording has official outcome + open/close (crypto-price / Gamma) — no inference. */
+  /** Recording has official outcome + open/close (Gamma payout) — no inference. */
   function hasOfficialSettlement(win) {
     const outcome = win?.windowOutcome;
     if (outcome !== "up" && outcome !== "down") return false;

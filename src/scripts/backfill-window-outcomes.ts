@@ -1,6 +1,7 @@
 /**
- * Backfill windowOutcome (+ settlement prices when available) on windows/ JSON
- * from official resolution (completed crypto-price, else explicit Gamma) by slug.
+ * Backfill windowOutcome (+ settlement prices) from official Gamma payout (~1/~0),
+ * and stamp that Gamma close as the Chainlink JSONL tip at windowEnd.
+ * Mid-window Chainlink samples are never rewritten.
  *
  * Usage:
  *   npm run backfill:outcomes
@@ -13,6 +14,7 @@ import {
   saveRecordedWindow,
 } from "../db/recorded-window-repository.js";
 import { upsertRecordedWindowSummary } from "../db/recorded-window-mongo-repository.js";
+import { stampOfficialChainlinkCloseTip } from "../db/tick-repository.js";
 import { closeMongoClient } from "../db/mongo-client.js";
 import { initStorage } from "../db/data-dir.js";
 import { fetchOfficialWindowResolution } from "../official-window-resolution.js";
@@ -35,6 +37,9 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
   let unchanged = 0;
   let unresolved = 0;
   let failed = 0;
+  let tipUpdated = 0;
+  let tipUnchanged = 0;
+  let tipSkipped = 0;
 
   for (let i = 0; i < windows.length; i += 1) {
     const window = windows[i];
@@ -52,17 +57,41 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         continue;
       }
 
-      const { outcome, finalPrice, priceToBeat, source } = resolution;
+      const { outcome, finalPrice, priceToBeat, source, yesPrice, noPrice } = resolution;
       const nextAsset = finalPrice ?? window.assetPrice;
       const nextPtb = priceToBeat ?? window.prevCloseAsset;
       const nextGap =
         nextAsset != null && nextPtb != null ? roundTo4(nextAsset - nextPtb) : window.assetGap;
 
+      let tipResult: "updated" | "unchanged" | "skipped-no-ticks" = "skipped-no-ticks";
+      if (
+        finalPrice != null &&
+        Number.isFinite(finalPrice) &&
+        priceToBeat != null &&
+        Number.isFinite(priceToBeat) &&
+        Number.isFinite(window.windowEnd)
+      ) {
+        tipResult = await stampOfficialChainlinkCloseTip(
+          market,
+          window.windowStart,
+          window.windowEnd,
+          { closePrice: finalPrice, priceToBeat },
+        );
+        if (tipResult === "updated") tipUpdated += 1;
+        else if (tipResult === "unchanged") tipUnchanged += 1;
+        else tipSkipped += 1;
+      } else {
+        tipSkipped += 1;
+      }
+
       const outcomeSame = window.windowOutcome === outcome;
       const pricesSame =
         window.assetPrice === nextAsset && window.prevCloseAsset === nextPtb;
+      const payoutSame =
+        (yesPrice == null || window.yesPrice === yesPrice) &&
+        (noPrice == null || window.noPrice === noPrice);
 
-      if (outcomeSame && pricesSame) {
+      if (outcomeSame && pricesSame && payoutSame && tipResult !== "updated") {
         unchanged += 1;
         if ((i + 1) % 50 === 0) {
           console.log(`[backfill] ${label}: ${outcome} (unchanged)`);
@@ -82,8 +111,8 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         prevCloseAsset: nextPtb,
         assetGap: nextGap,
         windowOutcome: outcome,
-        yesPrice: window.yesPrice,
-        noPrice: window.noPrice,
+        yesPrice: yesPrice ?? window.yesPrice,
+        noPrice: noPrice ?? window.noPrice,
         ptbCrossings: window.ptbCrossings,
         minAssetPrice: window.minAssetPrice,
         maxAssetPrice: window.maxAssetPrice,
@@ -123,6 +152,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
           (finalPrice != null && priceToBeat != null
             ? ` (ptb=${priceToBeat} close=${finalPrice})`
             : "") +
+          ` tip=${tipResult}` +
           ` [${source}] ${slug}`,
       );
     } catch (err) {
@@ -135,7 +165,8 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
 
   console.log(
     `[backfill] ${market._id} done: updated=${updated} unchanged=${unchanged}` +
-      ` unresolved=${unresolved} failed=${failed}`,
+      ` unresolved=${unresolved} failed=${failed}` +
+      ` tipUpdated=${tipUpdated} tipUnchanged=${tipUnchanged} tipSkipped=${tipSkipped}`,
   );
 }
 

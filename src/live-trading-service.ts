@@ -2153,7 +2153,7 @@ export class LiveTradingService {
     return simulatorService.getPhaseSetup();
   }
 
-  /** Official market UP/DOWN for a card (crypto-price completed, else Gamma). */
+  /** Official market UP/DOWN for a card (Gamma payout ~1/~0 — same as Polymarket settlement). */
   private async fetchOfficialMarketOutcome(
     card: TradingPositionCard,
   ): Promise<"up" | "down" | null> {
@@ -2171,9 +2171,8 @@ export class LiveTradingService {
   }
 
   /**
-   * Finalize held settlement only after official Up/Down is known
-   * (completed crypto-price, else explicit Gamma).
-   * Portfolio token marks / realized PnL may fill dollars, never Market or Win/Loss alone.
+   * Finalize held settlement only after official Up/Down is known (explicit Gamma payout).
+   * Clearly resolved token marks (~0 / ~1) override a mismatched feed so wallet truth wins.
    */
   private applyHeldSettlementToCard(
     card: TradingPositionCard,
@@ -2187,22 +2186,42 @@ export class LiveTradingService {
       opts.officialOutcome === "up" || opts.officialOutcome === "down"
         ? opts.officialOutcome
         : null;
-    // Stay Pending until crypto-price completes or Gamma explicitly resolves.
-    if (!official) return false;
+    // Stay Pending until Gamma explicitly resolves (or token mark path supplies truth below).
+    const curClear = isClearlyResolvedTokenPrice(opts.curPrice);
+    if (!official && !curClear) return false;
 
-    const won = card.side === official;
-    card.outcome = official;
+    let won = official != null ? card.side === official : Number(opts.curPrice) >= 0.5;
+    let outcome: "up" | "down" =
+      official ?? (won ? card.side : card.side === "up" ? "down" : "up");
+
+    if (curClear) {
+      const tokenWon = Number(opts.curPrice) >= 0.5;
+      // Held token payout is wallet truth when clearly resolved (~0 or ~1).
+      if (official == null || tokenWon !== won) {
+        won = tokenWon;
+        outcome = won ? card.side : card.side === "up" ? "down" : "up";
+      }
+    }
+
+    card.outcome = outcome;
     card.status = won ? "win" : "loss";
 
-    const curClear = isClearlyResolvedTokenPrice(opts.curPrice);
     const settled = resolveHeldSettlement(card, {
       curPrice: curClear ? opts.curPrice : null,
       grossPl: opts.grossPl,
     });
     if (curClear) {
-      const tokenWon = Number(opts.curPrice) >= 0.5;
-      // Prefer fee-aware held P/L when the token mark disagrees with official outcome.
-      card.pl = tokenWon === won ? settled.pl : feeAwarePlHeld(card, won);
+      card.pl = feeAwarePlHeld(card, won);
+      if (
+        opts.grossPl != null &&
+        Number.isFinite(Number(opts.grossPl)) &&
+        (Number(opts.grossPl) >= 0) === won
+      ) {
+        const fromGross = feeAwarePlFromGross(Number(opts.grossPl), card);
+        if ((fromGross >= 0) === won) card.pl = fromGross;
+      } else if ((settled.pl >= 0) === won) {
+        card.pl = settled.pl;
+      }
     } else if (
       opts.grossPl != null &&
       Number.isFinite(Number(opts.grossPl)) &&

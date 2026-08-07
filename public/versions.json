@@ -1,6 +1,11 @@
 {
-  "current": "1.58.0",
+  "current": "1.59.0",
   "releases": [
+    {
+      "version": "1.59.0",
+      "releasedAt": "2026-08-07T06:14:45.915Z",
+      "notes": "Held Win/Loss and official window outcome use Gamma payout (~$1/~$0) instead of crypto-price; token-mark safety net; outcome backfill stamps Gamma close on Chainlink tip. Docs updated."
+    },
     {
       "version": "1.58.0",
       "releasedAt": "2026-08-06T11:52:39.503Z",

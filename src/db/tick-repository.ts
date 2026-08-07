@@ -12,10 +12,12 @@ import {
   parseWindowStartFromFilename,
   windowTicksDir,
 } from "./data-dir.js";
-import { appendJsonlLines, readJsonlFile } from "./file-store.js";
+import { appendJsonlLines, readJsonlFile, writeJsonlFile } from "./file-store.js";
 import {
   fromStoredBookTick,
   fromStoredChainlinkTick,
+  roundTo4,
+  toStoredChainlinkTick,
   type StoredTickDocument,
 } from "../tick-compact.js";
 import fs from "fs/promises";
@@ -116,6 +118,70 @@ export async function listChainlinkTicks(
   return ticks
     .map((doc) => fromStoredChainlinkTick(doc))
     .sort((a, b) => a.tMs - b.tMs);
+}
+
+/**
+ * Stamp Polymarket Gamma settlement close onto the Chainlink JSONL tip at windowEnd.
+ * Mid-window Chainlink samples are kept as recorded; ticks at/after windowEnd are replaced
+ * by one tip priced from Gamma (not invented Chainlink). Skips if there is no mid-window path.
+ */
+export async function stampOfficialChainlinkCloseTip(
+  market: MarketDocument,
+  windowStart: number,
+  windowEnd: number,
+  opts: { closePrice: number; priceToBeat: number },
+): Promise<"updated" | "unchanged" | "skipped-no-ticks"> {
+  if (
+    !Number.isFinite(windowStart) ||
+    !Number.isFinite(windowEnd) ||
+    !Number.isFinite(opts.closePrice) ||
+    !Number.isFinite(opts.priceToBeat)
+  ) {
+    return "skipped-no-ticks";
+  }
+
+  const filePath = chainlinkTicksPath(market._id, windowStart);
+  const raw = await readJsonlFile<StoredTickDocument>(filePath, Number.MAX_SAFE_INTEGER);
+  if (raw.length === 0) return "skipped-no-ticks";
+
+  const endMs = Math.round(windowEnd * 1000);
+  const tipEpsMs = 2;
+  const expanded = raw
+    .map((doc) => fromStoredChainlinkTick(doc))
+    .sort((a, b) => a.tMs - b.tMs);
+  const mid = expanded.filter((t) => t.tMs < endMs - tipEpsMs);
+  if (mid.length === 0) return "skipped-no-ticks";
+
+  const close = roundTo4(opts.closePrice);
+  const ptb = roundTo4(opts.priceToBeat);
+  const existingTips = expanded.filter((t) => t.tMs >= endMs - tipEpsMs);
+  const tipMatch =
+    existingTips.length === 1 &&
+    existingTips[0]!.tMs === endMs &&
+    Number(existingTips[0]!.assetPrice) === close &&
+    Number(existingTips[0]!.prevCloseAsset) === ptb;
+  if (tipMatch && mid.length + existingTips.length === expanded.length) {
+    return "unchanged";
+  }
+
+  const lastMid = mid[mid.length - 1]!;
+  const tip: ChainlinkTickDocument = {
+    _id: `${windowStart}:gamma-close`,
+    windowStart,
+    windowEnd,
+    tMs: endMs,
+    assetPrice: close,
+    prevCloseAsset: ptb,
+    ptbCrossings: lastMid.ptbCrossings,
+    minAssetPrice: lastMid.minAssetPrice,
+    maxAssetPrice: lastMid.maxAssetPrice,
+  };
+
+  await writeJsonlFile(filePath, [
+    ...mid.map((t) => toStoredChainlinkTick(t)),
+    toStoredChainlinkTick(tip),
+  ]);
+  return "updated";
 }
 
 async function windowHasNonEmptyTickFile(
