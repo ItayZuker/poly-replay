@@ -13,6 +13,13 @@ export interface OfficialWindowResolution {
   noPrice?: number;
 }
 
+/** True when a recording carries an explicit Gamma Up/Down settlement. */
+export function hasOfficialWindowOutcome(
+  outcome: unknown,
+): outcome is WindowOutcome {
+  return outcome === "up" || outcome === "down";
+}
+
 /**
  * Official Up/Down for a finished window — same source Polymarket uses to pay tokens:
  * explicit Gamma resolve with ~1/~0 payout prices.

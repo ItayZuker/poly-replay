@@ -452,11 +452,14 @@ export async function buildLiveHourPlayPayload(
 
     if (!tradeDots.length && !markers.length) continue;
 
-    const hasTicks = tickSet.has(windowStart);
+    // Live Open Replay requires official Gamma on the recording (same gate as Replay).
     const windowOutcome: WindowOutcome | undefined =
       meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
         ? meta.windowOutcome
         : undefined;
+    if (!windowOutcome) continue;
+
+    const hasTicks = tickSet.has(windowStart);
     const prevCloseAsset =
       meta?.prevCloseAsset != null && Number.isFinite(meta.prevCloseAsset)
         ? Number(meta.prevCloseAsset)
@@ -466,21 +469,10 @@ export async function buildLiveHourPlayPayload(
         ? Number(meta.assetPrice)
         : undefined;
 
-    // When recording meta has official outcome on the card, prefer that for Official label.
-    let outcome = windowOutcome;
-    if (!outcome) {
-      for (const row of winRows) {
-        if (row.card.outcome === "up" || row.card.outcome === "down") {
-          outcome = row.card.outcome;
-          break;
-        }
-      }
-    }
-
     windows.push({
       windowStart,
       windowEnd,
-      windowOutcome: outcome,
+      windowOutcome,
       prevCloseAsset,
       finalPrice,
       bucket,
