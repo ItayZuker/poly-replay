@@ -1,7 +1,12 @@
 import { clobMarketFeed, hasSocketBook } from "./clob-market-feed.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
 import { getPolymarketWindowAssetPricesForPair } from "./asset-price-service.js";
-import { waitForOfficialWindowResolution } from "./official-window-resolution.js";
+import {
+  fetchOfficialWindowResolution,
+  hasOfficialWindowOutcome,
+  waitForOfficialWindowResolution,
+  type OfficialWindowResolution,
+} from "./official-window-resolution.js";
 import {
   fetchCurrentUpDownMarket,
   fetchCurrentUpDownMarketWithRetry,
@@ -35,8 +40,12 @@ import {
   insertChainlinkTicks,
   insertClobBookTicks,
   insertClobRawTicks,
+  stampOfficialChainlinkCloseTip,
 } from "./db/tick-repository.js";
-import { saveRecordedWindow } from "./db/recorded-window-repository.js";
+import {
+  getRecordedWindow,
+  saveRecordedWindow,
+} from "./db/recorded-window-repository.js";
 import { upsertRecordedWindowSummary } from "./db/recorded-window-mongo-repository.js";
 import { ingestRecordedWindow } from "./heatmap-service.js";
 import { pruneColdMarketData } from "./db/tick-archive.js";
@@ -58,6 +67,12 @@ const RECORDING_SILENCE_MS = 60_000;
 const CLOB_SILENCE_MS = 20_000;
 /** Ignore silence right after a window opens (pair/book may still be warming up). */
 const WINDOW_START_GRACE_MS = 20_000;
+/**
+ * After windowEnd, keep polling Gamma in the background this long before leaving
+ * windowOutcome permanently unset (does not block the next recording window).
+ */
+const OFFICIAL_RESOLVE_MAX_WAIT_MS = 20 * 60 * 1000;
+const OFFICIAL_RESOLVE_POLL_MS = 2_000;
 
 type StateChangeListener = (series: string) => void;
 
@@ -108,6 +123,8 @@ export class MarketRecorder {
   private windowBeganAtMs = 0;
   /** True while captureEndPrices/finalizeWindow run — silence is expected (no in-window ticks). */
   private finalizing = false;
+  /** In-flight background Gamma polls keyed by windowStart (non-blocking). */
+  private pendingOfficialResolves = new Map<number, Promise<void>>();
 
   constructor(market: MarketDocument, onStateChange: StateChangeListener | null = null) {
     this.market = market;
@@ -603,36 +620,188 @@ export class MarketRecorder {
 
     // Caller (rollClosedWindow) owns `finalizing` for the whole rollover so this
     // wait cannot leave the recorder permanently stuck if finalize fails.
+    // Gamma often lands minutes after windowEnd — do not block the next window;
+    // a one-shot check here, then background poll up to 20 minutes after end.
     try {
       const { asset, timeframe } = parseMarketSeries(this.market._id);
       const pair = await fetchMarketPairFromSlug(this.activeWindow.slug);
       const yesInfo = clobMarketFeed.getCachedMarketInfo(pair.yesTokenId);
       const noInfo = clobMarketFeed.getCachedMarketInfo(pair.noTokenId);
-      const official = await waitForOfficialWindowResolution(this.activeWindow.slug, {
-        maxWaitMs: 120_000,
-        intervalMs: 1000,
-      });
-
       if (yesInfo) this.activeWindow.yesPrice = pickDisplayPrice(yesInfo).price;
       if (noInfo) this.activeWindow.noPrice = pickDisplayPrice(noInfo).price;
 
+      const official = await fetchOfficialWindowResolution(this.activeWindow.slug);
       if (official) {
         this.applyAssetPrices(official.finalPrice, official.priceToBeat);
         this.activeWindow.windowOutcome = official.outcome;
+        if (official.yesPrice != null) this.activeWindow.yesPrice = official.yesPrice;
+        if (official.noPrice != null) this.activeWindow.noPrice = official.noPrice;
         return;
       }
 
       // Record Chainlink/REST close/PTB when available, but do not invent windowOutcome
-      // from incomplete prices — leave unset for later official backfill.
+      // from incomplete prices — leave unset for background Gamma / later backfill.
       const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
       this.applyAssetPrices(prices.assetPrice, prices.prevCloseAsset);
-      logService.warn(
+      logService.info(
         "recorder",
-        `Official resolution unavailable for ${this.activeWindow.slug}; windowOutcome left unset`,
+        `Gamma not ready for ${this.activeWindow.slug}; saving without windowOutcome (background poll ≤20m)`,
       );
     } catch {
       // best effort
     }
+  }
+
+  /** Non-blocking: poll Gamma until windowEnd+20m, then patch the saved recording. */
+  private scheduleBackgroundOfficialResolve(input: {
+    windowStart: number;
+    windowEnd: number;
+    slug: string;
+  }): void {
+    const slug = input.slug.trim();
+    if (!slug || this.pendingOfficialResolves.has(input.windowStart)) return;
+    const work = this.runBackgroundOfficialResolve({ ...input, slug }).finally(() => {
+      this.pendingOfficialResolves.delete(input.windowStart);
+    });
+    this.pendingOfficialResolves.set(input.windowStart, work);
+  }
+
+  private async runBackgroundOfficialResolve(input: {
+    windowStart: number;
+    windowEnd: number;
+    slug: string;
+  }): Promise<void> {
+    const deadlineMs = input.windowEnd * 1000 + OFFICIAL_RESOLVE_MAX_WAIT_MS;
+    const remainingMs = Math.max(0, deadlineMs - Date.now());
+    if (remainingMs <= 0) {
+      logService.warn(
+        "recorder",
+        `Official resolution timed out for ${input.slug}; windowOutcome left unset`,
+      );
+      return;
+    }
+
+    logService.info(
+      "recorder",
+      `Background Gamma poll for ${input.slug} (up to ${Math.ceil(remainingMs / 1000)}s)`,
+    );
+
+    const official = await waitForOfficialWindowResolution(input.slug, {
+      maxWaitMs: remainingMs,
+      intervalMs: OFFICIAL_RESOLVE_POLL_MS,
+    });
+
+    if (!official) {
+      logService.warn(
+        "recorder",
+        `Official resolution unavailable after 20m for ${input.slug}; windowOutcome left unset`,
+      );
+      return;
+    }
+
+    try {
+      await this.applyOfficialResolutionToSavedWindow(input.windowStart, official);
+      logService.success(
+        "recorder",
+        `Background Gamma settled ${input.slug} → ${official.outcome}`,
+      );
+    } catch (err) {
+      logService.error(
+        "recorder",
+        `Failed to apply background Gamma for ${input.slug}: ${String(err)}`,
+      );
+    }
+  }
+
+  private async applyOfficialResolutionToSavedWindow(
+    windowStart: number,
+    official: OfficialWindowResolution,
+  ): Promise<void> {
+    const existing = await getRecordedWindow(this.market, windowStart);
+    if (!existing) {
+      logService.warn(
+        "recorder",
+        `Background Gamma: no saved window ${windowStart} for ${this.market._id}`,
+      );
+      return;
+    }
+    if (hasOfficialWindowOutcome(existing.windowOutcome)) return;
+
+    const nextAsset = official.finalPrice ?? existing.assetPrice;
+    const nextPtb = official.priceToBeat ?? existing.prevCloseAsset;
+    const nextGap =
+      nextAsset != null && nextPtb != null ? roundTo4(nextAsset - nextPtb) : existing.assetGap;
+
+    if (
+      official.finalPrice != null &&
+      Number.isFinite(official.finalPrice) &&
+      official.priceToBeat != null &&
+      Number.isFinite(official.priceToBeat) &&
+      Number.isFinite(existing.windowEnd)
+    ) {
+      await stampOfficialChainlinkCloseTip(
+        this.market,
+        existing.windowStart,
+        existing.windowEnd,
+        { closePrice: official.finalPrice, priceToBeat: official.priceToBeat },
+      );
+    }
+
+    const nextDoc = {
+      windowStart: existing.windowStart,
+      windowEnd: existing.windowEnd,
+      savedAt: existing.savedAt,
+      slug: existing.slug,
+      question: existing.question,
+      conditionId: existing.conditionId,
+      assetPrice: nextAsset,
+      prevCloseAsset: nextPtb,
+      assetGap: nextGap,
+      windowOutcome: official.outcome,
+      yesPrice: official.yesPrice ?? existing.yesPrice,
+      noPrice: official.noPrice ?? existing.noPrice,
+      ptbCrossings: existing.ptbCrossings,
+      minAssetPrice: existing.minAssetPrice,
+      maxAssetPrice: existing.maxAssetPrice,
+      assetRange: existing.assetRange,
+      rangeTop: existing.rangeTop,
+      rangeBottom: existing.rangeBottom,
+      uniqueTraders: existing.uniqueTraders,
+      newWallets: existing.newWallets,
+      knownWallets: existing.knownWallets,
+      tickCount: existing.tickCount,
+      clobRawCount: existing.clobRawCount,
+      clobBookCount: existing.clobBookCount,
+      chainlinkCount: existing.chainlinkCount,
+    };
+    await saveRecordedWindow(this.market, nextDoc);
+    await upsertRecordedWindowSummary(this.market._id, {
+      windowStart: nextDoc.windowStart,
+      windowEnd: nextDoc.windowEnd,
+      savedAt: nextDoc.savedAt,
+      ptbCrossings: nextDoc.ptbCrossings,
+      rangeTop: nextDoc.rangeTop,
+      rangeBottom: nextDoc.rangeBottom,
+      uniqueTraders: nextDoc.uniqueTraders,
+      newWallets: nextDoc.newWallets,
+      windowOutcome: nextDoc.windowOutcome,
+      minAssetPrice: nextDoc.minAssetPrice,
+      maxAssetPrice: nextDoc.maxAssetPrice,
+      assetRange: nextDoc.assetRange,
+      prevCloseAsset: nextDoc.prevCloseAsset,
+      assetPrice: nextDoc.assetPrice,
+    }).catch((err) => {
+      logService.warn(
+        "recorder",
+        `Mongo recorded_windows upsert failed (${this.market._id}): ${String(err)}`,
+      );
+    });
+    ingestRecordedWindow(this.market._id, {
+      _id: String(nextDoc.windowStart),
+      updatedAt: nextDoc.savedAt ?? new Date().toISOString(),
+      ...nextDoc,
+    });
+    this.onStateChange?.(this.market._id);
   }
 
   /**
@@ -831,6 +1000,18 @@ export class MarketRecorder {
         `Window saved ${new Date(windowStart * 1000).toLocaleTimeString()} (${this.clobRawCount} raw, ${this.clobBookCount} book, ${this.chainlinkCount} chainlink, ${record.newWallets ?? 0} new wallets)`,
       );
       this.onStateChange?.(this.market._id);
+
+      if (
+        !hasOfficialWindowOutcome(recordedDoc.windowOutcome) &&
+        typeof recordedDoc.slug === "string" &&
+        recordedDoc.slug.trim()
+      ) {
+        this.scheduleBackgroundOfficialResolve({
+          windowStart: recordedDoc.windowStart,
+          windowEnd: recordedDoc.windowEnd,
+          slug: recordedDoc.slug,
+        });
+      }
     } catch (err) {
       logService.error("recorder", `Failed to finalize window (${this.market._id}): ${String(err)}`);
     } finally {

@@ -552,6 +552,26 @@ export async function simulateRecordedWindow(
   predictionConfig?: PredictionDetectorConfig | null,
   triggerDefs?: ReturnType<typeof normalizeReplayTriggerDefs> | null,
 ): Promise<RecordedWindowSimulation> {
+  const windowEnd = window.windowEnd;
+  const windowStart = window.windowStart;
+  // Official Gamma required for Replay Run / Open Replay (no inferred price outcome).
+  if (window.windowOutcome !== "up" && window.windowOutcome !== "down") {
+    return {
+      result: null,
+      markers: [],
+      windowStart,
+      windowEnd,
+      hadTicks: false,
+      predictionSide: null,
+      predictionScore: null,
+      predictionScores: [],
+      predictionTriggers: [],
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
+      triggerStats: [],
+    };
+  }
+
   const simCacheKey = simResultCache ? windowSimCacheKey(window.windowStart, setup) : null;
   const hasTriggers = Array.isArray(triggerDefs) && triggerDefs.length > 0;
   // Phase-only cache: Prediction/Triggers race with phase on a shared timeline.
@@ -585,8 +605,6 @@ export async function simulateRecordedWindow(
     ticks = await listReplayTicks(market, window.windowStart, 50_000);
     tickCache?.set(window.windowStart, ticks);
   }
-  const windowEnd = window.windowEnd;
-  const windowStart = window.windowStart;
 
   // Missing CLOB book or Chainlink → exclude from Replay (either side alone is unusable).
   if (
@@ -1678,6 +1696,8 @@ async function buildRecordingsOnlyPlayPayload(
   const windows: PlacementPlayWindowItem[] = [];
   for (const window of slotWindows) {
     if (!present.has(window.windowStart)) continue;
+    // Replay-usable only with explicit Gamma Up/Down on the recording.
+    if (window.windowOutcome !== "up" && window.windowOutcome !== "down") continue;
     const settlement = await playSettlementFields(market, window, null);
     windows.push({
       windowStart: window.windowStart,

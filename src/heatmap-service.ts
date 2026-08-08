@@ -10,7 +10,8 @@ import {
   type WeekDayId,
 } from "./day-hour-slots.js";
 import { logService } from "./log-service.js";
-import type { RecordedWindowDocument } from "./types.js";
+import { hasOfficialWindowOutcome } from "./official-window-resolution.js";
+import type { RecordedWindowDocument, WindowOutcome } from "./types.js";
 import { isFlatPriceWindow } from "./window-dynamics.js";
 
 export type HeatmapDayId = WeekDayId;
@@ -39,6 +40,8 @@ interface StoredHeatmapWindow {
   hour: number;
   dayKey: string;
   metrics: HeatmapCellValues;
+  /** Explicit Gamma Up/Down on the recording — required for Replay usability. */
+  hasOfficialOutcome: boolean;
 }
 
 interface BucketAccumulator {
@@ -103,7 +106,11 @@ function isInHistoryWindow(windowStart: number, cutoffUtc: number): boolean {
 
 function toStoredWindow(
   series: string,
-  window: HeatmapMetricSource & { windowStart: number; savedAt?: string },
+  window: HeatmapMetricSource & {
+    windowStart: number;
+    savedAt?: string;
+    windowOutcome?: WindowOutcome | null;
+  },
 ): StoredHeatmapWindow {
   const { day, hour, dayKey } = dayHourFromWindowStart(window.windowStart);
   return {
@@ -114,6 +121,7 @@ function toStoredWindow(
     hour,
     dayKey,
     metrics: metricsFromWindow(window),
+    hasOfficialOutcome: hasOfficialWindowOutcome(window.windowOutcome),
   };
 }
 
@@ -241,6 +249,7 @@ export function replayUsableWindowKey(series: string, windowStart: number): stri
  * Per UTC weekday×hour counts for Replay Schedule baseline (gray before Run).
  * Uses the same latest-day-per-slot window set as Heatmap / Replay Run.
  * When `usableWindowKeys` is set, only those `series:windowStart` keys count.
+ * Windows without an official Gamma outcome never count (even with tick files).
  */
 export function getReplaySlotWindowCounts(
   series?: string | null,
@@ -254,6 +263,7 @@ export function getReplaySlotWindowCounts(
   const filter = series ? String(series).trim() : "";
   const counts = new Map<string, number>();
   for (const stored of activeStoredWindows(filter || undefined)) {
+    if (!stored.hasOfficialOutcome) continue;
     if (
       usableWindowKeys &&
       !usableWindowKeys.has(replayUsableWindowKey(stored.series, stored.windowStart))
