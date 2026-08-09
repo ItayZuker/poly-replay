@@ -1,6 +1,11 @@
 {
-    "current":  "1.62.0",
+    "current":  "1.63.0",
     "releases":  [
+                     {
+                         "version":  "1.63.0",
+                         "releasedAt":  "2026-08-09T11:56:04.467Z",
+                         "notes":  "Positions: Demo/Trade/All filter (Clear removed), equal-width card grid, and Positions header drag no longer collapses Log. Docs updated."
+                     },
                      {
                          "version":  "1.62.0",
                          "releasedAt":  "2026-08-09T11:34:44.178Z",
