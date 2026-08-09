@@ -903,6 +903,8 @@ app.post("/api/trading/order", async (req, res) => {
         : undefined;
     const triggerIdRaw =
       typeof req.body?.triggerId === "string" ? req.body.triggerId.trim() : "";
+    const triggerNameRaw =
+      typeof req.body?.triggerName === "string" ? req.body.triggerName.trim().slice(0, 120) : "";
     const triggerExitReason =
       req.body?.triggerExitReason === "tp" || req.body?.triggerExitReason === "sl"
         ? req.body.triggerExitReason
@@ -918,6 +920,7 @@ app.post("/api/trading/order", async (req, res) => {
         ? { takeProfitCents: Math.round(takeProfitCentsRaw) }
         : {}),
       ...(source === "trigger" && triggerIdRaw ? { triggerId: triggerIdRaw } : {}),
+      ...(source === "trigger" && triggerNameRaw ? { triggerName: triggerNameRaw } : {}),
       ...(source === "trigger" && triggerExitReason ? { triggerExitReason } : {}),
       ...(Number.isFinite(maxPriceRaw) && maxPriceRaw > 0 && maxPriceRaw < 1
         ? { maxPrice: maxPriceRaw }
@@ -980,6 +983,10 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
             ? d.sellOrderType
             : undefined;
         const takeProfitCents = Math.round(Number(d?.takeProfitCents));
+        const triggerName =
+          typeof d?.triggerName === "string" && d.triggerName.trim()
+            ? String(d.triggerName).trim().slice(0, 120)
+            : undefined;
         return {
           triggerId,
           sides: sides as Array<"up" | "down">,
@@ -987,6 +994,7 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
           shares,
           ...(sellOrderType ? { sellOrderType } : {}),
           ...(Number.isFinite(takeProfitCents) ? { takeProfitCents } : {}),
+          ...(triggerName ? { triggerName } : {}),
         };
       })
       .filter(Boolean);

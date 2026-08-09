@@ -473,6 +473,8 @@ export interface TradingPositionCard {
   source?: "manual" | "auto" | "trigger";
   /** Market Trigger id when source is trigger — Trade card stats follow this card's settlement. */
   triggerId?: string;
+  /** Trigger title at fill time (Positions UI). */
+  triggerName?: string;
   /** Exit path for trigger sells: tp / sl (held uses window-end via status win/loss). */
   triggerExitReason?: "tp" | "sl";
   /**

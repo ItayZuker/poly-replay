@@ -1769,6 +1769,13 @@ body {
     overflow-y: auto !important;
   }
 
+  .app-page-simulator.is-mobile-stack .position-card {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+  }
+
   /* Book ladders need a definite height (not content-auto). */
   .app-page-simulator.is-mobile-stack .book-body:not(.is-collapsed) {
     flex: 0 0 min(40vh, 280px) !important;
@@ -6578,7 +6585,9 @@ body.is-row-resizing .panel-header-drag-handle {
 
 .positions-cards {
   display: flex;
-  flex-direction: column;
+  flex-flow: row wrap;
+  align-content: flex-start;
+  justify-content: flex-start;
   gap: 6px;
   padding: 8px 12px 10px;
   box-sizing: border-box;
@@ -6598,6 +6607,11 @@ body.is-row-resizing .panel-header-drag-handle {
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
+  box-sizing: border-box;
+  /* Newest is first in DOM → top-left in the wrap. */
+  flex: 1 1 300px;
+  min-width: min(300px, 100%);
+  max-width: 600px;
 }
 
 .position-card-top {
@@ -6607,11 +6621,30 @@ body.is-row-resizing .panel-header-drag-handle {
   gap: 8px;
 }
 
+.position-card-bet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .position-card-side-wrap {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.position-card-bet-row .position-card-buy-time {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.position-card-fill {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .position-card-demo-label {
@@ -6647,7 +6680,6 @@ body.is-row-resizing .panel-header-drag-handle {
 
 .position-card-window {
   flex-shrink: 0;
-  margin-left: 2px;
   font-size: 11px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -6732,6 +6764,41 @@ body.is-row-resizing .panel-header-drag-handle {
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
+}
+
+.position-card-title-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.position-card-trigger-name {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.position-card-trigger-name .position-card-window {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.position-card-top .position-card-status,
+.position-card-top .position-card-status-wrap {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .position-card-buy-time {

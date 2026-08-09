@@ -71,6 +71,7 @@ import {
 } from "./db/fill-attempt-repository.js";
 import { recordTriggerLiveStatsForSettledCard } from "./db/trigger-live-stats-repository.js";
 import { listTriggerModeEvents } from "./db/trigger-mode-timeline-repository.js";
+import { getUserTrigger } from "./db/user-trigger-repository.js";
 import { computeScheduleHourSlotStats } from "./schedule-hour-stats.js";
 import { getRollingCutoffUtcSec } from "./heatmap-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
@@ -158,6 +159,8 @@ export type TriggerGtdDesire = {
   shares: number;
   sellOrderType?: "FAK" | "FOK" | "GTD";
   takeProfitCents?: number;
+  /** Optional title hint; server also resolves from Mongo by triggerId. */
+  triggerName?: string;
 };
 
 /** Trigger GTD limit from 0.1¢ steps (0.5¢ → 0.005). Unlike phase centsToPrice (min 1¢). */
@@ -589,6 +592,9 @@ function cardSnapshotFromPosition(card: TradingPositionCard): TradingStatEvent["
   // Manual wins/losses must not carry a schedule placement id into stats.
   if (card.source !== "manual" && card.placementId) snap.placementId = card.placementId;
   if (card.triggerId) snap.triggerId = card.triggerId;
+  if (typeof card.triggerName === "string" && card.triggerName.trim()) {
+    snap.triggerName = card.triggerName.trim();
+  }
   if (card.triggerExitReason === "tp" || card.triggerExitReason === "sl") {
     snap.triggerExitReason = card.triggerExitReason;
   }
@@ -632,6 +638,9 @@ function positionCardFromEvent(event: TradingStatEvent): TradingPositionCard | n
   }
   if (typeof snap.triggerId === "string" && snap.triggerId.trim()) {
     card.triggerId = snap.triggerId.trim();
+  }
+  if (typeof snap.triggerName === "string" && snap.triggerName.trim()) {
+    card.triggerName = snap.triggerName.trim();
   }
   if (snap.triggerExitReason === "tp" || snap.triggerExitReason === "sl") {
     card.triggerExitReason = snap.triggerExitReason;
@@ -4305,6 +4314,24 @@ export class LiveTradingService {
     this.triggerGtdPlacedSessionById.set(this.triggerGtdPlacedKey(id, side), session);
   }
 
+  /** Trigger title for Positions cards — hint first, else Mongo name. */
+  private async resolveTriggerDisplayName(
+    triggerId: string | undefined,
+    hint?: string,
+  ): Promise<string | undefined> {
+    const fromHint = typeof hint === "string" ? hint.trim().slice(0, 120) : "";
+    if (fromHint) return fromHint;
+    const id = typeof triggerId === "string" ? triggerId.trim() : "";
+    if (!id) return undefined;
+    try {
+      const t = await getUserTrigger(this.userId, id);
+      const name = typeof t?.name === "string" ? t.name.trim().slice(0, 120) : "";
+      return name || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async recordBuyFill(
     state: LiveWindowState,
     side: "up" | "down",
@@ -4321,6 +4348,7 @@ export class LiveTradingService {
       holdToSettlement?: boolean;
       placementId?: string;
       triggerId?: string;
+      triggerName?: string;
       triggerMiss?: boolean;
     },
   ): Promise<void> {
@@ -4329,6 +4357,9 @@ export class LiveTradingService {
       source === "trigger" && typeof opts?.triggerId === "string" && opts.triggerId.trim()
         ? opts.triggerId.trim()
         : undefined;
+    const resolvedTriggerName = resolvedTriggerId
+      ? await this.resolveTriggerDisplayName(resolvedTriggerId, opts?.triggerName)
+      : undefined;
     const triggerMiss = source === "trigger" && opts?.triggerMiss === true;
     // Phase Auto Trade: placement only when Use Schedule is on.
     // Trigger Trade: hour-slot stats via triggerId + mode timeline (no placementId).
@@ -4367,6 +4398,9 @@ export class LiveTradingService {
         }
         if (source === "trigger" && resolvedTriggerId && !existing.triggerId) {
           existing.triggerId = resolvedTriggerId;
+        }
+        if (source === "trigger" && resolvedTriggerName && !existing.triggerName) {
+          existing.triggerName = resolvedTriggerName;
         }
       }
       if (!this.positions[side]) {
@@ -4448,6 +4482,7 @@ export class LiveTradingService {
         // Manual buys never attach to a schedule card.
         placementId: source === "manual" ? undefined : resolvedPlacementId,
         ...(resolvedTriggerId ? { triggerId: resolvedTriggerId } : {}),
+        ...(resolvedTriggerName ? { triggerName: resolvedTriggerName } : {}),
         ...(triggerMiss ? { triggerMiss: true } : {}),
       });
       if (source !== "manual" && resolvedPlacementId) {
@@ -4787,6 +4822,10 @@ export class LiveTradingService {
         1,
         Math.min(100, Math.round(Number(d.takeProfitCents) || 10)),
       );
+      const triggerName =
+        typeof d.triggerName === "string" && d.triggerName.trim()
+          ? d.triggerName.trim().slice(0, 120)
+          : undefined;
       for (const side of d.sides) {
         if (side !== "up" && side !== "down") continue;
         const rk = this.triggerRestKey(triggerId, side);
@@ -4798,6 +4837,7 @@ export class LiveTradingService {
           shares,
           sellOrderType,
           takeProfitCents,
+          ...(triggerName ? { triggerName } : {}),
         });
       }
     }
@@ -5000,7 +5040,10 @@ export class LiveTradingService {
             "trigger",
             undefined,
             undefined,
-            { triggerId: want.triggerId },
+            {
+              triggerId: want.triggerId,
+              ...(want.triggerName ? { triggerName: want.triggerName } : {}),
+            },
           );
           if (want.sellOrderType === "GTD") {
             await this.ensureTriggerGtdSell(
@@ -5080,6 +5123,8 @@ export class LiveTradingService {
       minPrice?: number;
       /** Market Trigger id when source is trigger. */
       triggerId?: string;
+      /** Trigger title hint for Positions. */
+      triggerName?: string;
       /** Trigger exit reason for sells (tp / sl). */
       triggerExitReason?: "tp" | "sl";
     },
@@ -5242,6 +5287,10 @@ export class LiveTradingService {
         fromTrigger && typeof options?.triggerId === "string" && options.triggerId.trim()
           ? options.triggerId.trim()
           : undefined;
+      const triggerName =
+        fromTrigger && typeof options?.triggerName === "string" && options.triggerName.trim()
+          ? options.triggerName.trim().slice(0, 120)
+          : undefined;
       const triggerExitReason =
         fromTrigger &&
         leg === "sell" &&
@@ -5260,7 +5309,7 @@ export class LiveTradingService {
         orderType,
         maxPrice,
         undefined,
-        { triggerId, triggerExitReason, minPrice },
+        { triggerId, triggerName, triggerExitReason, minPrice },
       );
       if (result.ok) {
         if (leg === "buy") {
@@ -5729,7 +5778,12 @@ export class LiveTradingService {
     orderType: MarketOrderType = "FOK",
     maxPrice?: number,
     buyPhaseIdx?: number,
-    opts?: { triggerId?: string; triggerExitReason?: "tp" | "sl"; minPrice?: number },
+    opts?: {
+      triggerId?: string;
+      triggerName?: string;
+      triggerExitReason?: "tp" | "sl";
+      minPrice?: number;
+    },
   ): Promise<{
     ok: boolean;
     error?: string;
@@ -5834,6 +5888,7 @@ export class LiveTradingService {
           buyPhaseIdx,
           {
             ...(opts?.triggerId ? { triggerId: opts.triggerId } : {}),
+            ...(opts?.triggerName ? { triggerName: opts.triggerName } : {}),
             ...(triggerMiss ? { triggerMiss: true } : {}),
           },
         );
