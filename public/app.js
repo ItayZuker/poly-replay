@@ -3778,6 +3778,35 @@ function positionWindowDurationSec(card) {
   return 300;
 }
 
+/** Prefer card.slug; else `{asset}-updown-{5m|15m}-{windowStart}` from series / windowKey. */
+function resolveDemoOpenCardSlug(card) {
+  const fromCard = typeof card?.slug === "string" ? card.slug.trim() : "";
+  if (fromCard) return fromCard;
+  const windowStart = positionWindowStartSec(card);
+  if (!Number.isFinite(windowStart) || windowStart <= 0) return "";
+  const hay = `${card?.series || ""} ${card?.windowKey || ""}`.trim().toLowerCase();
+  const m = hay.match(/\b([a-z]+)-(5m|15m)\b/);
+  if (!m) return "";
+  return `${m[1]}-updown-${m[2]}-${Math.floor(windowStart)}`;
+}
+
+function isDemoPositionCard(card) {
+  if (!card) return false;
+  if (card.demo === true) return true;
+  return String(card.id || "").startsWith("demo:");
+}
+
+/** Past-window Demo card still Open in localStorage (held settle never finished). */
+function isPastWindowOpenDemoPositionCard(card) {
+  if (!isDemoPositionCard(card)) return false;
+  const status = String(card.status || "open").toLowerCase();
+  if (status !== "open") return false;
+  const start = positionWindowStartSec(card);
+  const dur = positionWindowDurationSec(card);
+  if (!Number.isFinite(start) || start <= 0) return false;
+  return start + dur < Math.floor(Date.now() / 1000);
+}
+
 function formatUtcHm(unixSec) {
   if (!Number.isFinite(unixSec)) return "";
   return new Date(unixSec * 1000).toLocaleTimeString("en-GB", {
@@ -4838,6 +4867,8 @@ function updateWindowUI(state) {
     state.windowStart !== prevWindowStart
   ) {
     onLogWindowChanged(state.windowStart);
+    // Past-window open Demo cards: keep trying Gamma settle across rolls / sessions.
+    scanAndResumeStuckDemoOpenCards();
   }
 
   if (pendingChainlinkTicks.length > 0) {
@@ -11620,6 +11651,17 @@ const triggerRuntimeById = new Map();
  */
 const triggerPendingHeldById = new Map();
 /**
+ * Resume Gamma settlement for past-window open Demo Positions cards (localStorage).
+ * Keyed by card id so refresh/abandon can retry across sessions.
+ * @type {Map<string, {
+ *   cardId: string,
+ *   slug: string,
+ *   attempts: number,
+ *   timer: ReturnType<typeof setTimeout> | null,
+ * }>}
+ */
+const triggerPendingResumeDemoByCardId = new Map();
+/**
  * Chart overlays for fired trigger buys in the current market window.
  * Each hit: duration band (watch→buy) + buy dot.
  * @type {Array<{
@@ -11645,6 +11687,36 @@ function clearTriggerPendingHeld(triggerId) {
   const pending = triggerPendingHeldById.get(id);
   if (pending?.timer != null) clearTimeout(pending.timer);
   triggerPendingHeldById.delete(id);
+}
+
+function clearTriggerPendingResumeDemo(cardId) {
+  const id = String(cardId || "");
+  if (!id) {
+    for (const pending of triggerPendingResumeDemoByCardId.values()) {
+      if (pending?.timer != null) clearTimeout(pending.timer);
+    }
+    triggerPendingResumeDemoByCardId.clear();
+    return;
+  }
+  const pending = triggerPendingResumeDemoByCardId.get(id);
+  if (pending?.timer != null) clearTimeout(pending.timer);
+  triggerPendingResumeDemoByCardId.delete(id);
+}
+
+/** True when in-memory held settle already covers this open Demo card. */
+function isDemoOpenCardCoveredByHeldPending(card) {
+  const tid = card?.triggerId != null ? String(card.triggerId) : "";
+  if (!tid) return false;
+  const pending = triggerPendingHeldById.get(tid);
+  if (!pending || pending.runMode === "trade") return false;
+  const cardSide = card.side === "down" ? "down" : card.side === "up" ? "up" : null;
+  if (!cardSide || pending.side !== cardSide) return false;
+  const cardStart = positionWindowStartSec(card);
+  if (pending.windowStart != null && Number.isFinite(cardStart) && cardStart > 0) {
+    return Number(pending.windowStart) === cardStart;
+  }
+  const cardSlug = resolveDemoOpenCardSlug(card);
+  return Boolean(cardSlug && pending.slug && cardSlug === pending.slug);
 }
 
 function clearTriggerRuntime(triggerId) {
@@ -12189,6 +12261,149 @@ async function resolveTriggerHeldSettlement(triggerId) {
     slug: pending.slug || null,
     triggerMiss: pending.triggerMiss === true,
   });
+}
+
+function scheduleResumeDemoOpenResolve(cardId, delayMs) {
+  const id = String(cardId || "");
+  const pending = triggerPendingResumeDemoByCardId.get(id);
+  if (!pending) return;
+  if (pending.timer != null) clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => {
+    pending.timer = null;
+    void resolveResumeDemoOpenSettlement(id);
+  }, delayMs);
+}
+
+/**
+ * Settle a stuck open Demo Positions card from official Gamma using the card's
+ * entry-window fields (not live windowState). Synthetic rt — does not touch live runtime.
+ */
+function settleResumedDemoOpenCard(card, outcome) {
+  const cardId = String(card?.id || "");
+  if (!cardId || (outcome !== "up" && outcome !== "down")) return;
+  const live = demoPositionCards.find((c) => String(c?.id || "") === cardId) || null;
+  if (!live || String(live.status || "open").toLowerCase() !== "open") return;
+  const side = live.side === "down" ? "down" : live.side === "up" ? "up" : null;
+  if (!side) return;
+  const buyPrice = Number(live.buyPrice);
+  const shares = Number(live.shares);
+  if (!Number.isFinite(buyPrice) || buyPrice <= 0 || !Number.isFinite(shares) || shares <= 0) {
+    return;
+  }
+  const windowStart = positionWindowStartSec(live);
+  const slug = resolveDemoOpenCardSlug(live);
+  const series =
+    (typeof live.series === "string" && live.series.trim()) ||
+    (typeof live.windowKey === "string" && live.windowKey.includes(":")
+      ? live.windowKey.slice(0, live.windowKey.lastIndexOf(":"))
+      : "") ||
+    null;
+  const triggerId = live.triggerId != null ? String(live.triggerId) : "";
+  const trigger = (triggerId && findUserTrigger(triggerId)) || {
+    id: triggerId || cardId,
+    name: String(live.triggerName || "").trim() || "Untitled trigger",
+    buyShares: shares,
+  };
+  const won = outcome === side;
+  // Synthetic runtime — never mutate the live triggerRuntimeById entry.
+  const rt = {
+    runMode: "demo",
+    entryPrice: buyPrice,
+    entryShares: shares,
+    side,
+    phase: "open",
+    watchStartedAtMs: null,
+    startPriceCents: null,
+    orderInFlight: false,
+    windowStart: Number.isFinite(windowStart) && windowStart > 0 ? windowStart : null,
+    entrySlug: slug || null,
+    triggerMiss: live.triggerMiss === true,
+  };
+  settleTriggerOpenPosition(trigger, rt, won ? 1 : 0, "window-end", {
+    heldWon: won,
+    officialOutcome: outcome,
+    windowStart: Number.isFinite(windowStart) && windowStart > 0 ? windowStart : null,
+    series,
+    slug: slug || null,
+    triggerName: String(live.triggerName || "").trim() || null,
+    triggerMiss: live.triggerMiss === true,
+  });
+}
+
+async function resolveResumeDemoOpenSettlement(cardId) {
+  const id = String(cardId || "");
+  const pending = triggerPendingResumeDemoByCardId.get(id);
+  if (!pending) return;
+  const live = demoPositionCards.find((c) => String(c?.id || "") === id) || null;
+  if (!live || String(live.status || "open").toLowerCase() !== "open") {
+    clearTriggerPendingResumeDemo(id);
+    return;
+  }
+  if (isDemoOpenCardCoveredByHeldPending(live)) {
+    clearTriggerPendingResumeDemo(id);
+    return;
+  }
+  const slug = pending.slug || resolveDemoOpenCardSlug(live);
+  if (!slug) {
+    clearTriggerPendingResumeDemo(id);
+    return;
+  }
+  pending.slug = slug;
+  const outcome = await fetchOfficialTriggerWindowOutcome(slug);
+  if (!outcome) {
+    pending.attempts += 1;
+    // Pause this session after ~5 min; next load / window roll re-enqueues.
+    if (pending.attempts >= 60) {
+      appendLogEntry({
+        level: "warn",
+        source: "client",
+        message: `Demo open resume settle paused — no official outcome yet for ${slug}`,
+      });
+      clearTriggerPendingResumeDemo(id);
+      return;
+    }
+    scheduleResumeDemoOpenResolve(id, 5000);
+    return;
+  }
+  clearTriggerPendingResumeDemo(id);
+  settleResumedDemoOpenCard(live, outcome);
+  appendLogEntry({
+    level: "info",
+    source: "client",
+    message: `Demo open resume settled ${slug} → ${outcome}`,
+  });
+}
+
+function enqueueResumeDemoOpenSettlement(card) {
+  const cardId = String(card?.id || "");
+  if (!cardId || !isPastWindowOpenDemoPositionCard(card)) return;
+  if (triggerPendingResumeDemoByCardId.has(cardId)) return;
+  if (isDemoOpenCardCoveredByHeldPending(card)) return;
+  const slug = resolveDemoOpenCardSlug(card);
+  if (!slug) {
+    appendLogEntry({
+      level: "warn",
+      source: "client",
+      message: `Demo open resume settle skipped — missing slug for ${cardId}`,
+    });
+    return;
+  }
+  triggerPendingResumeDemoByCardId.set(cardId, {
+    cardId,
+    slug,
+    attempts: 0,
+    timer: null,
+  });
+  void resolveResumeDemoOpenSettlement(cardId);
+}
+
+/** After load / window roll: re-queue past-window open Demo cards for Gamma settle. */
+function scanAndResumeStuckDemoOpenCards() {
+  if (!Array.isArray(demoPositionCards) || demoPositionCards.length === 0) return;
+  for (const card of demoPositionCards) {
+    if (!isPastWindowOpenDemoPositionCard(card)) continue;
+    enqueueResumeDemoOpenSettlement(card);
+  }
 }
 
 /**
@@ -13782,6 +13997,7 @@ function initAppHeaderLayout() {
 async function init() {
   loadPositionsHiddenIds();
   demoPositionCards = loadDemoPositionCards();
+  scanAndResumeStuckDemoOpenCards();
   bindPositionsFilter();
   initSimulatorBoxScrollbars();
   initChart();
@@ -13852,6 +14068,7 @@ async function enterApp(user, options = {}) {
   }
   if (appInitialized) {
     demoPositionCards = loadDemoPositionCards();
+    scanAndResumeStuckDemoOpenCards();
     void loadUserTriggers().then(() => renderTriggersList());
     void loadWalletAccount();
     void loadSettingsUser();
