@@ -1,6 +1,11 @@
 {
-    "current":  "1.63.1",
+    "current":  "1.63.2",
     "releases":  [
+                     {
+                         "version":  "1.63.2",
+                         "releasedAt":  "2026-08-09T12:22:54.913Z",
+                         "notes":  "Trigger card BUY highlight clears on sell or window end; Positions stay Open until Gamma resolve."
+                     },
                      {
                          "version":  "1.63.1",
                          "releasedAt":  "2026-08-09T12:06:58.512Z",
