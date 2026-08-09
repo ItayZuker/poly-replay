@@ -890,6 +890,7 @@ app.post("/api/trading/order", async (req, res) => {
     const sharesRaw = Number(req.body?.shares);
     const takeProfitCentsRaw = Number(req.body?.takeProfitCents);
     const maxPriceRaw = Number(req.body?.maxPrice);
+    const minPriceRaw = Number(req.body?.minPrice);
     const orderType =
       req.body?.orderType === "FAK" || req.body?.orderType === "FOK"
         ? req.body.orderType
@@ -920,6 +921,9 @@ app.post("/api/trading/order", async (req, res) => {
       ...(source === "trigger" && triggerExitReason ? { triggerExitReason } : {}),
       ...(Number.isFinite(maxPriceRaw) && maxPriceRaw > 0 && maxPriceRaw < 1
         ? { maxPrice: maxPriceRaw }
+        : {}),
+      ...(Number.isFinite(minPriceRaw) && minPriceRaw > 0 && minPriceRaw < 1
+        ? { minPrice: minPriceRaw }
         : {}),
     });
     pushWindowStateImmediate();

@@ -21,6 +21,8 @@ export interface PlaceOrderInput {
   orderType?: MarketOrderType;
   /** Maximum execution price for a FAK buy (0–1). */
   maxPrice?: number;
+  /** Minimum acceptable Ask for a trigger buy (0–1) — reject if best Ask is below. */
+  minPrice?: number;
   state?: LiveWindowState;
 }
 
@@ -281,6 +283,20 @@ export async function placeMarketOrder(
     const currentQuote = quotePrice(input.state, input.side, input.leg) ?? info.bestAsk ?? info.bestBid;
     if (isCappedFakBuy && (currentQuote == null || currentQuote > input.maxPrice! + 1e-9)) {
       return { success: false, error: "Ask is above FAK trigger" };
+    }
+    const minPrice =
+      input.leg === "buy" &&
+      input.minPrice != null &&
+      Number.isFinite(input.minPrice) &&
+      input.minPrice > 0 &&
+      input.minPrice < 1
+        ? input.minPrice
+        : null;
+    if (
+      minPrice != null &&
+      (currentQuote == null || currentQuote < minPrice - 1e-9)
+    ) {
+      return { success: false, error: "Ask is below trigger band" };
     }
     const refPrice = isCappedFakBuy ? input.maxPrice! : currentQuote;
     if (refPrice == null || !Number.isFinite(refPrice) || refPrice <= 0) {
