@@ -17,9 +17,12 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 ## Schedule grid
 
 - Days × UTC hours — **all 7×24 cells always show** a stats line (green / red / blue dots) and **P/L**, except Replay slots with no usable recordings (missing CLOB, Chainlink, and/or official Gamma outcome — see below)
-- Each cell aggregates outcomes for that UTC weekday×hour from the **latest calendar day** that still has fills in the ~14-day history window (Live) — same override rule as Replay/Heatmap recordings. A new ISO week (Monday) does **not** wipe Tue–Sun; only that weekday×hour is replaced when it plays again:
+- Each **Live** cell shows Trigger (and legacy) trade outcomes for that UTC weekday×hour:
+  - **Before** this week’s occurrence of that hour arrives (UTC), the cell keeps the **latest prior calendar day** with fills in the ~14-day window (so later hours this week still show last week until you get there).
+  - **When** that weekday×hour arrives (UTC hour start — same moment recording for the slot begins), the cell **resets**: only fills from **this week’s** calendar day count. If there are no buys yet (or no recording), it shows **zero** dots and a **gray** `$0` P/L — it does **not** keep last week’s stats.
   - **Trigger Trade** when the trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade+Active (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
-  - **Legacy phase / schedule-placement** fills still in the ledger (from before Trigger-only Schedule). They stay on the board until that weekday×hour is overridden by a newer day
+  - **Legacy phase / schedule-placement** fills still in the ledger (from before Trigger-only Schedule) follow the same arrival/reset rule
+- **Replay / Heatmap** recordings still use the **latest calendar day with usable recordings** per weekday×hour (independent of Live trade resets)
 - Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). The header’s bottom border is **green** when that day’s total P/L is positive and **red** when negative (default border when flat / no data). There is no per-day Clear control
 - Hover a **UTC hour** label to highlight that row across the week; click to pin/unpin (stays until clicked again). Hover a **day column header** to highlight that column; click to pin/unpin — same on Schedule and Heatmap
 - Current UTC cell is highlighted
