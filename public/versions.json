@@ -1,6 +1,11 @@
 {
-    "current":  "1.61.3",
+    "current":  "1.62.0",
     "releases":  [
+                     {
+                         "version":  "1.62.0",
+                         "releasedAt":  "2026-08-09T11:34:44.178Z",
+                         "notes":  "Positions cards show the trigger title (Demo beside it), flex-wrap 300?600px, Settlement label, and buy time/fill on the Bet row. Docs updated."
+                     },
                      {
                          "version":  "1.61.3",
                          "releasedAt":  "2026-08-09T11:12:39.767Z",

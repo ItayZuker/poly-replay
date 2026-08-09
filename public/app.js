@@ -2023,6 +2023,7 @@ async function postTradingOrder(
     maxPrice,
     minPrice,
     triggerId,
+    triggerName,
     triggerExitReason,
   } = {},
 ) {
@@ -2045,6 +2046,9 @@ async function postTradingOrder(
         : {}),
       ...(source === "trigger" && typeof triggerId === "string" && triggerId.trim()
         ? { triggerId: triggerId.trim() }
+        : {}),
+      ...(source === "trigger" && typeof triggerName === "string" && triggerName.trim()
+        ? { triggerName: triggerName.trim().slice(0, 120) }
         : {}),
       ...(source === "trigger" &&
       (triggerExitReason === "tp" || triggerExitReason === "sl")
@@ -3797,6 +3801,25 @@ function isPredictionPositionCard(card) {
   return card?.kind === "prediction" || String(card?.id || "").startsWith("prediction:");
 }
 
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Trigger title on a Positions card (stored name, else live Market Triggers list). */
+function resolvePositionTriggerName(card) {
+  const stored = typeof card?.triggerName === "string" ? card.triggerName.trim() : "";
+  if (stored) return stored;
+  const tid = typeof card?.triggerId === "string" ? card.triggerId.trim() : "";
+  if (!tid) return "";
+  const t = typeof findUserTrigger === "function" ? findUserTrigger(tid) : null;
+  const name = typeof t?.name === "string" ? t.name.trim() : "";
+  return name || "";
+}
+
 function renderPositionCard(card) {
   const sideClass = card.side === "up" ? "is-up" : "is-down";
   const status = card.status || "open";
@@ -3809,18 +3832,13 @@ function renderPositionCard(card) {
     status === "right" ||
     status === "wrong";
   const plPending = !isPrediction && settled && !isDemo && card.confirmed !== true;
-  const predictionPending = isPrediction && status === "open";
-  // Empty Market/P/L skeleton while open or waiting for confirmation (trades only).
+  // Empty Settlement/P/L skeleton while open or waiting for confirmation (trades only).
   const valuesPending =
     !isPrediction && !isDemo && (status === "open" || plPending);
   // Gray pulsing status badge is for Waiting only — Open uses accent text (is-open).
   const statusWaiting = plPending && (status === "win" || status === "loss");
 
   const buyTime = formatPositionBuyTime(card.buyAt);
-  const timeLabel = isPrediction ? "Trigger" : "Buy";
-  const buyLabel = buyTime
-    ? `${timeLabel} <span class="position-card-buy-time">${buyTime}</span>`
-    : timeLabel;
   // Buy fill is known at trigger time — show it immediately, even while the
   // card is still open / waiting for confirmation.
   const hasBuyFill =
@@ -3828,7 +3846,8 @@ function renderPositionCard(card) {
     card.shares != null && Number.isFinite(Number(card.shares)) &&
     card.buyPrice != null && Number.isFinite(Number(card.buyPrice));
   const buyValue = hasBuyFill ? `${card.shares} @ ${fmtPriceCents(card.buyPrice)}` : "";
-  let detailHtml = `<div class="position-card-row"><span>${buyLabel}</span><strong>${buyValue}</strong></div>`;
+  let detailHtml = "";
+  const triggerName = !isPrediction ? resolvePositionTriggerName(card) : "";
 
   if (isPrediction) {
     const predBuyPrice =
@@ -3854,6 +3873,10 @@ function renderPositionCard(card) {
               : card.triggerBuy,
             card.riseCents,
           );
+    const predTimeLabel = buyTime
+      ? `Trigger <span class="position-card-buy-time">${buyTime}</span>`
+      : "Trigger";
+    detailHtml += `<div class="position-card-row"><span>${predTimeLabel}</span><strong></strong></div>`;
     detailHtml += `<div class="position-card-row"><span>Buy</span><strong>${predBuyValue}</strong></div>`;
     detailHtml += `<div class="position-card-row"><span>Target</span><strong>${fmtPriceCents(targetPrice)}</strong></div>`;
   } else if (status === "sold") {
@@ -3861,7 +3884,7 @@ function renderPositionCard(card) {
   } else {
     const outcome = card.outcome === "up" || card.outcome === "down" ? card.outcome : "";
     const outcomeClass = outcome === "up" ? "is-up" : outcome === "down" ? "is-down" : "";
-    detailHtml += `<div class="position-card-row"><span>Market</span><strong class="position-card-outcome ${outcomeClass}">${valuesPending ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
+    detailHtml += `<div class="position-card-row"><span>Settlement</span><strong class="position-card-outcome ${outcomeClass}">${valuesPending ? "" : (outcome || "—").toUpperCase()}</strong></div>`;
   }
 
   if (!isPrediction) {
@@ -3876,22 +3899,16 @@ function renderPositionCard(card) {
 
   // Provisional win/loss (legacy Chainlink path) keep Waiting until Polymarket confirms.
   const statusLabel = statusWaiting ? "Waiting" : positionStatusLabel(status);
-  const sourceNote =
-    isDemo && !isPrediction
-      ? "Demo"
-      : predictionPending || valuesPending || statusWaiting
-        ? "Pending…"
-        : "Confirmed";
   const sideLabel = isPrediction
     ? `Prediction ${(card.side || "").toUpperCase()}`
     : `Bet ${(card.side || "").toUpperCase()}`;
   const windowRange = formatPositionWindowRange(card);
-  const windowHtml = windowRange
-    ? `<span class="position-card-window" title="Market window (UTC)">${windowRange}</span>`
+  const windowBracket = windowRange
+    ? `<span class="position-card-window" title="Market window (UTC)">(${escapeHtml(windowRange)})</span>`
     : "";
   const demoPrefix =
     isDemo && !isPrediction
-      ? `<span class="position-card-demo-label" title="Demo (Allow trade off)">Demo</span>`
+      ? `<span class="position-card-demo-label" title="Trigger Demo">Demo</span>`
       : "";
   const triggerMissLabel =
     !isPrediction && card.triggerMiss === true
@@ -3913,14 +3930,36 @@ function renderPositionCard(card) {
     simLabel || (isPrediction && (status === "right" || status === "wrong"))
       ? `<span class="position-card-status-wrap">${simLabel}${statusHtml}</span>`
       : statusHtml;
+  const triggerTitleInner =
+    triggerName || windowBracket
+      ? `${triggerName ? escapeHtml(triggerName) : ""}${
+          triggerName && windowBracket ? " " : ""
+        }${windowBracket}`
+      : "";
+  const triggerTitleAttr = escapeHtml(
+    [triggerName, windowRange ? `UTC ${windowRange}` : ""].filter(Boolean).join(" · "),
+  );
+  const buyTimeHtml = buyTime
+    ? `<span class="position-card-buy-time" title="Buy time (UTC)">${escapeHtml(buyTime)}</span>`
+    : "";
+  const buyFillHtml = buyValue
+    ? `<strong class="position-card-fill">${escapeHtml(buyValue)}</strong>`
+    : "";
+  const titleLeftHtml = `<span class="position-card-title-left">${demoPrefix}<span class="position-card-trigger-name" title="${triggerTitleAttr}">${triggerTitleInner}</span></span>`;
+  const betRowHtml = isPrediction
+    ? `<div class="position-card-side-wrap">${triggerMissLabel}<span class="position-card-side ${sideClass}">${sideLabel}</span></div>`
+    : `<div class="position-card-bet-row">
+      <span class="position-card-side-wrap">${triggerMissLabel}${buyTimeHtml}<span class="position-card-side ${sideClass}">${sideLabel}</span></span>
+      ${buyFillHtml}
+    </div>`;
   // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
   return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${card.triggerMiss === true ? " is-trigger-miss" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
-      <span class="position-card-side-wrap">${demoPrefix}${triggerMissLabel}<span class="position-card-side ${sideClass}">${sideLabel}</span>${windowHtml}</span>
+      ${titleLeftHtml}
       ${statusBlock}
     </div>
+    ${betRowHtml}
     ${detailHtml}
-    <div class="position-card-row"><span>Source</span><strong>${sourceNote}</strong></div>
   </article>`;
 }
 
@@ -4386,6 +4425,7 @@ function upsertTriggerDemoPositionOpen(trigger, rt, state, side) {
     demo: true,
     source: "trigger",
     triggerId: String(trigger.id),
+    triggerName: String(trigger.name || "").trim() || "Untitled",
     triggerMiss: rt.triggerMiss === true,
   });
   lastPositionsFingerprint = "";
@@ -4460,6 +4500,11 @@ function upsertTriggerDemoPositionSettle(trigger, rt, exitPrice, reason, opts = 
     demo: true,
     source: "trigger",
     triggerId: String(trigger.id),
+    triggerName:
+      (typeof opts.triggerName === "string" && opts.triggerName.trim()) ||
+      (typeof existing?.triggerName === "string" && existing.triggerName.trim()) ||
+      String(trigger.name || "").trim() ||
+      "Untitled",
     triggerMiss:
       existing?.triggerMiss === true || rt.triggerMiss === true || opts.triggerMiss === true,
   });
@@ -4595,7 +4640,7 @@ function positionsFingerprint(cards) {
     cards
       .map(
         (c) =>
-          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}:${c.demo ? 1 : 0}:${c.triggerMiss ? 1 : 0}`,
+          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}:${c.demo ? 1 : 0}:${c.triggerMiss ? 1 : 0}:${c.triggerName ?? ""}:${c.triggerId ?? ""}`,
       )
       .join("|")
   );
@@ -12231,6 +12276,7 @@ async function openTriggerPosition(trigger, rt, state, side) {
       maxPrice: maxAskCents / 100,
       minPrice: minAskCents / 100,
       triggerId: String(trigger.id || ""),
+      triggerName: String(trigger.name || "").trim() || "Untitled",
       // TP offset 100 = disabled — do not rest a GTD take-profit sell.
       sellOrderType:
         isTriggerExitDisabled(rt.takeProfitCents) && sellOrderType === "GTD"
@@ -12306,6 +12352,7 @@ async function forceTriggerMarketSell(trigger, rt, state, reason) {
     const result = await placeTriggerTradeOrder(rt.side, "sell", {
       orderType: sellType,
       triggerId: String(trigger.id || ""),
+      triggerName: String(trigger.name || "").trim() || "Untitled",
       triggerExitReason: reason === "tp" || reason === "sl" ? reason : undefined,
     });
     rt.orderInFlight = false;
@@ -12456,6 +12503,7 @@ function collectTradeGtdDesires(state) {
     if (!sides.length) continue;
     desires.push({
       triggerId: id,
+      triggerName: String(trigger.name || "").trim() || "Untitled",
       sides,
       priceCents: clampTriggerCents(trigger.startPriceCents ?? 50),
       shares: normalizeTriggerBuyShares(trigger.buyShares),
@@ -12704,6 +12752,7 @@ function tickUserTriggers(state) {
         ) {
           gtdDesires.push({
             triggerId: id,
+            triggerName: String(trigger.name || "").trim() || "Untitled",
             sides,
             priceCents,
             shares: normalizeTriggerBuyShares(trigger.buyShares),
