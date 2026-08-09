@@ -731,9 +731,14 @@ export class TriggerReplayRaceSession {
       rt.startPriceCents = null;
       return;
     }
-    const asks = bookAsks.filter((l) => l.price <= maxAsk + 1e-9);
-    const fok = rt.def.buyOrderType !== "FAK";
-    const buyFill = walkAsks(asks, rt.def.buyShares, fok);
+    // Only walk asks inside the user band; share-capped (FAK may partial).
+    const asks = bookAsks.filter(
+      (l) => l.price >= minAsk - 1e-9 && l.price <= maxAsk + 1e-9,
+    );
+    const buyFill =
+      rt.def.buyOrderType === "FAK"
+        ? walkAsksAvailable(asks, rt.def.buyShares, true, undefined, maxAsk)
+        : walkAsks(asks, rt.def.buyShares, true);
     if (!buyFill || buyFill.shares <= 0) {
       rt.phase = "idle";
       rt.side = null;

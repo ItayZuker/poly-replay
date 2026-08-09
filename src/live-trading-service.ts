@@ -592,6 +592,7 @@ function cardSnapshotFromPosition(card: TradingPositionCard): TradingStatEvent["
   if (card.triggerExitReason === "tp" || card.triggerExitReason === "sl") {
     snap.triggerExitReason = card.triggerExitReason;
   }
+  if (card.triggerMiss === true) snap.triggerMiss = true;
   if (card.buyFees != null) snap.buyFees = card.buyFees;
   if (card.sellPrice != null) snap.sellPrice = card.sellPrice;
   if (card.sellProceeds != null) snap.sellProceeds = card.sellProceeds;
@@ -635,6 +636,7 @@ function positionCardFromEvent(event: TradingStatEvent): TradingPositionCard | n
   if (snap.triggerExitReason === "tp" || snap.triggerExitReason === "sl") {
     card.triggerExitReason = snap.triggerExitReason;
   }
+  if (snap.triggerMiss === true) card.triggerMiss = true;
   if (snap.sellPrice != null) card.sellPrice = snap.sellPrice;
   if (snap.sellProceeds != null) card.sellProceeds = snap.sellProceeds;
   if (snap.sellFees != null) card.sellFees = snap.sellFees;
@@ -4315,13 +4317,19 @@ export class LiveTradingService {
     source: "manual" | "auto" | "trigger",
     existingCardId?: string,
     buyPhaseIdx?: number,
-    opts?: { holdToSettlement?: boolean; placementId?: string; triggerId?: string },
+    opts?: {
+      holdToSettlement?: boolean;
+      placementId?: string;
+      triggerId?: string;
+      triggerMiss?: boolean;
+    },
   ): Promise<void> {
     const holdToSettlement = Boolean(opts?.holdToSettlement);
     const resolvedTriggerId =
       source === "trigger" && typeof opts?.triggerId === "string" && opts.triggerId.trim()
         ? opts.triggerId.trim()
         : undefined;
+    const triggerMiss = source === "trigger" && opts?.triggerMiss === true;
     // Phase Auto Trade: placement only when Use Schedule is on.
     // Trigger Trade: hour-slot stats via triggerId + mode timeline (no placementId).
     let resolvedPlacementId: string | undefined;
@@ -4391,6 +4399,7 @@ export class LiveTradingService {
       existing.asset = existing.asset ?? tokenId;
       existing.conditionId = existing.conditionId ?? conditionId;
       existing.slug = existing.slug ?? slug;
+      if (triggerMiss) existing.triggerMiss = true;
     } else {
       // Hard stop: never open a second card for the same window/side/market.
       const dup = this.positionCards.find(
@@ -4439,6 +4448,7 @@ export class LiveTradingService {
         // Manual buys never attach to a schedule card.
         placementId: source === "manual" ? undefined : resolvedPlacementId,
         ...(resolvedTriggerId ? { triggerId: resolvedTriggerId } : {}),
+        ...(triggerMiss ? { triggerMiss: true } : {}),
       });
       if (source !== "manual" && resolvedPlacementId) {
         this.rememberActivatedPlacement(resolvedPlacementId);
@@ -5079,6 +5089,7 @@ export class LiveTradingService {
     fillShares?: number;
     fillPrice?: number;
     remainingShares?: number;
+    triggerMiss?: boolean;
   }> {
     this.ensureWindow(state);
     if (!this.canExecuteOrders()) {
@@ -5719,7 +5730,13 @@ export class LiveTradingService {
     maxPrice?: number,
     buyPhaseIdx?: number,
     opts?: { triggerId?: string; triggerExitReason?: "tp" | "sl"; minPrice?: number },
-  ): Promise<{ ok: boolean; error?: string; fillShares?: number; fillPrice?: number }> {
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    fillShares?: number;
+    fillPrice?: number;
+    triggerMiss?: boolean;
+  }> {
     if (!isTradingExecutor()) {
       logNonExecutorSkipOnce();
       return { ok: false, error: "Trading executor not enabled in this process" };
@@ -5800,6 +5817,7 @@ export class LiveTradingService {
       const nowSec = Math.floor(Date.now() / 1000);
       const fillShares = result.fillShares;
       const fillPrice = result.fillPrice;
+      const triggerMiss = result.triggerMiss === true;
 
       if (leg === "buy") {
         await this.recordBuyFill(
@@ -5814,7 +5832,10 @@ export class LiveTradingService {
           source,
           undefined,
           buyPhaseIdx,
-          opts?.triggerId ? { triggerId: opts.triggerId } : undefined,
+          {
+            ...(opts?.triggerId ? { triggerId: opts.triggerId } : {}),
+            ...(triggerMiss ? { triggerMiss: true } : {}),
+          },
         );
       } else {
         const pos = this.positions[side]!;
@@ -5866,7 +5887,12 @@ export class LiveTradingService {
         this.notify();
       }
 
-      return { ok: true, fillShares, fillPrice };
+      return {
+        ok: true,
+        fillShares,
+        fillPrice,
+        ...(leg === "buy" && triggerMiss ? { triggerMiss: true } : {}),
+      };
     } finally {
       this.orderInFlight = false;
     }

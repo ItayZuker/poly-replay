@@ -58,6 +58,11 @@ export interface PlaceOrderResult {
    * Callers must not submit another buy until they reconcile on-chain state.
    */
   ambiguous?: boolean;
+  /**
+   * Trigger buy filled outside the requested Ask band (min/max). Position is kept;
+   * UI may label the card "Trigger Miss".
+   */
+  triggerMiss?: boolean;
 }
 
 export interface OpenOrderSnapshot {
@@ -91,6 +96,40 @@ function num(value: unknown): number | undefined {
 
 function toClobMarketType(orderType: MarketOrderType | undefined): typeof OrderType.FOK | typeof OrderType.FAK {
   return orderType === "FAK" ? OrderType.FAK : OrderType.FOK;
+}
+
+/** Snap a buy limit to tick size while staying inside [minPrice, maxPrice]. */
+function snapBuyLimitInBand(
+  ask: number,
+  tickSize: number,
+  minPrice: number | null,
+  maxPrice: number,
+): number | null {
+  const tick = tickSize > 0 && Number.isFinite(tickSize) ? tickSize : 0.01;
+  // Ceil to tick so the limit still takes the current ask.
+  let limit = Math.ceil(ask / tick - 1e-12) * tick;
+  if (limit > maxPrice + 1e-12) {
+    limit = Math.floor(maxPrice / tick + 1e-12) * tick;
+  }
+  if (minPrice != null && limit < minPrice - 1e-12) {
+    limit = Math.ceil(minPrice / tick - 1e-12) * tick;
+  }
+  limit = Math.round(limit * 1e8) / 1e8;
+  if (limit > maxPrice + 1e-9) return null;
+  if (minPrice != null && limit < minPrice - 1e-9) return null;
+  if (!(limit > 0) || !(limit < 1)) return null;
+  return limit;
+}
+
+function fillOutsideBand(
+  fillPrice: number,
+  minPrice: number | null,
+  maxPrice: number | null,
+): boolean {
+  if (!(fillPrice > 0) || !Number.isFinite(fillPrice)) return false;
+  if (minPrice != null && fillPrice < minPrice - 1e-9) return true;
+  if (maxPrice != null && fillPrice > maxPrice + 1e-9) return true;
+  return false;
 }
 
 function waitMs(ms: number): Promise<void> {
@@ -272,18 +311,14 @@ export async function placeMarketOrder(
     const info = await getMarketInfo(publicClient, tokenID);
     const tickSize = (info.tickSize ?? "0.01") as TickSize;
     const negRisk = info.negRisk ?? false;
-    const isCappedFakBuy =
+    const maxPrice =
       input.leg === "buy" &&
-      input.orderType === "FAK" &&
       input.maxPrice != null &&
       Number.isFinite(input.maxPrice) &&
       input.maxPrice > 0 &&
-      input.maxPrice < 1;
-
-    const currentQuote = quotePrice(input.state, input.side, input.leg) ?? info.bestAsk ?? info.bestBid;
-    if (isCappedFakBuy && (currentQuote == null || currentQuote > input.maxPrice! + 1e-9)) {
-      return { success: false, error: "Ask is above FAK trigger" };
-    }
+      input.maxPrice < 1
+        ? input.maxPrice
+        : null;
     const minPrice =
       input.leg === "buy" &&
       input.minPrice != null &&
@@ -292,13 +327,34 @@ export async function placeMarketOrder(
       input.minPrice < 1
         ? input.minPrice
         : null;
+    /** Trigger band-limited share buy: limit at live Ask (not band high) so size stays share-capped. */
+    const isShareCappedBandBuy =
+      input.leg === "buy" &&
+      (input.orderType === "FAK" || input.orderType === "FOK") &&
+      maxPrice != null;
+
+    // Prefer fresh CLOB best ask over possibly stale SSE state.
+    const currentQuote =
+      info.bestAsk ?? quotePrice(input.state, input.side, input.leg) ?? info.bestBid;
+    if (isShareCappedBandBuy && (currentQuote == null || currentQuote > maxPrice! + 1e-9)) {
+      return { success: false, error: "Ask is above trigger band" };
+    }
     if (
       minPrice != null &&
       (currentQuote == null || currentQuote < minPrice - 1e-9)
     ) {
       return { success: false, error: "Ask is below trigger band" };
     }
-    const refPrice = isCappedFakBuy ? input.maxPrice! : currentQuote;
+
+    const tickNum = Number(tickSize);
+    const limitPrice = isShareCappedBandBuy
+      ? snapBuyLimitInBand(currentQuote!, tickNum, minPrice, maxPrice!)
+      : null;
+    if (isShareCappedBandBuy && limitPrice == null) {
+      return { success: false, error: "Ask is outside trigger band" };
+    }
+
+    const refPrice = isShareCappedBandBuy ? limitPrice! : currentQuote;
     if (refPrice == null || !Number.isFinite(refPrice) || refPrice <= 0) {
       return { success: false, error: "No quote available" };
     }
@@ -311,14 +367,15 @@ export async function placeMarketOrder(
         : Math.max(1, Math.floor(size));
 
     const requestedShares =
-      isCappedFakBuy
+      isShareCappedBandBuy
         ? size
         : input.leg === "buy"
           ? estimatedSharesFromBuy(size, refPrice, amount)
           : amount;
-    const submittedBuyNotional = isCappedFakBuy ? size * refPrice : amount;
+    // Notional ≈ shares × live ask (not × band high) so fills stay share-sized.
+    const submittedBuyNotional = isShareCappedBandBuy ? size * refPrice : amount;
 
-    if (input.leg === "buy" && !isCappedFakBuy) {
+    if (input.leg === "buy" && !isShareCappedBandBuy) {
       const requestedUsdc = sizeUnit === "usdc" ? size : size * refPrice;
       if (amount > requestedUsdc + 1e-9) {
         logService.info(
@@ -329,16 +386,16 @@ export async function placeMarketOrder(
       }
     }
 
-    const resp = (isCappedFakBuy
+    const resp = (isShareCappedBandBuy
       ? await client.createOrder(
           {
             tokenID,
-            price: input.maxPrice!,
+            price: limitPrice!,
             size,
             side: Side.BUY,
           },
           { tickSize, negRisk },
-        ).then((order) => client.postOrder(order, OrderType.FAK))
+        ).then((order) => client.postOrder(order, clobOrderType))
       : await client.createAndPostMarketOrder(
           {
             tokenID,
@@ -485,12 +542,17 @@ export async function placeMarketOrder(
       return { success: false, orderId: orderId || undefined, error: err, ambiguous: false };
     }
 
+    const triggerMiss =
+      isShareCappedBandBuy &&
+      (fillOutsideBand(fill.fillPrice, minPrice, maxPrice) ||
+        fill.fillShares > size + 1e-3);
+
     logService.success(
       "trading",
       `${input.leg.toUpperCase()} ${input.side.toUpperCase()} (${clobOrderType}): ${fill.fillShares} sh @ ~${(fill.fillPrice * 100).toFixed(1)}¢` +
         (input.leg === "buy"
-          ? isCappedFakBuy
-            ? ` (limit ${(refPrice * 100).toFixed(0)}¢)`
+          ? isShareCappedBandBuy
+            ? ` (limit ${(refPrice * 100).toFixed(1)}¢${triggerMiss ? ", trigger miss" : ""})`
             : ` (~$${amount.toFixed(2)} ${sizeUnit === "shares" ? "for " + size + " sh target" : "USDC"})`
           : ""),
     );
@@ -505,6 +567,7 @@ export async function placeMarketOrder(
       conditionId: pair.conditionId,
       slug: pair.slug,
       status: status || undefined,
+      ...(triggerMiss ? { triggerMiss: true } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

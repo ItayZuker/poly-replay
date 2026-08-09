@@ -942,6 +942,7 @@ app.post("/api/trading/order", async (req, res) => {
       ...(result.remainingShares != null && Number.isFinite(result.remainingShares)
         ? { remainingShares: result.remainingShares }
         : {}),
+      ...(result.triggerMiss === true ? { triggerMiss: true } : {}),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

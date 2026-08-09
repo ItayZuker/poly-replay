@@ -228,6 +228,7 @@ function cardToSnap(card: TradingPositionCard): NonNullable<TradingStatEvent["ca
     ...(card.triggerExitReason === "tp" || card.triggerExitReason === "sl"
       ? { triggerExitReason: card.triggerExitReason }
       : {}),
+    ...(card.triggerMiss === true ? { triggerMiss: true } : {}),
     ...(card.sellPrice != null ? { sellPrice: card.sellPrice } : {}),
     ...(card.sellProceeds != null ? { sellProceeds: card.sellProceeds } : {}),
     ...(card.sellFees != null ? { sellFees: card.sellFees } : {}),

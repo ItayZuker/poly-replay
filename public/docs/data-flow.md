@@ -43,6 +43,8 @@ Server -> SSE -> Browser
 | **Allow trade** | Off = demo; on = real orders when the server can execute |
 | **Trigger Trade + Active** | Server may place Trigger orders on each tick — [Market](doc:market) |
 
+Trigger FAK/FOK buys send `minPrice` / `maxPrice` for the user’s Ask band and size by **Start Shares** (limit at live Ask inside the band). A fill outside that band (or oversized) still opens the position and follows Sell/hold; the Positions card is flagged `triggerMiss` (**Trigger Miss** label). `POST /api/trading/order` may return `triggerMiss: true`.
+
 Phase Auto Trade / Use Schedule are removed.
 
 ## Triggers and schedule
