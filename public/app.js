@@ -12412,25 +12412,13 @@ function scanAndResumeStuckDemoOpenCards() {
  */
 function enqueueTriggerHeldSettlement(trigger, rt, state) {
   const id = String(trigger?.id || "");
-  if (!id || !rt?.side || (rt.side !== "up" && rt.side !== "down")) return;
-  if (triggerPendingHeldById.has(id)) {
-    // Already waiting — clear the live open phase so the next window can arm.
-    rt.phase = "idle";
-    rt.side = null;
-    rt.watchStartedAtMs = null;
-    rt.startPriceCents = null;
-    rt.entryPrice = null;
-    rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
-    rt.entrySlug = null;
-    rt.windowStart = null;
-    rt.orderInFlight = false;
+  if (!id) return;
+  // BUY highlight must clear at window end even if settle cannot park (Positions stay Open).
+  const clearLiveBuyUi = () => setTriggerCardLiveUi(id, null);
+  if (!rt?.side || (rt.side !== "up" && rt.side !== "down")) {
+    clearLiveBuyUi();
     return;
   }
-  const slug =
-    (typeof rt.entrySlug === "string" && rt.entrySlug.trim()) ||
-    (typeof state?.slug === "string" && state.slug.trim()) ||
-    "";
-  const entryPrice = Number(rt.entryPrice);
   const clearOpenRt = () => {
     rt.phase = "idle";
     rt.side = null;
@@ -12442,6 +12430,17 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     rt.windowStart = null;
     rt.orderInFlight = false;
   };
+  if (triggerPendingHeldById.has(id)) {
+    // Already waiting — clear the live open phase so the next window can arm.
+    clearOpenRt();
+    clearLiveBuyUi();
+    return;
+  }
+  const slug =
+    (typeof rt.entrySlug === "string" && rt.entrySlug.trim()) ||
+    (typeof state?.slug === "string" && state.slug.trim()) ||
+    "";
+  const entryPrice = Number(rt.entryPrice);
   if (!slug) {
     appendLogEntry({
       level: "warn",
@@ -12449,6 +12448,7 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
       message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — missing window slug`,
     });
     clearOpenRt();
+    clearLiveBuyUi();
     return;
   }
   // Number(null) === 0; only park settles with a real buy fill price.
@@ -12459,6 +12459,7 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
       message: `Trigger "${String(trigger.name || "Untitled trigger")}" held settle skipped — missing entry price`,
     });
     clearOpenRt();
+    clearLiveBuyUi();
     return;
   }
   const entryWindowStart = Number(rt.windowStart ?? state?.windowStart);
@@ -12478,7 +12479,8 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
   triggerPendingHeldById.set(id, pending);
   clearOpenRt();
   // Window rolled / ended while open — clear the live buy latch (re-arm visually).
-  setTriggerCardLiveUi(id, null);
+  // Positions card stays Open until Gamma resolve.
+  clearLiveBuyUi();
   appendLogEntry({
     level: "info",
     source: "client",
@@ -12943,6 +12945,9 @@ function tickUserTriggers(state) {
     if (rt.windowStart != null && state.windowStart !== rt.windowStart) {
       if (rt.phase === "open") {
         settleTriggerHeldToWindowEnd(trigger, rt, state);
+      } else if (rt.liveUi) {
+        // Stale BUY highlight after a prior settle abort — always re-arm on roll.
+        setTriggerCardLiveUi(id, null);
       }
       rt.phase = "idle";
       rt.side = null;
@@ -12960,6 +12965,7 @@ function tickUserTriggers(state) {
         rt.watchStartedAtMs = null;
         rt.startPriceCents = null;
       }
+      if (rt.liveUi) setTriggerCardLiveUi(id, null);
       continue;
     }
 
@@ -12979,6 +12985,7 @@ function tickUserTriggers(state) {
     if (windowEnded) {
       rt.phase = "idle";
       rt.watchStartedAtMs = null;
+      if (rt.liveUi) setTriggerCardLiveUi(id, null);
       continue;
     }
 
