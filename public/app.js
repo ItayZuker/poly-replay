@@ -2634,8 +2634,10 @@ function initLeftRowSplitter() {
 
   const applyHeights = (trade, prev, triggers, book, log) => {
     const { colRect, chrome, maxContent } = getMetrics();
-    // Trade panel is hidden — Allow trade is on Settings → User.
-    let t = 0;
+    // Trade UI is hidden (Allow trade is on Settings → User), but keep this
+    // height as the spacer above Positions so dragging the Positions header
+    // can park space above itself instead of collapsing the stack / moving Log.
+    let t = Math.max(0, trade);
     let p = Math.max(0, prev);
     let tr = Math.max(0, triggers);
     let b = Math.max(0, book);
@@ -3940,23 +3942,24 @@ function renderPositionCard(card) {
     [triggerName, windowRange ? `UTC ${windowRange}` : ""].filter(Boolean).join(" · "),
   );
   const buyTimeHtml = buyTime
-    ? `<span class="position-card-buy-time" title="Buy time (UTC)">${escapeHtml(buyTime)}</span>`
+    ? `<span class="position-card-window" title="Buy time (UTC)">(${escapeHtml(buyTime)})</span>`
     : "";
   const buyFillHtml = buyValue
     ? `<strong class="position-card-fill">${escapeHtml(buyValue)}</strong>`
     : "";
-  const titleLeftHtml = `<span class="position-card-title-left">${demoPrefix}<span class="position-card-trigger-name" title="${triggerTitleAttr}">${triggerTitleInner}</span></span>`;
+  const titleLeftHtml = `<span class="position-card-trigger-name" title="${triggerTitleAttr}">${triggerTitleInner}</span>`;
+  const statusRightHtml = `<span class="position-card-status-right">${demoPrefix}${statusBlock}</span>`;
   const betRowHtml = isPrediction
     ? `<div class="position-card-side-wrap">${triggerMissLabel}<span class="position-card-side ${sideClass}">${sideLabel}</span></div>`
     : `<div class="position-card-bet-row">
-      <span class="position-card-side-wrap">${triggerMissLabel}${buyTimeHtml}<span class="position-card-side ${sideClass}">${sideLabel}</span></span>
+      <span class="position-card-side-wrap">${triggerMissLabel}<span class="position-card-side ${sideClass}">${sideLabel}</span>${buyTimeHtml}</span>
       ${buyFillHtml}
     </div>`;
   // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
   return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${card.triggerMiss === true ? " is-trigger-miss" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
       ${titleLeftHtml}
-      ${statusBlock}
+      ${statusRightHtml}
     </div>
     ${betRowHtml}
     ${detailHtml}
@@ -3966,8 +3969,12 @@ function renderPositionCard(card) {
 const DEMO_POSITION_CARDS_KEY = "poly-real:demo-position-cards";
 const PREDICTION_POSITION_CARDS_KEY = "poly-prediction-position-cards";
 const POSITIONS_HIDDEN_IDS_KEY = "poly-real:positions-hidden-ids";
+const POSITIONS_FILTER_KEY = "poly-real:positions-filter";
 const APP_PAGE_KEY = "poly-real:app-page";
 const SCHEDULE_VIEW_KEY = "poly-real:schedule-view";
+
+/** @type {"demo" | "trade" | "all"} */
+let positionsFilter = "all";
 
 let demoPositionCards = [];
 /** @type {Array<Record<string, unknown>>} */
@@ -4634,9 +4641,10 @@ function ingestDemoPositionCards(state) {
 }
 
 function positionsFingerprint(cards) {
-  if (!Array.isArray(cards) || cards.length === 0) return "positions:";
+  const mode = normalizePositionsFilter(positionsFilter);
+  if (!Array.isArray(cards) || cards.length === 0) return `positions:${mode}:`;
   return (
-    "positions:" +
+    `positions:${mode}:` +
     cards
       .map(
         (c) =>
@@ -4644,6 +4652,42 @@ function positionsFingerprint(cards) {
       )
       .join("|")
   );
+}
+
+function normalizePositionsFilter(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "demo" || v === "trade") return v;
+  return "all";
+}
+
+function loadPositionsFilter() {
+  try {
+    positionsFilter = normalizePositionsFilter(localStorage.getItem(POSITIONS_FILTER_KEY));
+  } catch {
+    positionsFilter = "all";
+  }
+  return positionsFilter;
+}
+
+function persistPositionsFilter() {
+  try {
+    localStorage.setItem(POSITIONS_FILTER_KEY, positionsFilter);
+  } catch {
+    // ignore
+  }
+}
+
+function isDemoPositionCard(card) {
+  return Boolean(card && (card.demo === true || String(card.id || "").startsWith("demo:")));
+}
+
+/** Apply header Demo / Trade / All filter. */
+function filterPositionsCards(cards) {
+  const list = Array.isArray(cards) ? cards : [];
+  const mode = normalizePositionsFilter(positionsFilter);
+  if (mode === "demo") return list.filter(isDemoPositionCard);
+  if (mode === "trade") return list.filter((c) => !isDemoPositionCard(c));
+  return list;
 }
 
 /** Merge live trade cards + demo cards (no Prediction). Newest buyAt first. */
@@ -4654,8 +4698,8 @@ function mergePositionsCards(liveCards, series) {
   const demo = demoPositionCards.filter(
     (c) => c && (!c.series || c.series === series) && !isPositionCardHidden(c),
   );
-  return [...demo, ...live]
-    .sort((a, b) => {
+  return filterPositionsCards(
+    [...demo, ...live].sort((a, b) => {
       const ta = Number(a?.buyAt);
       const tb = Number(b?.buyAt);
       const aOk = Number.isFinite(ta);
@@ -4663,8 +4707,8 @@ function mergePositionsCards(liveCards, series) {
       if (aOk && bOk && tb !== ta) return tb - ta;
       if (aOk !== bOk) return aOk ? -1 : 1;
       return 0;
-    })
-    .slice(0, MAX_POSITION_CARDS);
+    }),
+  ).slice(0, MAX_POSITION_CARDS);
 }
 
 function syncPositionsScrollable() {
@@ -4745,7 +4789,13 @@ function updatePositionsPanel(state) {
   if (cards.length === 0) {
     list.innerHTML = "";
     empty.hidden = false;
-    empty.textContent = "No positions yet";
+    const mode = normalizePositionsFilter(positionsFilter);
+    empty.textContent =
+      mode === "demo"
+        ? "No demo positions"
+        : mode === "trade"
+          ? "No trade positions"
+          : "No positions yet";
     syncPositionsScrollable();
     return;
   }
@@ -4755,12 +4805,17 @@ function updatePositionsPanel(state) {
   syncPositionsScrollable();
 }
 
-function bindPositionsClear() {
-  const btn = $("positions-clear");
-  if (!btn || btn.dataset.bound === "1") return;
-  btn.dataset.bound = "1";
-  btn.addEventListener("click", () => {
-    clearAllPositionCards();
+function bindPositionsFilter() {
+  const sel = $("positions-filter");
+  if (!sel || sel.dataset.bound === "1") return;
+  sel.dataset.bound = "1";
+  loadPositionsFilter();
+  sel.value = positionsFilter;
+  sel.addEventListener("change", () => {
+    positionsFilter = normalizePositionsFilter(sel.value);
+    persistPositionsFilter();
+    lastPositionsFingerprint = "";
+    updatePositionsPanel(windowState);
   });
 }
 
@@ -13727,7 +13782,7 @@ function initAppHeaderLayout() {
 async function init() {
   loadPositionsHiddenIds();
   demoPositionCards = loadDemoPositionCards();
-  bindPositionsClear();
+  bindPositionsFilter();
   initSimulatorBoxScrollbars();
   initChart();
   initColumnSplitter();
