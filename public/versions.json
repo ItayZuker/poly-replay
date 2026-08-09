@@ -1,6 +1,11 @@
 {
-    "current":  "1.63.2",
+    "current":  "1.64.0",
     "releases":  [
+                     {
+                         "version":  "1.64.0",
+                         "releasedAt":  "2026-08-09T12:30:23.412Z",
+                         "notes":  "Market Triggers use the same responsive card grid as Positions, with drag-to-reorder across the grid. Docs updated."
+                     },
                      {
                          "version":  "1.63.2",
                          "releasedAt":  "2026-08-09T12:22:54.913Z",

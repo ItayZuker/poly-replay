@@ -6812,23 +6812,29 @@ function endTriggerCardReorder(commit) {
   void persistTriggerOrder(orderedIds);
 }
 
-function updateTriggerCardReorder(clientY) {
-  const state = triggerReorderState;
-  if (!state) return;
-  const { card, cardsEl, placeholder, offsetY } = state;
-  if (!placeholder) return;
-  state.moved = true;
-  card.style.top = `${clientY - offsetY}px`;
-
+/** Grid-aware insert target: DOM order is row-major; use X within a row, Y across rows. */
+function findTriggerReorderInsertBefore(cardsEl, card, clientX, clientY) {
   const siblings = [...cardsEl.querySelectorAll(".trigger-card")].filter((el) => el !== card);
-  let insertBefore = null;
   for (const other of siblings) {
     const rect = other.getBoundingClientRect();
-    if (clientY < rect.top + rect.height / 2) {
-      insertBefore = other;
-      break;
-    }
+    const midY = rect.top + rect.height / 2;
+    const midX = rect.left + rect.width / 2;
+    if (clientY < midY - 1) return other;
+    if (clientY <= midY + 1 && clientX < midX) return other;
   }
+  return null;
+}
+
+function updateTriggerCardReorder(clientX, clientY) {
+  const state = triggerReorderState;
+  if (!state) return;
+  const { card, cardsEl, placeholder, offsetX, offsetY } = state;
+  if (!placeholder) return;
+  state.moved = true;
+  card.style.left = `${clientX - (Number.isFinite(offsetX) ? offsetX : 0)}px`;
+  card.style.top = `${clientY - offsetY}px`;
+
+  const insertBefore = findTriggerReorderInsertBefore(cardsEl, card, clientX, clientY);
   if (insertBefore) {
     if (placeholder.nextElementSibling !== insertBefore) {
       cardsEl.insertBefore(placeholder, insertBefore);
@@ -6863,6 +6869,7 @@ function startTriggerCardReorder(e, card, cardsEl) {
     card,
     cardsEl,
     placeholder,
+    offsetX: e.clientX - rect.left,
     offsetY: e.clientY - rect.top,
     height: rect.height,
     pointerId: e.pointerId,
@@ -6878,7 +6885,7 @@ function startTriggerCardReorder(e, card, cardsEl) {
 
   const onMove = (ev) => {
     if (!triggerReorderState || triggerReorderState.card !== card) return;
-    updateTriggerCardReorder(ev.clientY);
+    updateTriggerCardReorder(ev.clientX, ev.clientY);
   };
   const onUp = () => {
     window.removeEventListener("pointermove", onMove);
@@ -6889,7 +6896,7 @@ function startTriggerCardReorder(e, card, cardsEl) {
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onUp);
-  updateTriggerCardReorder(e.clientY);
+  updateTriggerCardReorder(e.clientX, e.clientY);
 }
 
 /**
