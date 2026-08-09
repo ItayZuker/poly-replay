@@ -42,6 +42,7 @@ export type TradingStatEventCard = Pick<
   | "source"
   | "triggerId"
   | "triggerExitReason"
+  | "triggerMiss"
   | "sellPrice"
   | "sellProceeds"
   | "sellFees"

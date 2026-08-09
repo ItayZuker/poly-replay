@@ -3893,6 +3893,10 @@ function renderPositionCard(card) {
     isDemo && !isPrediction
       ? `<span class="position-card-demo-label" title="Demo (Allow trade off)">Demo</span>`
       : "";
+  const triggerMissLabel =
+    !isPrediction && card.triggerMiss === true
+      ? `<span class="position-card-trigger-miss-label" title="Buy fill outside the trigger Ask band (or oversized vs Start Shares). Sell / hold still follow the trigger setup.">Trigger Miss</span>`
+      : "";
   let statusHtml;
   if (isPrediction && status === "right") {
     statusHtml = `<span class="position-card-status is-icon" title="Right" aria-label="Prediction was right">${PREDICTION_ICON_CHECK}</span>`;
@@ -3910,9 +3914,9 @@ function renderPositionCard(card) {
       ? `<span class="position-card-status-wrap">${simLabel}${statusHtml}</span>`
       : statusHtml;
   // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
-  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
+  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${card.triggerMiss === true ? " is-trigger-miss" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
     <div class="position-card-top">
-      <span class="position-card-side-wrap">${demoPrefix}<span class="position-card-side ${sideClass}">${sideLabel}</span>${windowHtml}</span>
+      <span class="position-card-side-wrap">${demoPrefix}${triggerMissLabel}<span class="position-card-side ${sideClass}">${sideLabel}</span>${windowHtml}</span>
       ${statusBlock}
     </div>
     ${detailHtml}
@@ -4334,6 +4338,7 @@ function upsertTriggerDemoPositionOpen(trigger, rt, state, side) {
     demo: true,
     source: "trigger",
     triggerId: String(trigger.id),
+    ...(rt.triggerMiss === true ? { triggerMiss: true } : {}),
   });
   lastPositionsFingerprint = "";
   updatePositionsPanel(windowState || state);
@@ -4384,6 +4389,9 @@ function upsertTriggerDemoPositionSettle(trigger, rt, exitPrice, reason, opts = 
     demo: true,
     source: "trigger",
     triggerId: String(trigger.id),
+    ...(existing?.triggerMiss === true || rt.triggerMiss === true
+      ? { triggerMiss: true }
+      : {}),
   });
   lastPositionsFingerprint = "";
   updatePositionsPanel(windowState);
@@ -4510,7 +4518,7 @@ function positionsFingerprint(cards) {
     cards
       .map(
         (c) =>
-          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}:${c.demo ? 1 : 0}`,
+          `${c.id}:${c.status}:${c.shares ?? ""}:${c.buyPrice ?? ""}:${c.buyCost ?? ""}:${c.sellPrice ?? ""}:${c.pl ?? ""}:${c.outcome ?? ""}:${c.confirmed ? 1 : 0}:${c.demo ? 1 : 0}:${c.triggerMiss ? 1 : 0}`,
       )
       .join("|")
   );
@@ -12146,9 +12154,16 @@ async function openTriggerPosition(trigger, rt, state, side) {
     const fillShares = Number(result.body?.fillShares);
     rt.entryPrice = Number.isFinite(fillPrice) ? fillPrice : ask;
     rt.entryShares = Number.isFinite(fillShares) && fillShares > 0 ? fillShares : buyShares;
+    const fillCents = Number.isFinite(rt.entryPrice) ? rt.entryPrice * 100 : NaN;
+    rt.triggerMiss =
+      result.body?.triggerMiss === true ||
+      (Number.isFinite(fillCents) &&
+        (fillCents < askBand.lowCents - 1e-6 || fillCents > askBand.highCents + 1e-6)) ||
+      (Number.isFinite(rt.entryShares) && rt.entryShares > buyShares + 1e-3);
   } else {
     rt.entryPrice = ask;
     rt.entryShares = buyShares;
+    rt.triggerMiss = false;
     appendLogEntry({
       level: "info",
       source: "client",

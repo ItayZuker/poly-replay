@@ -475,6 +475,11 @@ export interface TradingPositionCard {
   triggerId?: string;
   /** Exit path for trigger sells: tp / sl (held uses window-end via status win/loss). */
   triggerExitReason?: "tp" | "sl";
+  /**
+   * Buy fill landed outside the trigger Ask band (or oversized vs Start Shares).
+   * Still uses normal Sell / hold-to-settlement; Positions UI shows "Trigger Miss".
+   */
+  triggerMiss?: boolean;
 }
 
 /** Live real-trade aggregates for a schedule placement card. */
