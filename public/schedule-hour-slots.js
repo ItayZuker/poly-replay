@@ -110,6 +110,7 @@
   }
 
   function formatPnl(pnl, hasData) {
+    // Live arrived-empty slots use hasData + $0 with gray (is-neutral).
     if (!hasData) return "+$0.00";
     const n = Number(pnl) || 0;
     const abs = formatPnlAbs(n);
@@ -119,6 +120,7 @@
   }
 
   function pnlClass(pnl, hasData) {
+    // Zero / no buys → gray label (not green/red).
     if (!hasData) return "is-neutral";
     if (pnl > 0) return "is-positive";
     if (pnl < 0) return "is-negative";
