@@ -4311,11 +4311,47 @@ function triggerDemoPositionCardId(triggerId, windowStart, side) {
   return `demo:trigger:${triggerId}:${windowStart}:${side}`;
 }
 
+/** Open Demo Positions card for this trigger + side (status open only). */
+function findOpenTriggerDemoPositionCard(triggerId, side) {
+  const tid = String(triggerId || "");
+  if (!tid || (side !== "up" && side !== "down")) return null;
+  return (
+    demoPositionCards.find(
+      (c) =>
+        c &&
+        (c.demo === true || String(c.id || "").startsWith("demo:")) &&
+        c.source === "trigger" &&
+        String(c.triggerId || "") === tid &&
+        c.side === side &&
+        (c.status || "open") === "open",
+    ) || null
+  );
+}
+
+/**
+ * Entry-window start for Demo settle — never the live rolled window.
+ * Prefer opts / runtime / open card; only then fall back to current state.
+ */
+function resolveTriggerDemoSettleWindowStart(triggerId, rt, side, opts = {}) {
+  const fromOpts = Number(opts.windowStart);
+  if (Number.isFinite(fromOpts) && fromOpts > 0) return fromOpts;
+  const fromRt = Number(rt?.windowStart);
+  if (Number.isFinite(fromRt) && fromRt > 0) return fromRt;
+  const open = findOpenTriggerDemoPositionCard(triggerId, side);
+  if (open) {
+    const fromCard = positionWindowStartSec(open);
+    if (Number.isFinite(fromCard) && fromCard > 0) return fromCard;
+  }
+  const fromState = Number(windowState?.windowStart);
+  if (Number.isFinite(fromState) && fromState > 0) return fromState;
+  return NaN;
+}
+
 /** Mirror a Trigger Demo open into Positions (same card shape as live, Demo label). */
 function upsertTriggerDemoPositionOpen(trigger, rt, state, side) {
   if (!trigger?.id || rt?.runMode === "trade") return;
-  const windowStart = Number(state?.windowStart);
-  if (!Number.isFinite(windowStart)) return;
+  const windowStart = Number(rt?.windowStart ?? state?.windowStart);
+  if (!Number.isFinite(windowStart) || windowStart <= 0) return;
   const shares = Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares);
   const buyPrice = Number(rt.entryPrice);
   if (!Number.isFinite(buyPrice)) return;
@@ -4323,10 +4359,16 @@ function upsertTriggerDemoPositionOpen(trigger, rt, state, side) {
   const id = triggerDemoPositionCardId(trigger.id, windowStart, side);
   // Cleared cards stay hidden; new id each window/side so later hits still show.
   positionsHiddenIds.delete(id);
+  const slug =
+    (typeof rt.entrySlug === "string" && rt.entrySlug.trim()) ||
+    (typeof state?.slug === "string" && state.slug.trim()) ||
+    "";
+  // Explicitly clear settle fields so a prior wrong-id merge cannot leave Market/P/L on Open.
   upsertDemoPositionCard({
     id,
     windowKey: `${series}:${windowStart}`,
     series,
+    slug: slug || undefined,
     side,
     shares,
     buyPrice,
@@ -4334,11 +4376,17 @@ function upsertTriggerDemoPositionOpen(trigger, rt, state, side) {
     buyFees: 0,
     buyAt: Math.floor(Date.now() / 1000),
     status: "open",
+    sellPrice: undefined,
+    sellProceeds: undefined,
+    sellFees: undefined,
+    soldAt: undefined,
+    outcome: undefined,
+    pl: undefined,
     confirmed: true,
     demo: true,
     source: "trigger",
     triggerId: String(trigger.id),
-    ...(rt.triggerMiss === true ? { triggerMiss: true } : {}),
+    triggerMiss: rt.triggerMiss === true,
   });
   lastPositionsFingerprint = "";
   updatePositionsPanel(windowState || state);
@@ -4348,15 +4396,27 @@ function upsertTriggerDemoPositionSettle(trigger, rt, exitPrice, reason, opts = 
   if (!trigger?.id || rt?.runMode === "trade") return;
   const side = rt.side === "down" ? "down" : rt.side === "up" ? "up" : null;
   if (!side) return;
-  const windowStart = Number(windowState?.windowStart);
-  if (!Number.isFinite(windowStart)) return;
+  const windowStart = resolveTriggerDemoSettleWindowStart(trigger.id, rt, side, opts);
+  if (!Number.isFinite(windowStart) || windowStart <= 0) return;
   const shares = Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares);
   const buyPrice = Number(rt.entryPrice);
   const exit = Number(exitPrice);
   if (!Number.isFinite(buyPrice) || !Number.isFinite(exit)) return;
-  const series = windowState?.series || selectedSeries;
-  const id = triggerDemoPositionCardId(trigger.id, windowStart, side);
-  const existing = demoPositionCards.find((c) => c.id === id);
+  const series =
+    (typeof opts.series === "string" && opts.series.trim()) ||
+    windowState?.series ||
+    selectedSeries;
+  let settleWindowStart = windowStart;
+  let id = triggerDemoPositionCardId(trigger.id, settleWindowStart, side);
+  let existing = demoPositionCards.find((c) => c.id === id) || null;
+  // Prefer the live open Demo card if ids drifted (entry window vs rolled window).
+  const openExisting = findOpenTriggerDemoPositionCard(trigger.id, side);
+  if (openExisting && (!existing || existing.id !== openExisting.id)) {
+    existing = openExisting;
+    id = String(openExisting.id);
+    const fromOpen = positionWindowStartSec(openExisting);
+    if (Number.isFinite(fromOpen) && fromOpen > 0) settleWindowStart = fromOpen;
+  }
   const buyAt =
     existing?.buyAt != null && Number.isFinite(Number(existing.buyAt))
       ? Number(existing.buyAt)
@@ -4366,12 +4426,23 @@ function upsertTriggerDemoPositionSettle(trigger, rt, exitPrice, reason, opts = 
   let outcome;
   if (reason === "window-end") {
     status = opts.heldWon === true ? "win" : "loss";
-    outcome = opts.heldWon === true ? side : side === "up" ? "down" : "up";
+    // Official Gamma Up/Down (same /api/window-resolution as live Trade cards).
+    if (opts.officialOutcome === "up" || opts.officialOutcome === "down") {
+      outcome = opts.officialOutcome;
+    } else {
+      outcome = opts.heldWon === true ? side : side === "up" ? "down" : "up";
+    }
   }
+  const slug =
+    (typeof opts.slug === "string" && opts.slug.trim()) ||
+    (typeof rt.entrySlug === "string" && rt.entrySlug.trim()) ||
+    (typeof existing?.slug === "string" && existing.slug.trim()) ||
+    "";
   upsertDemoPositionCard({
     id,
-    windowKey: `${series}:${windowStart}`,
+    windowKey: `${series}:${settleWindowStart}`,
     series,
+    slug: slug || undefined,
     side,
     shares,
     buyPrice,
@@ -4389,9 +4460,8 @@ function upsertTriggerDemoPositionSettle(trigger, rt, exitPrice, reason, opts = 
     demo: true,
     source: "trigger",
     triggerId: String(trigger.id),
-    ...(existing?.triggerMiss === true || rt.triggerMiss === true
-      ? { triggerMiss: true }
-      : {}),
+    triggerMiss:
+      existing?.triggerMiss === true || rt.triggerMiss === true || opts.triggerMiss === true,
   });
   lastPositionsFingerprint = "";
   updatePositionsPanel(windowState);
@@ -4405,11 +4475,18 @@ function shouldUpdateDemoPositionCards(trading) {
 function upsertDemoPositionCard(card) {
   if (!card?.id) return;
   const idx = demoPositionCards.findIndex((c) => c.id === card.id);
-  if (idx >= 0) {
-    demoPositionCards[idx] = { ...demoPositionCards[idx], ...card, demo: true };
-  } else {
-    demoPositionCards.unshift({ ...card, demo: true });
+  // Open cards replace fully so stale Market/P/L from a bad merge cannot linger.
+  const next =
+    card.status === "open"
+      ? { ...card, demo: true }
+      : idx >= 0
+        ? { ...demoPositionCards[idx], ...card, demo: true }
+        : { ...card, demo: true };
+  for (const key of Object.keys(next)) {
+    if (next[key] === undefined) delete next[key];
   }
+  if (idx >= 0) demoPositionCards[idx] = next;
+  else demoPositionCards.unshift(next);
   if (demoPositionCards.length > MAX_POSITION_CARDS) demoPositionCards.length = MAX_POSITION_CARDS;
   persistDemoPositionCards();
 }
@@ -11874,6 +11951,7 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
     rt.entryPrice = null;
     rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
     rt.entrySlug = null;
+    rt.windowStart = null;
     rt.orderInFlight = false;
     if (skipId != null) setTriggerCardLiveUi(skipId, null);
     return;
@@ -11921,6 +11999,7 @@ function settleTriggerOpenPosition(trigger, rt, exitPrice, reason, opts = {}) {
   rt.entryPrice = null;
   rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
   rt.entrySlug = null;
+  rt.windowStart = null;
   rt.orderInFlight = false;
   rt.sawHolding = false;
 
@@ -11997,8 +12076,19 @@ async function resolveTriggerHeldSettlement(triggerId) {
     watchStartedAtMs: null,
     startPriceCents: null,
     orderInFlight: false,
+    windowStart: pending.windowStart ?? null,
+    entrySlug: pending.slug || null,
+    triggerMiss: pending.triggerMiss === true,
   };
-  settleTriggerOpenPosition(trigger, rt, won ? 1 : 0, "window-end", { heldWon: won });
+  // Same official Gamma outcome as live Trade cards (/api/window-resolution).
+  settleTriggerOpenPosition(trigger, rt, won ? 1 : 0, "window-end", {
+    heldWon: won,
+    officialOutcome: outcome,
+    windowStart: pending.windowStart ?? null,
+    series: pending.series || null,
+    slug: pending.slug || null,
+    triggerMiss: pending.triggerMiss === true,
+  });
 }
 
 /**
@@ -12017,6 +12107,7 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     rt.entryPrice = null;
     rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
     rt.entrySlug = null;
+    rt.windowStart = null;
     rt.orderInFlight = false;
     return;
   }
@@ -12033,6 +12124,7 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     rt.entryPrice = null;
     rt.entryShares = normalizeTriggerBuyShares(trigger.buyShares);
     rt.entrySlug = null;
+    rt.windowStart = null;
     rt.orderInFlight = false;
   };
   if (!slug) {
@@ -12054,14 +12146,17 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
     clearOpenRt();
     return;
   }
+  const entryWindowStart = Number(rt.windowStart ?? state?.windowStart);
   const pending = {
     triggerId: id,
     side: rt.side,
     entryPrice,
     entryShares: Number(rt.entryShares) || normalizeTriggerBuyShares(trigger.buyShares),
     runMode: rt.runMode === "trade" ? "trade" : "demo",
-    windowStart: rt.windowStart ?? state?.windowStart ?? null,
+    windowStart: Number.isFinite(entryWindowStart) && entryWindowStart > 0 ? entryWindowStart : null,
+    series: state?.series || selectedSeries || null,
     slug,
+    triggerMiss: rt.triggerMiss === true,
     attempts: 0,
     timer: null,
   };
@@ -12072,7 +12167,7 @@ function enqueueTriggerHeldSettlement(trigger, rt, state) {
   appendLogEntry({
     level: "info",
     source: "client",
-    message: `Trigger "${String(trigger.name || "Untitled trigger")}" held — waiting for official outcome`,
+    message: `Trigger "${String(trigger.name || "Untitled trigger")}" held — waiting for official Gamma outcome`,
   });
   void resolveTriggerHeldSettlement(id);
 }
@@ -12173,6 +12268,9 @@ async function openTriggerPosition(trigger, rt, state, side) {
 
   rt.entrySlug =
     typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
+  const openWindowStart = Number(state?.windowStart);
+  rt.windowStart =
+    Number.isFinite(openWindowStart) && openWindowStart > 0 ? openWindowStart : null;
 
   // Preserve watch start for the chart duration band, then clear watch state.
   rt.watchStartedAtMs = Number.isFinite(watchStartedAtMs) ? watchStartedAtMs : rt.watchStartedAtMs;
@@ -12448,6 +12546,9 @@ async function openTriggerPositionFromFill(trigger, rt, state, side, fillPrice, 
     Number.isFinite(fillShares) && fillShares > 0 ? fillShares : buyShares;
   rt.entrySlug =
     typeof state?.slug === "string" && state.slug.trim() ? state.slug.trim() : null;
+  const gtdWindowStart = Number(state?.windowStart);
+  rt.windowStart =
+    Number.isFinite(gtdWindowStart) && gtdWindowStart > 0 ? gtdWindowStart : null;
   rt.watchStartedAtMs = Date.now();
   recordTriggerChartHit(trigger, rt, state, side);
   rt.phase = "open";
