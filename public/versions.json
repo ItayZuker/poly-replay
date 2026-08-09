@@ -1,6 +1,11 @@
 {
-    "current":  "1.61.0",
+    "current":  "1.61.1",
     "releases":  [
+                     {
+                         "version":  "1.61.1",
+                         "releasedAt":  "2026-08-09T06:02:53.117Z",
+                         "notes":  "Trigger buys require best Ask inside the full diagram band (low and high), not only at/below the high. Docs updated."
+                     },
                      {
                          "version":  "1.61.0",
                          "releasedAt":  "2026-08-09T04:58:38.072Z",

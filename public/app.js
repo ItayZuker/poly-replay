@@ -2021,6 +2021,7 @@ async function postTradingOrder(
     sellOrderType,
     takeProfitCents,
     maxPrice,
+    minPrice,
     triggerId,
     triggerExitReason,
   } = {},
@@ -2051,6 +2052,9 @@ async function postTradingOrder(
         : {}),
       ...(Number.isFinite(Number(maxPrice)) && Number(maxPrice) > 0 && Number(maxPrice) < 1
         ? { maxPrice: Number(maxPrice) }
+        : {}),
+      ...(Number.isFinite(Number(minPrice)) && Number(minPrice) > 0 && Number(minPrice) < 1
+        ? { minPrice: Number(minPrice) }
         : {}),
     }),
   });
@@ -11749,17 +11753,28 @@ function triggerEndConditionMet(trigger, startPriceCents, endPriceCents) {
   return triggerPriceInRange(endPriceCents, trigger.priceRanges?.end);
 }
 
-/** Max Ask (¢) for the FOK buy — must not walk the book above the diagram band high. */
-function triggerBuyMaxAskCents(trigger) {
+/**
+ * Buy Ask band (¢) for open + order cap: same diagram band as the fire end/start condition.
+ * Duration 0 / end Change → start Price or start Range; else end Range.
+ */
+function triggerBuyAskBandCents(trigger) {
   const useStart =
     isTriggerZeroDuration(trigger?.durationMs) || trigger?.endMode === "change-side";
   if (useStart) {
     if (normalizeTriggerStartMode(trigger?.startMode) === "price") {
-      return clampTriggerCents(trigger.startPriceCents ?? 50);
+      const p = clampTriggerCents(trigger.startPriceCents ?? 50);
+      return { lowCents: p, highCents: p };
     }
-    return normalizeTriggerPriceRange(trigger?.priceRanges?.start).highCents;
+    const start = normalizeTriggerPriceRange(trigger?.priceRanges?.start);
+    return { lowCents: start.lowCents, highCents: start.highCents };
   }
-  return normalizeTriggerPriceRange(trigger?.priceRanges?.end).highCents;
+  const end = normalizeTriggerPriceRange(trigger?.priceRanges?.end);
+  return { lowCents: end.lowCents, highCents: end.highCents };
+}
+
+/** Max Ask (¢) for the FAK/FOK buy — must not walk the book above the diagram band high. */
+function triggerBuyMaxAskCents(trigger) {
+  return triggerBuyAskBandCents(trigger).highCents;
 }
 
 async function placeTriggerTradeOrder(side, leg, extras = {}) {
@@ -12071,15 +12086,22 @@ async function openTriggerPosition(trigger, rt, state, side) {
   rt.stopLossCents = clampTriggerOffsetCents(trigger.stopLossCents ?? 10, 10);
   rt.sellOrderType = sellOrderType;
 
-  // Cap: FOK must not buy above the diagram band high (Demo + Trade).
+  // Ask must still sit inside the diagram buy band (Demo + Trade) — not only ≤ high.
   const ask = triggerAskPrice(state, side);
-  const maxAskCents = triggerBuyMaxAskCents(trigger);
-  if (!Number.isFinite(ask) || ask * 100 > maxAskCents + 1e-6) {
+  const askBand = triggerBuyAskBandCents(trigger);
+  const askCents = Number.isFinite(ask) ? ask * 100 : NaN;
+  if (
+    !Number.isFinite(askCents) ||
+    askCents < askBand.lowCents - 1e-6 ||
+    askCents > askBand.highCents + 1e-6
+  ) {
     rt.phase = "idle";
     rt.side = null;
     rt.watchStartedAtMs = null;
     return;
   }
+  const maxAskCents = askBand.highCents;
+  const minAskCents = askBand.lowCents;
 
   if (runMode === "trade") {
     if (!isTriggerTradeArmed()) {
@@ -12104,6 +12126,7 @@ async function openTriggerPosition(trigger, rt, state, side) {
       shares: buyShares,
       orderType: buyOrderType === "FAK" ? "FAK" : "FOK",
       maxPrice: maxAskCents / 100,
+      minPrice: minAskCents / 100,
       triggerId: String(trigger.id || ""),
       // TP offset 100 = disabled — do not rest a GTD take-profit sell.
       sellOrderType:

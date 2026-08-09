@@ -5066,6 +5066,8 @@ export class LiveTradingService {
       takeProfitCents?: number;
       /** Buy max Ask (dollars) — trigger FAK/FOK must not walk above the diagram band. */
       maxPrice?: number;
+      /** Buy min Ask (dollars) — trigger must not buy below the diagram band low. */
+      minPrice?: number;
       /** Market Trigger id when source is trigger. */
       triggerId?: string;
       /** Trigger exit reason for sells (tp / sl). */
@@ -5217,6 +5219,14 @@ export class LiveTradingService {
         options.maxPrice > 0
           ? options.maxPrice
           : undefined;
+      const minPrice =
+        fromTrigger &&
+        leg === "buy" &&
+        options?.minPrice != null &&
+        Number.isFinite(options.minPrice) &&
+        options.minPrice > 0
+          ? options.minPrice
+          : undefined;
       const triggerId =
         fromTrigger && typeof options?.triggerId === "string" && options.triggerId.trim()
           ? options.triggerId.trim()
@@ -5239,7 +5249,7 @@ export class LiveTradingService {
         orderType,
         maxPrice,
         undefined,
-        { triggerId, triggerExitReason },
+        { triggerId, triggerExitReason, minPrice },
       );
       if (result.ok) {
         if (leg === "buy") {
@@ -5708,7 +5718,7 @@ export class LiveTradingService {
     orderType: MarketOrderType = "FOK",
     maxPrice?: number,
     buyPhaseIdx?: number,
-    opts?: { triggerId?: string; triggerExitReason?: "tp" | "sl" },
+    opts?: { triggerId?: string; triggerExitReason?: "tp" | "sl"; minPrice?: number },
   ): Promise<{ ok: boolean; error?: string; fillShares?: number; fillPrice?: number }> {
     if (!isTradingExecutor()) {
       logNonExecutorSkipOnce();
@@ -5733,6 +5743,7 @@ export class LiveTradingService {
         sizeUnit: leg === "sell" ? "shares" : sizeUnit,
         orderType,
         maxPrice: leg === "buy" ? maxPrice : undefined,
+        minPrice: leg === "buy" ? opts?.minPrice : undefined,
         state,
       });
       const fillKind: FillOrderKind = orderType;

@@ -486,14 +486,23 @@ function endConditionMet(def: ReplayTriggerDef, startCents: number, endCents: nu
   return inPriceRange(endCents, def.priceRanges.end);
 }
 
-/** Max Ask (¢) allowed for the FOK buy — band high so fills cannot walk above the setup. */
-function buyMaxAskCents(def: ReplayTriggerDef): number {
+/** Buy Ask band (¢) — same diagram band as the fire start/end condition. */
+function buyAskBandCents(def: ReplayTriggerDef): { lowCents: number; highCents: number } {
   const useStart = def.durationMs === 0 || def.endMode === "change-side";
   if (useStart) {
-    if (def.startMode === "price") return clampCents(def.startPriceCents, 50);
-    return def.priceRanges.start.highCents;
+    if (def.startMode === "price") {
+      const p = clampCents(def.startPriceCents, 50);
+      return { lowCents: p, highCents: p };
+    }
+    return {
+      lowCents: def.priceRanges.start.lowCents,
+      highCents: def.priceRanges.start.highCents,
+    };
   }
-  return def.priceRanges.end.highCents;
+  return {
+    lowCents: def.priceRanges.end.lowCents,
+    highCents: def.priceRanges.end.highCents,
+  };
 }
 
 function inApplyWindow(tick: ReplayTickDocument, windowStart: number, windowEnd: number, area: { start: number; end: number }): boolean {
@@ -704,11 +713,27 @@ export class TriggerReplayRaceSession {
       rt.startPriceCents = null;
       return;
     }
-    const maxAsk = buyMaxAskCents(rt.def) / 100;
-    const asks = asksForSide(tick, rt.side).filter((l) => l.price <= maxAsk + 1e-9);
+    const band = buyAskBandCents(rt.def);
+    const minAsk = band.lowCents / 100;
+    const maxAsk = band.highCents / 100;
+    const bookAsks = asksForSide(tick, rt.side);
+    const bestAsk = bookAsks[0]?.price;
+    rt.buyReadyAtMs = null;
+    if (
+      bestAsk == null ||
+      !Number.isFinite(bestAsk) ||
+      bestAsk < minAsk - 1e-9 ||
+      bestAsk > maxAsk + 1e-9
+    ) {
+      rt.phase = "idle";
+      rt.side = null;
+      rt.watchStartedAtMs = null;
+      rt.startPriceCents = null;
+      return;
+    }
+    const asks = bookAsks.filter((l) => l.price <= maxAsk + 1e-9);
     const fok = rt.def.buyOrderType !== "FAK";
     const buyFill = walkAsks(asks, rt.def.buyShares, fok);
-    rt.buyReadyAtMs = null;
     if (!buyFill || buyFill.shares <= 0) {
       rt.phase = "idle";
       rt.side = null;
