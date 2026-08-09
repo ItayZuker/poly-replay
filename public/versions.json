@@ -1,6 +1,11 @@
 {
-    "current":  "1.63.0",
+    "current":  "1.63.1",
     "releases":  [
+                     {
+                         "version":  "1.63.1",
+                         "releasedAt":  "2026-08-09T12:06:58.512Z",
+                         "notes":  "Past-window Open Demo Positions cards resume official Gamma settlement after refresh or poll pause. Docs updated."
+                     },
                      {
                          "version":  "1.63.0",
                          "releasedAt":  "2026-08-09T11:56:04.467Z",
