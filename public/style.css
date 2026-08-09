@@ -1769,11 +1769,13 @@ body {
     overflow-y: auto !important;
   }
 
-  .app-page-simulator.is-mobile-stack .positions-cards {
+  .app-page-simulator.is-mobile-stack .positions-cards,
+  .app-page-simulator.is-mobile-stack .triggers-cards {
     grid-template-columns: 1fr;
   }
 
-  .app-page-simulator.is-mobile-stack .position-card {
+  .app-page-simulator.is-mobile-stack .position-card,
+  .app-page-simulator.is-mobile-stack .trigger-card {
     width: 100%;
     max-width: none;
   }
@@ -7066,11 +7068,15 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 .triggers-cards {
-  display: flex;
-  flex-direction: column;
+  /* Same responsive grid as Positions: min 300px, equal 1fr columns. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-content: start;
+  justify-content: start;
   gap: 6px;
   padding: 8px 12px 10px;
   box-sizing: border-box;
+  min-width: 0;
 }
 
 .triggers-cards:empty {
@@ -7090,6 +7096,10 @@ body.is-row-resizing .panel-header-drag-handle {
   gap: 0;
   font-size: 12px;
   overflow: hidden;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .trigger-card-drag-handle {
@@ -7147,8 +7157,9 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 .trigger-card-reorder-placeholder {
-  flex: 0 0 auto;
   box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   border: 1px dashed rgba(88, 166, 255, 0.55);
   border-radius: 4px;
   background: rgba(88, 166, 255, 0.08);
