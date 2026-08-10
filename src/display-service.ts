@@ -160,6 +160,8 @@ export class DisplayService {
     recordAskSamples(this.state);
     void (async () => {
       await liveTradingRegistry.tickAll(this.state, tickMs);
+      const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
+      await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
       this.notify();
     })();
   }
@@ -195,6 +197,8 @@ export class DisplayService {
 
     void (async () => {
       await liveTradingRegistry.tickAll(this.state, tickMs);
+      const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
+      await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
       this.notify();
     })();
   }

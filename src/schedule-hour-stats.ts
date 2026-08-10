@@ -337,6 +337,7 @@ export function computeScheduleHourSlotStats(
   };
 
   const shouldCountCard = (card: TradingPositionCard, atMs: number): boolean => {
+    if (card.demo === true) return false;
     const triggerId = triggerIdOfCard(card);
     if (triggerId) return shouldCountTriggerTrade(triggerId, atMs, byTrigger);
     // Older Trigger fills often have source "trigger" but no triggerId persisted.
@@ -345,6 +346,7 @@ export function computeScheduleHourSlotStats(
   };
 
   const shouldCountEvent = (event: TradingStatEvent, atMs: number): boolean => {
+    if (event.card?.demo === true) return false;
     const triggerId = triggerIdOfEvent(event);
     if (triggerId) return shouldCountTriggerTrade(triggerId, atMs, byTrigger);
     if (event.card?.source === "trigger") return true;
@@ -353,6 +355,7 @@ export function computeScheduleHourSlotStats(
 
   for (const card of input.cards ?? []) {
     if (card.status === "open") continue;
+    if (card.demo === true) continue;
     const contrib = contribFromCard(card);
     if (!contrib) continue;
     const atMs = triggerTradeWindowMs({ buyAt: card.buyAt, windowKey: card.windowKey });
