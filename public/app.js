@@ -12,33 +12,20 @@ let pendingChainlinkTicks = [];
 
 /** Prediction sim cards (legacy local). */
 const MAX_POSITION_CARDS = 50;
-/** Server Positions: separate caps for Demo vs Trade (newest kept). */
-const MAX_DEMO_POSITION_CARDS = 300;
-const MAX_TRADE_POSITION_CARDS = 300;
+/** Positions UI: settled cards older than this are dropped (Open kept). Server enforces the same. */
+const POSITION_CARD_RETENTION_MS = 24 * 60 * 60 * 1000;
 
-/** Keep up to maxDemo Demo + maxTrade Trade cards (list order preserved; typically newest first). */
-function trimDemoTradePositionCards(
-  cards,
-  maxDemo = MAX_DEMO_POSITION_CARDS,
-  maxTrade = MAX_TRADE_POSITION_CARDS,
-) {
+/** Keep Open cards + settled buys from the last 24h. */
+function trimDemoTradePositionCards(cards) {
   const list = Array.isArray(cards) ? cards : [];
-  const out = [];
-  let demoN = 0;
-  let tradeN = 0;
-  for (const c of list) {
-    if (!c) continue;
-    const isDemo = c.demo === true || String(c.id || "").startsWith("demo:");
-    if (isDemo) {
-      if (demoN >= maxDemo) continue;
-      demoN += 1;
-    } else {
-      if (tradeN >= maxTrade) continue;
-      tradeN += 1;
-    }
-    out.push(c);
-  }
-  return out;
+  const cutoffSec = Math.floor((Date.now() - POSITION_CARD_RETENTION_MS) / 1000);
+  return list.filter((c) => {
+    if (!c) return false;
+    if (String(c.status || "").toLowerCase() === "open") return true;
+    const buyAt = Number(c.buyAt);
+    if (!Number.isFinite(buyAt)) return true;
+    return buyAt >= cutoffSec;
+  });
 }
 const LOG_CLEARED_SESSION_KEY = "poly-real:log-cleared";
 const SCHEDULE_WORKSPACE_STORAGE_KEY = "poly-real:schedule-workspace-mode";

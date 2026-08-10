@@ -560,6 +560,15 @@ export async function deleteUserTrigger(userId: string, triggerId: string): Prom
   return result.deletedCount > 0;
 }
 
+export async function deleteAllUserTriggers(userId: string): Promise<number> {
+  await ensureIndexes();
+  const uid = String(userId || "").trim();
+  if (!uid) return 0;
+  const c = await col();
+  const result = await c.deleteMany({ userId: uid });
+  return result.deletedCount ?? 0;
+}
+
 /** Bulk upsert (e.g. one-time localStorage migration). */
 export async function upsertUserTriggersBulk(
   userId: string,
