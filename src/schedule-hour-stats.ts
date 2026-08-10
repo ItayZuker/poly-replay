@@ -1,7 +1,6 @@
 import type { TriggerModeTimelineEvent } from "./db/trigger-mode-timeline-repository.js";
 import { wasTriggerTradingActive } from "./db/trigger-mode-timeline-repository.js";
 import type { TradingStatEvent } from "./db/trading-session-memory-repository.js";
-import { getWeekHistoryCutoffUtcSec } from "./day-hour-slots.js";
 import type { ScheduleHourSlotStats, TradingPositionCard } from "./types.js";
 
 /** UTC weekday ids matching schedule placements (Mon-first grid order). */
@@ -66,7 +65,7 @@ export function thisWeekDayKeyForSlotDay(day: ScheduleHourDayId, nowMs: number):
 
 /**
  * True once this week’s occurrence of `day`×`hour` has started (UTC hour floor).
- * Future slots this week keep last week’s fills until they arrive.
+ * Future slots this week keep last week’s occurrence until they arrive.
  */
 export function liveSlotHasArrived(
   day: ScheduleHourDayId,
@@ -78,6 +77,32 @@ export function liveSlotHasArrived(
   const hh = String(hour).padStart(2, "0");
   const slotStartMs = Date.parse(`${dayKey}T${hh}:00:00.000Z`);
   return Number.isFinite(slotStartMs) && nowMs >= slotStartMs;
+}
+
+/**
+ * Calendar day (YYYY-MM-DD) whose fills drive this Live weekday×hour cell:
+ * - this week’s day once that hour has arrived
+ * - otherwise the same weekday last week — even when that day had zero fills
+ *   (do not skip empty days to pull an older week with trades)
+ */
+export function activeLiveSlotDayKey(
+  day: ScheduleHourDayId,
+  hour: number,
+  nowMs: number,
+): string {
+  const thisWeek = thisWeekDayKeyForSlotDay(day, nowMs);
+  if (liveSlotHasArrived(day, hour, nowMs)) return thisWeek;
+  const thisWeekMs = Date.parse(`${thisWeek}T00:00:00.000Z`);
+  if (!Number.isFinite(thisWeekMs)) return thisWeek;
+  return new Date(thisWeekMs - 7 * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** ~8 UTC calendar days — enough for last weekday occurrence + buffer. */
+export function getLiveScheduleStatsCutoffUtcSec(now = new Date()): number {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  return Math.floor(Date.UTC(y, m, d - 7) / 1000);
 }
 
 function emptySlot(day: string, hour: number): ScheduleHourSlotStats {
@@ -267,8 +292,8 @@ export interface ComputeHourSlotStatsInput {
   timelineEvents: TriggerModeTimelineEvent[];
   /**
    * Optional ISO week (YYYY-Www) pin for tests/debug.
-   * When omitted (Live UI), each weekday×hour keeps the latest calendar day
-   * within the ~14 day history window — newer fills override only that slot.
+   * When omitted (Live UI), each weekday×hour uses the last occurrence of that
+   * slot (~1 week lookback), including days with zero fills.
    */
   weekKey?: string;
   nowMs?: number;
@@ -285,33 +310,26 @@ type PendingSlotHit = {
  * - Trigger Trade (timeline-gated Trade+Active)
  * - Legacy phase / schedule-placement ("auto") trades still in the ledger
  *
- * For each weekday×hour:
- * - Until this week’s occurrence of that hour arrives, keep the latest prior
- *   calendar day with fills (last week’s stats stay visible).
- * - Once the hour arrives (UTC), that day’s slot resets: only fills from this
- *   week’s day count. No buys → zeros with hasData (gray $0 P/L in the UI),
- *   even if last week had trades or there is no recording.
+ * For each weekday×hour the active calendar day is always the last occurrence
+ * of that slot (this week once the hour arrives; otherwise the same weekday
+ * last week) — including all-zero days. Empty last occurrences show zeros +
+ * gray $0; they do not fall back to an older week that had fills.
  */
 export function computeScheduleHourSlotStats(
   input: ComputeHourSlotStatsInput,
 ): ScheduleHourSlotStats[] {
   const nowMs = input.nowMs ?? Date.now();
   const weekKey = input.weekKey;
-  const cutoffMs = getWeekHistoryCutoffUtcSec(new Date(nowMs)) * 1000;
+  const cutoffMs = getLiveScheduleStatsCutoffUtcSec(new Date(nowMs)) * 1000;
   const byTrigger = groupTimelineByTrigger(input.timelineEvents);
   const slots = new Map<string, ScheduleHourSlotStats>();
+  /** Last occurrence day per slot (zeros count — never skip to an older week). */
+  const activeDayBySlot = new Map<string, string>();
   for (const day of SCHEDULE_HOUR_DAYS) {
     for (let hour = 0; hour < 24; hour++) {
-      slots.set(`${day}:${hour}`, emptySlot(day, hour));
-    }
-  }
-
-  /** Slots whose this-week occurrence has started → force that calendar day. */
-  const arrivedDayBySlot = new Map<string, string>();
-  for (const day of SCHEDULE_HOUR_DAYS) {
-    for (let hour = 0; hour < 24; hour++) {
-      if (!liveSlotHasArrived(day, hour, nowMs)) continue;
-      arrivedDayBySlot.set(`${day}:${hour}`, thisWeekDayKeyForSlotDay(day, nowMs));
+      const key = `${day}:${hour}`;
+      slots.set(key, emptySlot(day, hour));
+      activeDayBySlot.set(key, activeLiveSlotDayKey(day, hour, nowMs));
     }
   }
 
@@ -388,21 +406,8 @@ export function computeScheduleHourSlotStats(
     queue(atMs, contrib);
   }
 
-  const latestDayBySlot = new Map<string, string>();
   for (const hit of pending) {
-    // Arrived slots ignore older days when picking the active day.
-    const arrivedDay = arrivedDayBySlot.get(hit.slotKey);
-    if (arrivedDay && hit.dayKey !== arrivedDay) continue;
-    const prev = latestDayBySlot.get(hit.slotKey);
-    if (!prev || hit.dayKey > prev) latestDayBySlot.set(hit.slotKey, hit.dayKey);
-  }
-  // Force arrived slots onto this week’s day even with zero fills (reset last week).
-  for (const [slotKey, dayKey] of arrivedDayBySlot) {
-    latestDayBySlot.set(slotKey, dayKey);
-  }
-
-  for (const hit of pending) {
-    if (latestDayBySlot.get(hit.slotKey) !== hit.dayKey) continue;
+    if (activeDayBySlot.get(hit.slotKey) !== hit.dayKey) continue;
     const row = slots.get(hit.slotKey);
     if (!row) continue;
     row.green += hit.contrib.green;
@@ -413,10 +418,9 @@ export function computeScheduleHourSlotStats(
     row.hasData = true;
   }
 
-  // Arrived with no buys → still show zero-dot row + gray $0 (not last week, not blank).
-  for (const slotKey of arrivedDayBySlot.keys()) {
-    const row = slots.get(slotKey);
-    if (row && !row.hasData) row.hasData = true;
+  // Every slot has a defined last occurrence — empty → zero-dot row + gray $0.
+  for (const row of slots.values()) {
+    if (!row.hasData) row.hasData = true;
   }
 
   const out: ScheduleHourSlotStats[] = [];

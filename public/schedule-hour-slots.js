@@ -2,7 +2,7 @@
  * Schedule week grid: every UTC weekday×hour cell shows Trigger Trade stats + P/L.
  * Live and Replay keep separate in-memory boards so workspace toggles paint instantly
  * without flashing the other mode’s stats.
- * Live: GET /api/schedule-hour-stats (latest calendar day per slot).
+ * Live: GET /api/schedule-hour-stats (last occurrence per slot, zeros included).
  * Replay: baseline gray = recorded window counts; Run SSE fills green/red/blue/gray.
  */
 (function () {
