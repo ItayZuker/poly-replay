@@ -1,6 +1,11 @@
 {
-    "current": "1.68.4",
+    "current": "1.68.5",
     "releases": [
+        {
+            "version": "1.68.5",
+            "releasedAt": "2026-08-10T13:06:00.000Z",
+            "notes": "Stop Loss is a real ¢ drop from fill (no floor to 0¢) for Demo and Trade ? fixes instant 0¢ sells after cheap buys. Docs updated."
+        },
         {
             "version": "1.68.4",
             "releasedAt": "2026-08-10T12:52:00.000Z",
