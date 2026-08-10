@@ -1212,6 +1212,10 @@ app.get("/api/window", async (req, res) => {
       // Await hydrate + series bind so Positions gets a ready card list (no demo→live jump).
       await liveTradingRegistry.ensureLoaded(userId);
       await tradingFor(req).ensureBoundToSeries(series);
+      // Localhost: reload Positions / trigger liveUi from Mongo on page refresh (not a poll).
+      if (!isTradingExecutor()) {
+        await tradingFor(req).syncUiStateFromMongo({ force: true });
+      }
     }
     res.json(enrichWindowStateForUser(userId, displayService.getState()));
   } catch (err) {
@@ -2761,6 +2765,11 @@ app.get("/api/stream", (req, res) => {
 
   void (async () => {
     try {
+      if (userId && !isTradingExecutor()) {
+        // Page load / SSE reconnect: pull Positions + liveUi from Mongo (Heroku may have cleared).
+        await liveTradingRegistry.ensureLoaded(userId);
+        await liveTradingRegistry.get(userId).syncUiStateFromMongo({ force: true });
+      }
       const markets = await listAvailableMarkets();
       res.write(`event: markets\ndata: ${JSON.stringify(markets)}\n\n`);
       res.write(
