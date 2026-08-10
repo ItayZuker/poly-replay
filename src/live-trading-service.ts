@@ -3297,6 +3297,47 @@ export class LiveTradingService {
     }
   }
 
+  private lastUiMongoSyncMs = 0;
+
+  private positionsUiFingerprint(): string {
+    return this.positionCards
+      .map(
+        (c) =>
+          `${c.id}:${c.status}:${c.shares ?? ""}:${c.pl ?? ""}:${c.demo ? 1 : 0}`,
+      )
+      .join("|");
+  }
+
+  private triggerLiveUiFingerprint(): string {
+    return [...this.triggerLiveUiById.entries()]
+      .map(([id, live]) => {
+        if (!live) return `${id}:null`;
+        return `${id}:${live.side}:${live.buy?.price ?? ""}:${live.sell?.price ?? ""}:${live.sell?.atMs ?? ""}`;
+      })
+      .join("|");
+  }
+
+  /**
+   * Pull Positions + trigger BUY/SELL highlight from Mongo into RAM.
+   * Used so localhost (non-executor) reflects Clear / opens done on Heroku.
+   */
+  async syncUiStateFromMongo(options?: { force?: boolean; minIntervalMs?: number }): Promise<void> {
+    const minInterval = options?.minIntervalMs ?? 5_000;
+    const now = Date.now();
+    if (!options?.force && now - this.lastUiMongoSyncMs < minInterval) return;
+    this.lastUiMongoSyncMs = now;
+    const beforePos = this.positionsUiFingerprint();
+    const beforeLive = this.triggerLiveUiFingerprint();
+    await this.reloadPositionCardsForBoundSeries();
+    await this.reloadTriggerLiveUiFromMongo();
+    if (
+      beforePos !== this.positionsUiFingerprint() ||
+      beforeLive !== this.triggerLiveUiFingerprint()
+    ) {
+      this.notify();
+    }
+  }
+
   private async tickUnlocked(state: LiveWindowState, nowMs?: number): Promise<void> {
     // Never rebind from a shared display/feed series — each engine stays on its
     // own boundSeries (set via ensureBoundToSeries from that user's API).
