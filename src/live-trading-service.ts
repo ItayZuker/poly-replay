@@ -50,7 +50,6 @@ import {
 } from "./taker-fee.js";
 import {
   addActivatedPlacementId,
-  deleteTradingStatEventsByCardIds,
   ensureLiveCollectionStartedAt,
   getLiveCollectionStartedAt,
   getLiveResetAt,
@@ -61,6 +60,16 @@ import {
   upsertTradingStatEvent,
   type TradingStatEvent,
 } from "./db/trading-session-memory-repository.js";
+import {
+  clearSettledPositionCardsInDb,
+  deleteDemoPositionCardsForTrigger,
+  deletePositionCardsByIds,
+  filterPositionCardsForUi,
+  listPositionCards,
+  pruneExpiredSettledPositionCards,
+  upsertPositionCard,
+  upsertPositionCardsBulk,
+} from "./db/position-card-repository.js";
 import {
   closeFillAttempt,
   markFillAttemptSuccess,
@@ -671,30 +680,13 @@ const GTD_FILTER_REPRESS_MS = 2500;
 const GTD_SELL_BALANCE_REPRESS_MS = 2500;
 /** While a buy is pending confirmation, poll CLOB/positions on this cadence. */
 const PENDING_BUY_CONFIRM_POLL_MS = 2500;
-/** Max position cards kept in RAM and sent to the UI scroll. */
-const MAX_DEMO_POSITION_CARDS = 300;
-const MAX_TRADE_POSITION_CARDS = 300;
-
 function isDemoPositionCard(card: Pick<TradingPositionCard, "demo" | "id">): boolean {
   return card.demo === true || String(card.id || "").startsWith("demo:");
 }
 
-/** Keep up to 300 Demo + 300 Trade (preserves list order; newest-first lists drop oldest of each kind). */
-function trimDemoTradePositionCards(cards: TradingPositionCard[]): TradingPositionCard[] {
-  const out: TradingPositionCard[] = [];
-  let demoN = 0;
-  let tradeN = 0;
-  for (const c of cards) {
-    if (isDemoPositionCard(c)) {
-      if (demoN >= MAX_DEMO_POSITION_CARDS) continue;
-      demoN += 1;
-    } else {
-      if (tradeN >= MAX_TRADE_POSITION_CARDS) continue;
-      tradeN += 1;
-    }
-    out.push(c);
-  }
-  return out;
+/** Positions UI: keep Open + settled from the last 24h. */
+function trimPositionCardsForUi(cards: TradingPositionCard[]): TradingPositionCard[] {
+  return filterPositionCardsForUi(cards).sort((a, b) => (b.buyAt ?? 0) - (a.buyAt ?? 0));
 }
 
 function isRoutineGtdCancelReason(reason: string): boolean {
@@ -919,6 +911,7 @@ export class LiveTradingService {
   private config: TradingConfig = defaultTradingConfig();
   private persistChain: Promise<void> = Promise.resolve();
   private statsPersistChain: Promise<void> = Promise.resolve();
+  private positionCardsPersistChain: Promise<void> = Promise.resolve();
 
   private positions: { up: SidePosition | null; down: SidePosition | null } = {
     up: null,
@@ -1190,7 +1183,7 @@ export class LiveTradingService {
     return this.getConfig();
   }
 
-  /** Reload settled events from Mongo (after boot). Card stats keep full history; Live header uses liveResetAt. */
+  /** Reload stats ledger + Positions UI cards from Mongo (after boot). */
   async hydrateLiveStatsFromMongo(): Promise<void> {
     try {
       const resetAt = await getLiveResetAt(this.userId);
@@ -1225,15 +1218,16 @@ export class LiveTradingService {
       this.lastPersistedStatFingerprint.clear();
       this.knownPlacementIds.clear();
 
-      const openCards = this.positionCards.filter((c) => c.status === "open");
-      const restored: TradingPositionCard[] = [];
-
       for (const id of activated) {
         this.knownPlacementIds.add(id);
       }
 
+      // Stats ledger (Market / Schedule) — durable Real history; not cleared by Positions Clear.
       for (const event of events) {
-        // Manual trades never belong on Schedule — drop any stored placement link.
+        if (event.card?.demo === true || String(event.cardId).startsWith("demo:")) {
+          // Demo belongs on Positions + trigger.demoStats only.
+          continue;
+        }
         if (isManualStatEvent(event)) {
           delete event.placementId;
           if (event.card?.placementId) {
@@ -1241,7 +1235,6 @@ export class LiveTradingService {
             event.card = rest;
           }
         } else {
-          // Older rows may only store placementId on the card snapshot.
           const pid = eventPlacementId(event);
           if (pid && !event.placementId) event.placementId = pid;
           if (pid && event.card && !event.card.placementId) {
@@ -1252,22 +1245,48 @@ export class LiveTradingService {
         this.lastPersistedStatFingerprint.set(event.cardId, eventFingerprint(event));
         const pid = eventPlacementId(event);
         if (pid && !isManualStatEvent(event)) this.knownPlacementIds.add(pid);
-        const card = positionCardFromEvent(event);
-        if (card) {
-          restored.push(card);
-          if (card.placementId && !isManualTradeCard(card)) {
-            this.knownPlacementIds.add(card.placementId);
-          }
+      }
+
+      // Positions UI — Mongo position_cards (Open + last 24h settled).
+      await pruneExpiredSettledPositionCards(this.userId).catch(() => 0);
+      let uiCards = await listPositionCards(this.userId, { series: this.boundSeries });
+      if (uiCards.length === 0) {
+        // One-time seed from legacy event snapshots + any RAM open cards (this series).
+        const seeded: TradingPositionCard[] = [];
+        const seen = new Set<string>();
+        for (const c of this.positionCards) {
+          if (!c?.id || seen.has(c.id)) continue;
+          if (!this.cardMatchesBoundSeries(c)) continue;
+          seen.add(c.id);
+          seeded.push(c);
+        }
+        for (const event of events) {
+          const card = positionCardFromEvent(event);
+          if (!card || seen.has(card.id)) continue;
+          if (!this.cardMatchesBoundSeries(card)) continue;
+          seen.add(card.id);
+          seeded.push(card);
+        }
+        const keep = trimPositionCardsForUi(seeded);
+        if (keep.length > 0) {
+          await upsertPositionCardsBulk(this.userId, keep).catch((err) => {
+            logService.warn("trading", `Failed to seed position_cards: ${String(err)}`);
+          });
+          uiCards = keep;
         }
       }
 
-      restored.sort((a, b) => (b.buyAt ?? 0) - (a.buyAt ?? 0));
-      this.positionCards = trimDemoTradePositionCards([...openCards, ...restored]);
+      this.positionCards = trimPositionCardsForUi(uiCards);
+      for (const card of this.positionCards) {
+        if (card.placementId && !isManualTradeCard(card)) {
+          this.knownPlacementIds.add(card.placementId);
+        }
+      }
 
       const backfilled = await this.backfillOrphanPlacementIds();
       logService.info(
         "trading",
-        `Hydrated ${events.length} live stat event(s) from Mongo (${restored.length} position card(s), ${this.knownPlacementIds.size} placement(s)${
+        `Hydrated ${this.liveStatLedger.size} live stat event(s) + ${this.positionCards.length} position card(s) (${this.knownPlacementIds.size} placement(s)${
           backfilled > 0 ? `, backfilled ${backfilled} placementId(s)` : ""
         })`,
       );
@@ -1279,6 +1298,45 @@ export class LiveTradingService {
       // Always unblock clients (Positions spinner) even if Mongo hydrate failed.
       this.statsHydrated = true;
     }
+  }
+
+  /** Persist Positions UI card to Mongo (source of truth). Does not write the stats ledger. */
+  private scheduleUpsertPositionCard(card: TradingPositionCard): void {
+    if (!card?.id) return;
+    const snap: TradingPositionCard = { ...card };
+    if (isDemoPositionCard(snap)) snap.demo = true;
+    this.positionCardsPersistChain = this.positionCardsPersistChain
+      .then(async () => {
+        await upsertPositionCard(this.userId, snap);
+        await pruneExpiredSettledPositionCards(this.userId, this.boundSeries);
+        this.positionCards = trimPositionCardsForUi(this.positionCards);
+      })
+      .catch((err) => {
+        logService.warn("trading", `Failed to persist position card ${snap.id}: ${String(err)}`);
+      });
+  }
+
+  /** Drop Demo Positions for a deleted Market Trigger (Mongo + RAM). */
+  async dropDemoPositionCardsForTrigger(triggerId: string): Promise<number> {
+    const tid = String(triggerId || "").trim();
+    if (!tid) return 0;
+    const removed = await deleteDemoPositionCardsForTrigger(this.userId, tid).catch((err) => {
+      logService.warn("trading", `Failed to delete Demo positions for trigger ${tid}: ${String(err)}`);
+      return 0;
+    });
+    const before = this.positionCards.length;
+    this.positionCards = this.positionCards.filter(
+      (c) => !(isDemoPositionCard(c) && String(c.triggerId || "") === tid),
+    );
+    // Also drop by demo id prefix when triggerId field missing.
+    this.positionCards = this.positionCards.filter(
+      (c) => !(isDemoPositionCard(c) && String(c.id || "").startsWith(`demo:${tid}:`)),
+    );
+    if (this.positionCards.length !== before || removed > 0) {
+      this.stopConfirmLoopIfIdle();
+      this.notify();
+    }
+    return Math.max(removed, before - this.positionCards.length);
   }
 
   /**
@@ -1635,8 +1693,15 @@ export class LiveTradingService {
 
   private persistCardStat(card: TradingPositionCard): void {
     stripManualScheduleAttribution(card);
+    // Positions UI always persists (including open confirms); stats ledger is Trade settled only.
+    this.scheduleUpsertPositionCard(card);
     const contrib = contributionFromCard(card);
     if (!contrib) return;
+
+    if (isDemoPositionCard(card)) {
+      this.creditTriggerDemoStatsFromCard(card);
+      return;
+    }
 
     const event: TradingStatEvent = {
       cardId: card.id,
@@ -1663,9 +1728,7 @@ export class LiveTradingService {
       this.knownPlacementIds.add(card.placementId);
     }
 
-    // Same settlement clock as phase cards — do not wait for a separate client score.
     this.creditTriggerLiveStatsFromCard(card);
-    this.creditTriggerDemoStatsFromCard(card);
 
     this.statsPersistChain = this.statsPersistChain
       .then(async () => {
@@ -2098,16 +2161,18 @@ export class LiveTradingService {
     return { placementId, hasData: true, green, red, blue, pnl, locked: true };
   }
 
-  /** Clears trades tied to a removed schedule placement (stats drop with them). */
+  /** Clears Positions UI cards tied to a removed schedule placement. Stats ledger stays. */
   forgetPlacement(placementId: string): void {
     this.knownPlacementIds.delete(placementId);
+    const removedIds = this.positionCards
+      .filter((card) => card.placementId === placementId)
+      .map((card) => card.id);
     const before = this.positionCards.length;
     this.positionCards = this.positionCards.filter((card) => card.placementId !== placementId);
-    for (const [cardId, event] of this.liveStatLedger) {
-      if (eventPlacementId(event) === placementId) {
-        this.liveStatLedger.delete(cardId);
-        this.lastPersistedStatFingerprint.delete(cardId);
-      }
+    if (removedIds.length > 0) {
+      void deletePositionCardsByIds(this.userId, removedIds).catch((err) => {
+        logService.warn("trading", `Failed to delete placement position cards: ${String(err)}`);
+      });
     }
     if (this.positionCards.length !== before) {
       this.stopConfirmLoopIfIdle();
@@ -2220,43 +2285,37 @@ export class LiveTradingService {
   }
 
   /**
-   * Remove settled Positions cards for the current filter. Never removes status "open".
-   * scope: demo | trade | all (matches Positions header filter).
+   * Remove settled Positions UI cards for the current filter. Never removes Open.
+   * Does not touch the stats ledger, trigger Demo/Trade totals, Market P/L, or Schedule.
    */
   async clearSettledPositionCards(scope: "demo" | "trade" | "all"): Promise<number> {
     const want = scope === "demo" || scope === "trade" || scope === "all" ? scope : "all";
-    const toRemove: string[] = [];
+    const removedIds = await clearSettledPositionCardsInDb(
+      this.userId,
+      want,
+      this.boundSeries,
+    ).catch((err) => {
+      logService.warn("trading", `Failed to clear settled position cards: ${String(err)}`);
+      return [] as string[];
+    });
+    const removeSet = new Set(removedIds);
+    // Also drop any matching RAM cards (in case Mongo was already empty).
     for (const card of this.positionCards) {
       if (!card || card.status === "open") continue;
       if (!this.cardMatchesBoundSeries(card)) continue;
       const demo = isDemoPositionCard(card);
       if (want === "demo" && !demo) continue;
       if (want === "trade" && demo) continue;
-      toRemove.push(card.id);
+      removeSet.add(card.id);
     }
-    // Also drop settled ledger rows for this series that are not in RAM (hydrated events).
-    for (const [cardId, event] of this.liveStatLedger) {
-      if (toRemove.includes(cardId)) continue;
-      if (String(event.status || "").toLowerCase() === "open") continue;
-      if (!this.eventMatchesBoundSeries(event)) continue;
-      const demo = event.card?.demo === true || String(cardId).startsWith("demo:");
-      if (want === "demo" && !demo) continue;
-      if (want === "trade" && demo) continue;
-      toRemove.push(cardId);
-    }
-    if (toRemove.length === 0) {
+    if (removeSet.size === 0) {
       this.notify();
       return 0;
     }
-    const removeSet = new Set(toRemove);
-    this.positionCards = this.positionCards.filter((c) => !removeSet.has(c.id));
-    for (const id of removeSet) {
-      this.liveStatLedger.delete(id);
-      this.lastPersistedStatFingerprint.delete(id);
+    if (removedIds.length === 0) {
+      await deletePositionCardsByIds(this.userId, [...removeSet]).catch(() => 0);
     }
-    await deleteTradingStatEventsByCardIds(this.userId, [...removeSet]).catch((err) => {
-      logService.warn("trading", `Failed to delete settled position events: ${String(err)}`);
-    });
+    this.positionCards = this.positionCards.filter((c) => !removeSet.has(c.id));
     this.notify();
     return removeSet.size;
   }
@@ -3047,8 +3106,20 @@ export class LiveTradingService {
     this.scheduleContext = null;
     this.activePhaseSetup = null;
     await this.loadPersistedConfig({ hydrateStats: false, series });
+    await this.reloadPositionCardsForBoundSeries();
     await this.refreshScheduleContext(true);
     this.notify();
+  }
+
+  /** Swap Positions UI RAM to the bound market's Mongo cards (Open + last 24h). */
+  private async reloadPositionCardsForBoundSeries(): Promise<void> {
+    try {
+      await pruneExpiredSettledPositionCards(this.userId, this.boundSeries).catch(() => 0);
+      const uiCards = await listPositionCards(this.userId, { series: this.boundSeries });
+      this.positionCards = trimPositionCardsForUi(uiCards);
+    } catch (err) {
+      logService.warn("trading", `Failed to reload position cards for ${this.boundSeries}: ${String(err)}`);
+    }
   }
 
   private async tickUnlocked(state: LiveWindowState, nowMs?: number): Promise<void> {
@@ -4542,6 +4613,7 @@ export class LiveTradingService {
       existing.conditionId = existing.conditionId ?? conditionId;
       existing.slug = existing.slug ?? slug;
       if (triggerMiss) existing.triggerMiss = true;
+      this.scheduleUpsertPositionCard(existing);
     } else {
       // Hard stop: never open a second card for the same window/side/market.
       const dup = this.positionCards.find(
@@ -4571,7 +4643,7 @@ export class LiveTradingService {
         buyPhaseIdx: phaseIdx,
       };
       this.lockQuote(side, "buy", fillPrice);
-      this.positionCards.unshift({
+      const opened: TradingPositionCard = {
         id: cardId,
         windowKey,
         series: state.series,
@@ -4592,11 +4664,13 @@ export class LiveTradingService {
         ...(resolvedTriggerId ? { triggerId: resolvedTriggerId } : {}),
         ...(resolvedTriggerName ? { triggerName: resolvedTriggerName } : {}),
         ...(triggerMiss ? { triggerMiss: true } : {}),
-      });
+      };
+      this.positionCards.unshift(opened);
       if (source !== "manual" && resolvedPlacementId) {
         this.rememberActivatedPlacement(resolvedPlacementId);
       }
-      this.positionCards = trimDemoTradePositionCards(this.positionCards);
+      this.positionCards = trimPositionCardsForUi(this.positionCards);
+      this.scheduleUpsertPositionCard(opened);
       void this.enrichCardFromPolymarketBuy(cardId);
     }
 
@@ -5732,7 +5806,10 @@ export class LiveTradingService {
       sidePos.asset = card.asset;
       sidePos.conditionId = card.conditionId;
     }
-    if (card.confirmed) this.syncBuyMarkerFromCard(card);
+    if (card.confirmed) {
+      this.syncBuyMarkerFromCard(card);
+      this.scheduleUpsertPositionCard(card);
+    }
   }
 
   private syncBuyMarkerFromCard(card: TradingPositionCard): void {
@@ -6090,6 +6167,7 @@ export class LiveTradingService {
       existing.buyCost = shares * buyPrice;
       if (input.triggerMiss) existing.triggerMiss = true;
       if (input.slug) existing.slug = input.slug;
+      this.scheduleUpsertPositionCard(existing);
       this.notify();
       return id;
     }
@@ -6116,7 +6194,8 @@ export class LiveTradingService {
     if (input.slug) card.slug = input.slug;
     if (input.triggerMiss) card.triggerMiss = true;
     this.positionCards.unshift(card);
-    this.positionCards = trimDemoTradePositionCards(this.positionCards);
+    this.positionCards = trimPositionCardsForUi(this.positionCards);
+    this.scheduleUpsertPositionCard(card);
     this.notify();
     return id;
   }

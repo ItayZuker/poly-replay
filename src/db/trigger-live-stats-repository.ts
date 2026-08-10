@@ -213,3 +213,12 @@ export async function deleteTriggerLiveStats(
   const c = await col();
   await c.deleteOne({ _id: docId(userId, triggerId), userId });
 }
+
+export async function deleteAllTriggerLiveStatsForUser(userId: string): Promise<number> {
+  await ensureIndexes();
+  const uid = String(userId || "").trim();
+  if (!uid) return 0;
+  const c = await col();
+  const result = await c.deleteMany({ userId: uid });
+  return result.deletedCount ?? 0;
+}
