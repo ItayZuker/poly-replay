@@ -5585,7 +5585,8 @@ function triggerExitTargetsFromFill(entryPriceDollars, takeProfitOffsetCents, st
   const slOff = clampTriggerOffsetCents(stopLossOffsetCents, 10);
   return {
     tpCents: Math.min(TRIGGER_PRICE_MAX_CENTS, entryCents + tpOff),
-    slCents: Math.max(TRIGGER_PRICE_MIN_CENTS, entryCents - slOff),
+    // May be negative when offset > entry — SL then never hits on a real Bid (≥ 0).
+    slCents: entryCents - slOff,
   };
 }
 
