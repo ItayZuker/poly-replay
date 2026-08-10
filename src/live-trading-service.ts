@@ -6394,12 +6394,14 @@ export class LiveTradingService {
     if (!Number.isFinite(buyPrice) || buyPrice <= 0 || shares <= 0) return "";
     const windowKey = `${series}:${windowStart}`;
     const buyAt = Math.floor(Date.now() / 1000);
-    // At most one Open Demo card per trigger; may open again after a prior settle.
+    // At most one Open Demo card per trigger per market window (ticks may re-upsert).
+    // Prior-window Open cards waiting for Gamma settlement stay — never overwrite them.
     const openExisting = this.positionCards.find(
       (c) =>
         isDemoPositionCard(c) &&
         c.status === "open" &&
-        String(c.triggerId || "") === triggerId,
+        String(c.triggerId || "") === triggerId &&
+        String(c.windowKey || "") === windowKey,
     );
     if (openExisting) {
       openExisting.shares = shares;
