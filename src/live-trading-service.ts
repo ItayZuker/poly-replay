@@ -81,7 +81,15 @@ import {
 } from "./db/fill-attempt-repository.js";
 import { recordTriggerLiveStatsForSettledCard } from "./db/trigger-live-stats-repository.js";
 import { listTriggerModeEvents } from "./db/trigger-mode-timeline-repository.js";
-import { getUserTrigger } from "./db/user-trigger-repository.js";
+import {
+  getUserTrigger,
+  listUserTriggers,
+  setTriggerLiveBuy,
+  setTriggerLiveSell,
+  setTriggerLiveUi,
+  TRIGGER_LIVE_SELL_FLASH_MS,
+  type TriggerLiveUiState,
+} from "./db/user-trigger-repository.js";
 import {
   classifyDemoStatKind,
   recordTriggerDemoStatsForSettledCard,
@@ -914,6 +922,9 @@ export class LiveTradingService {
   private persistChain: Promise<void> = Promise.resolve();
   private statsPersistChain: Promise<void> = Promise.resolve();
   private positionCardsPersistChain: Promise<void> = Promise.resolve();
+  /** Trigger BUY/SELL highlight cache (Mongo triggers.liveUi) for SSE. */
+  private triggerLiveUiById = new Map<string, TriggerLiveUiState>();
+  private triggerLiveSellClearTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   private positions: { up: SidePosition | null; down: SidePosition | null } = {
     up: null,
@@ -1294,6 +1305,7 @@ export class LiveTradingService {
       );
       await this.syncActivatedSchedulePlacements();
       await this.reconcileDemoStatsFromPositionCards();
+      await this.reloadTriggerLiveUiFromMongo();
       this.ensureConfirmLoop();
     } catch (err) {
       logService.warn("trading", `Failed to hydrate live stats from Mongo: ${String(err)}`);
@@ -1301,6 +1313,117 @@ export class LiveTradingService {
       // Always unblock clients (Positions spinner) even if Mongo hydrate failed.
       this.statsHydrated = true;
     }
+  }
+
+  private async reloadTriggerLiveUiFromMongo(): Promise<void> {
+    try {
+      const triggers = await listUserTriggers(this.userId, this.boundSeries);
+      this.triggerLiveUiById.clear();
+      const now = Date.now();
+      for (const t of triggers) {
+        const id = String(t.id || "");
+        if (!id || !t.liveUi) continue;
+        const live = t.liveUi;
+        const sellAt = live.sell?.atMs;
+        if (
+          live.sell &&
+          Number.isFinite(sellAt) &&
+          now - Number(sellAt) >= TRIGGER_LIVE_SELL_FLASH_MS
+        ) {
+          // Expired SELL flash — clear in Mongo + RAM.
+          void this.clearTriggerLiveUi(id);
+          continue;
+        }
+        this.triggerLiveUiById.set(id, live);
+        if (live.sell && Number.isFinite(sellAt)) {
+          this.scheduleTriggerLiveSellClear(id, TRIGGER_LIVE_SELL_FLASH_MS - (now - Number(sellAt)));
+        }
+      }
+    } catch (err) {
+      logService.warn("trading", `Failed to load trigger liveUi: ${String(err)}`);
+    }
+  }
+
+  private cancelTriggerLiveSellClear(triggerId: string): void {
+    const tid = String(triggerId || "");
+    const t = this.triggerLiveSellClearTimers.get(tid);
+    if (t) clearTimeout(t);
+    this.triggerLiveSellClearTimers.delete(tid);
+  }
+
+  private scheduleTriggerLiveSellClear(triggerId: string, delayMs: number): void {
+    const tid = String(triggerId || "");
+    if (!tid) return;
+    this.cancelTriggerLiveSellClear(tid);
+    const wait = Math.max(0, Math.floor(delayMs));
+    const timer = setTimeout(() => {
+      this.triggerLiveSellClearTimers.delete(tid);
+      void this.clearTriggerLiveUi(tid);
+    }, wait);
+    this.triggerLiveSellClearTimers.set(tid, timer);
+  }
+
+  private publishTriggerLiveBuy(
+    triggerId: string,
+    side: "up" | "down",
+    price: number,
+    shares: number,
+  ): void {
+    const tid = String(triggerId || "").trim();
+    if (!tid) return;
+    this.cancelTriggerLiveSellClear(tid);
+    void setTriggerLiveBuy(this.userId, tid, side, price, shares)
+      .then((live) => {
+        if (live) this.triggerLiveUiById.set(tid, live);
+        else this.triggerLiveUiById.delete(tid);
+        this.notify();
+      })
+      .catch((err) => {
+        logService.warn("trading", `Failed to set trigger BUY liveUi ${tid}: ${String(err)}`);
+      });
+  }
+
+  private publishTriggerLiveSell(
+    triggerId: string,
+    side: "up" | "down",
+    price: number,
+    shares: number,
+  ): void {
+    const tid = String(triggerId || "").trim();
+    if (!tid) return;
+    const prev = this.triggerLiveUiById.get(tid);
+    void setTriggerLiveSell(this.userId, tid, side, price, shares, prev?.buy ?? null)
+      .then((live) => {
+        if (live) {
+          this.triggerLiveUiById.set(tid, live);
+          this.scheduleTriggerLiveSellClear(tid, TRIGGER_LIVE_SELL_FLASH_MS);
+        } else {
+          this.triggerLiveUiById.delete(tid);
+        }
+        this.notify();
+      })
+      .catch((err) => {
+        logService.warn("trading", `Failed to set trigger SELL liveUi ${tid}: ${String(err)}`);
+      });
+  }
+
+  private async clearTriggerLiveUi(triggerId: string): Promise<void> {
+    const tid = String(triggerId || "").trim();
+    if (!tid) return;
+    this.cancelTriggerLiveSellClear(tid);
+    this.triggerLiveUiById.delete(tid);
+    try {
+      await setTriggerLiveUi(this.userId, tid, null);
+    } catch (err) {
+      logService.warn("trading", `Failed to clear trigger liveUi ${tid}: ${String(err)}`);
+    }
+    this.notify();
+  }
+
+  /** Clear BUY/SELL highlights for triggers when the market window rolls. */
+  private clearTriggerLiveUiForWindowEnd(): void {
+    const ids = [...this.triggerLiveUiById.keys()];
+    for (const id of ids) void this.clearTriggerLiveUi(id);
   }
 
   /** Persist Positions UI card to Mongo (source of truth). Does not write the stats ledger. */
@@ -1967,6 +2090,9 @@ export class LiveTradingService {
         .filter((card) => this.cardMatchesBoundSeries(card))
         .map((card) => ({ ...card })),
       positionCardsReady: this.statsHydrated,
+      triggerLiveUi: Object.fromEntries(
+        [...this.triggerLiveUiById.entries()].map(([id, live]) => [id, live ? { ...live } : null]),
+      ),
       placementStats: this.getPlacementStatsFromCards(),
       sessionTotals: {
         green: live.green,
@@ -2454,6 +2580,10 @@ export class LiveTradingService {
 
     if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
     card.confirmed = true;
+    const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+    if (tid && card.source === "trigger") {
+      void this.clearTriggerLiveUi(tid);
+    }
     return true;
   }
 
@@ -2704,6 +2834,8 @@ export class LiveTradingService {
     this.buyBlockedWindowKey = null;
     this.pendingBuyConfirm = null;
     this.pendingBuyConfirmBackoffMs = 0;
+    // Window end clears BUY/SELL highlights (SELL flash also ends).
+    this.clearTriggerLiveUiForWindowEnd();
     this.sessionKey = sessionKey(state);
     if (prevKey) {
       void this.settleOpenCardsForWindow(prevKey).then((hadHits) => {
@@ -3149,6 +3281,7 @@ export class LiveTradingService {
     this.activePhaseSetup = null;
     await this.loadPersistedConfig({ hydrateStats: false, series });
     await this.reloadPositionCardsForBoundSeries();
+    await this.reloadTriggerLiveUiFromMongo();
     await this.refreshScheduleContext(true);
     this.notify();
   }
@@ -4454,6 +4587,10 @@ export class LiveTradingService {
       card.confirmed = false;
       if (exitReason) card.triggerExitReason = exitReason;
       this.persistCardStat(card);
+      const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+      if (tid && card.source === "trigger") {
+        this.publishTriggerLiveSell(tid, card.side, fillPrice, fillShares);
+      }
       void this.enrichCardFromPolymarketSell(card.id, nowSec);
     }
     this.addMarker(state, {
@@ -4656,6 +4793,14 @@ export class LiveTradingService {
       existing.slug = existing.slug ?? slug;
       if (triggerMiss) existing.triggerMiss = true;
       this.scheduleUpsertPositionCard(existing);
+      if (source === "trigger" && resolvedTriggerId) {
+        this.publishTriggerLiveBuy(
+          resolvedTriggerId,
+          side,
+          existing.buyPrice,
+          existing.shares,
+        );
+      }
     } else {
       // Hard stop: never open a second card for the same window/side/market.
       const dup = this.positionCards.find(
@@ -4713,6 +4858,9 @@ export class LiveTradingService {
       }
       this.positionCards = trimPositionCardsForUi(this.positionCards);
       this.scheduleUpsertPositionCard(opened);
+      if (source === "trigger" && resolvedTriggerId) {
+        this.publishTriggerLiveBuy(resolvedTriggerId, side, fillPrice, fillShares);
+      }
       void this.enrichCardFromPolymarketBuy(cardId);
     }
 
@@ -6147,6 +6295,10 @@ export class LiveTradingService {
             card.triggerExitReason = opts.triggerExitReason;
           }
           this.persistCardStat(card);
+          const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+          if (tid && card.source === "trigger") {
+            this.publishTriggerLiveSell(tid, card.side, fillPrice, fillShares);
+          }
           void this.enrichCardFromPolymarketSell(card.id, nowSec);
         }
         this.addMarker(state, {
@@ -6199,21 +6351,28 @@ export class LiveTradingService {
       String(input.series || "").trim().toLowerCase() || this.boundSeries || DEFAULT_MARKET_SERIES;
     if (!triggerId || !Number.isFinite(windowStart) || windowStart <= 0) return "";
     if (!Number.isFinite(buyPrice) || buyPrice <= 0 || shares <= 0) return "";
-    const id = `demo:${triggerId}:${windowStart}:${side}`;
     const windowKey = `${series}:${windowStart}`;
     const buyAt = Math.floor(Date.now() / 1000);
-    const existing = this.positionCards.find((c) => c.id === id);
-    if (existing && existing.status === "open") {
-      existing.shares = shares;
-      existing.buyPrice = buyPrice;
-      existing.buyCost = shares * buyPrice;
-      if (input.triggerMiss) existing.triggerMiss = true;
-      if (input.slug) existing.slug = input.slug;
-      this.scheduleUpsertPositionCard(existing);
+    // At most one Open Demo card per trigger; may open again after a prior settle.
+    const openExisting = this.positionCards.find(
+      (c) =>
+        isDemoPositionCard(c) &&
+        c.status === "open" &&
+        String(c.triggerId || "") === triggerId,
+    );
+    if (openExisting) {
+      openExisting.shares = shares;
+      openExisting.buyPrice = buyPrice;
+      openExisting.buyCost = shares * buyPrice;
+      openExisting.side = side;
+      if (input.triggerMiss) openExisting.triggerMiss = true;
+      if (input.slug) openExisting.slug = input.slug;
+      this.scheduleUpsertPositionCard(openExisting);
+      this.publishTriggerLiveBuy(triggerId, side, buyPrice, shares);
       this.notify();
-      return id;
+      return openExisting.id;
     }
-    if (existing && existing.status !== "open") return id;
+    const id = `demo:${triggerId}:${windowStart}:${side}:${buyAt}`;
     const card: TradingPositionCard = {
       id,
       windowKey,
@@ -6238,6 +6397,7 @@ export class LiveTradingService {
     this.positionCards.unshift(card);
     this.positionCards = trimPositionCardsForUi(this.positionCards);
     this.scheduleUpsertPositionCard(card);
+    this.publishTriggerLiveBuy(triggerId, side, buyPrice, shares);
     this.notify();
     return id;
   }
@@ -6262,6 +6422,8 @@ export class LiveTradingService {
     card.triggerExitReason = input.exitReason === "sl" ? "sl" : "tp";
     card.confirmed = true;
     this.persistCardStat(card);
+    const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+    if (tid) this.publishTriggerLiveSell(tid, card.side, sellPrice, shares);
     this.notify();
   }
 }

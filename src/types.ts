@@ -535,6 +535,14 @@ export interface FillSuccessPublicStats {
   };
 }
 
+/** Trigger card BUY/SELL highlight snapshot for SSE (mirrors Mongo triggers.liveUi). */
+export type TriggerLiveUiPublic = {
+  side: "up" | "down";
+  buy: { price: number; shares: number; atMs?: number } | null;
+  sell: { price: number; shares: number; atMs?: number } | null;
+  updatedAt: string;
+} | null;
+
 export interface TradingPublicState {
   config: TradingConfig;
   positions: { up: LiveSidePosition | null; down: LiveSidePosition | null };
@@ -544,6 +552,8 @@ export interface TradingPublicState {
    * Clients should wait for this before painting the Positions list to avoid a jump.
    */
   positionCardsReady: boolean;
+  /** Per trigger id — BUY/SELL highlight from Mongo (Demo + Trade). */
+  triggerLiveUi?: Record<string, TriggerLiveUiPublic>;
   placementStats: PlacementLiveStats[];
   /**
    * Optional Trigger Trade hour-slot stats (latest calendar day per weekday×hour).

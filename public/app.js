@@ -4762,37 +4762,80 @@ function syncPositionsScrollable() {
   body.classList.toggle("is-scrollable", height > 0 && hasCards);
 }
 
-/** Reflect server Demo open cards on Trigger BUY cells; clear when not open. */
-function syncTriggerDemoLiveUiFromServer(state) {
+/** SELL highlight flash duration — matches server TRIGGER_LIVE_SELL_FLASH_MS. */
+const TRIGGER_LIVE_SELL_FLASH_MS = 5000;
+
+/**
+ * Apply BUY/SELL highlight from Mongo-backed SSE `trading.triggerLiveUi`
+ * (and trigger.liveUi on load). Server is source of truth for Demo + Trade.
+ */
+function syncTriggerLiveUiFromServer(state) {
   if (!Array.isArray(userTriggers)) return;
-  const cards = state?.trading?.positionCards;
-  const openByTrigger = new Map();
-  if (Array.isArray(cards)) {
-    for (const c of cards) {
-      if (!isDemoPositionCard(c)) continue;
-      if (String(c.status || "open").toLowerCase() !== "open") continue;
-      const tid = c.triggerId != null ? String(c.triggerId) : "";
-      if (!tid) continue;
-      openByTrigger.set(tid, c);
-    }
-  }
+  const map =
+    state?.trading?.triggerLiveUi && typeof state.trading.triggerLiveUi === "object"
+      ? state.trading.triggerLiveUi
+      : null;
+  const now = Date.now();
   for (const t of userTriggers) {
-    if (t?.runMode === "trade") continue;
     const id = String(t?.id || "");
     if (!id) continue;
-    const open = openByTrigger.get(id);
-    if (open) {
-      setTriggerCardLiveUi(id, {
-        side: open.side === "down" ? "down" : "up",
-        leg: "buy",
-        price: open.buyPrice,
-        shares: open.shares,
-      });
-    } else {
-      const rt = triggerRuntimeById.get(id);
-      if (rt?.liveUi) setTriggerCardLiveUi(id, null);
-    }
+    const live = map && Object.prototype.hasOwnProperty.call(map, id) ? map[id] : t?.liveUi;
+    applyTriggerLiveUiFromRecord(id, live, now);
   }
+}
+
+function applyTriggerLiveUiFromRecord(triggerId, live, nowMs = Date.now()) {
+  const id = String(triggerId || "");
+  if (!id) return;
+  if (!live || (live.side !== "up" && live.side !== "down")) {
+    const rt = triggerRuntimeById.get(id);
+    if (rt?.liveUi) setTriggerCardLiveUi(id, null);
+    return;
+  }
+  const side = live.side === "down" ? "down" : "up";
+  const sell = live.sell && typeof live.sell === "object" ? live.sell : null;
+  const buy = live.buy && typeof live.buy === "object" ? live.buy : null;
+  const sellAt = Number(sell?.atMs);
+  const sellExpired =
+    sell && Number.isFinite(sellAt) && nowMs - sellAt >= TRIGGER_LIVE_SELL_FLASH_MS;
+  if (sell && !sellExpired) {
+    const rt = getOrCreateTriggerRuntime(id);
+    clearTriggerCardLiveUiTimer(id);
+    rt.liveUi = {
+      side,
+      buy: buy
+        ? {
+            price: Number(buy.price),
+            shares: Math.max(0, Math.round(Number(buy.shares) || 0)),
+          }
+        : null,
+      sell: {
+        price: Number(sell.price),
+        shares: Math.max(0, Math.round(Number(sell.shares) || 0)),
+      },
+    };
+    syncTriggerCardLiveUi(id);
+    const remain = TRIGGER_LIVE_SELL_FLASH_MS - (nowMs - sellAt);
+    rt.liveUiTimer = setTimeout(() => {
+      rt.liveUiTimer = null;
+      if (rt.liveUi?.sell) {
+        rt.liveUi = null;
+        syncTriggerCardLiveUi(id);
+      }
+    }, Math.max(0, remain));
+    return;
+  }
+  if (buy && !sellExpired) {
+    setTriggerCardLiveUi(id, {
+      side,
+      leg: "buy",
+      price: buy.price,
+      shares: buy.shares,
+    });
+    return;
+  }
+  const rt = triggerRuntimeById.get(id);
+  if (rt?.liveUi) setTriggerCardLiveUi(id, null);
 }
 
 function refreshTradeTriggerStatsFromPositions(state) {
@@ -4859,12 +4902,12 @@ function updatePositionsPanel(state) {
 
   const fingerprint = positionsFingerprint(cards);
   if (fingerprint === lastPositionsFingerprint) {
-    syncTriggerDemoLiveUiFromServer(state);
+    syncTriggerLiveUiFromServer(state);
     return;
   }
   lastPositionsFingerprint = fingerprint;
   refreshTradeTriggerStatsFromPositions(state);
-  syncTriggerDemoLiveUiFromServer(state);
+  syncTriggerLiveUiFromServer(state);
   // Demo stats are credited on the server — refresh Trigger card totals when Demo cards change.
   if (cards.some(isDemoPositionCard)) {
     void loadUserTriggers().then(() => {
@@ -4974,6 +5017,7 @@ function updateWindowUI(state) {
   syncFillSuccessDisplay(state?.trading);
   syncGraphSaveBtn(state);
   updatePositionsPanel(state);
+  syncTriggerLiveUiFromServer(state);
   updateQuoteBoxes(state);
   updateBookPanel(state);
   updateCountdown(state);
@@ -7039,6 +7083,7 @@ async function loadUserTriggers() {
     }
     userTriggers = list;
     sortUserTriggersInPlace();
+    syncTriggerLiveUiFromServer(windowState);
   } catch {
     const local = readLocalUserTriggers();
     if (local.length > 0) userTriggers = local;
@@ -7668,7 +7713,7 @@ function setTriggerCardLiveUi(triggerId, next) {
   syncTriggerCardLiveUi(id);
 }
 
-/** After a sell, briefly show the exit on the right then clear so the card re-arms. */
+/** After a sell, show the exit for 5s then clear (server also clears Mongo liveUi). */
 function flashTriggerCardLiveSell(triggerId, side, price, shares) {
   const id = String(triggerId || "");
   const rt = getOrCreateTriggerRuntime(id);
@@ -7689,7 +7734,7 @@ function flashTriggerCardLiveSell(triggerId, side, price, shares) {
       rt.liveUi = null;
       syncTriggerCardLiveUi(id);
     }
-  }, 1600);
+  }, TRIGGER_LIVE_SELL_FLASH_MS);
 }
 
 function applyTriggerDurationToInputs(ms) {
@@ -13102,15 +13147,15 @@ function tickUserTriggers(state) {
     const rt = getOrCreateTriggerRuntime(id);
     const buyGtd = triggerUsesBuyGtd(trigger);
 
-    // Demo evaluation is server-side (executor + feedLatencyMs). Keep UI re-armed.
+    // Demo evaluation is server-side (executor + feedLatencyMs).
+    // BUY/SELL highlight comes from Mongo liveUi via SSE — do not clear it here.
     if (trigger.runMode !== "trade") {
-      if (rt.phase !== "idle" || rt.liveUi) {
+      if (rt.phase !== "idle") {
         rt.phase = "idle";
         rt.side = null;
         rt.watchStartedAtMs = null;
         rt.startPriceCents = null;
         rt.entryPrice = null;
-        setTriggerCardLiveUi(id, null);
       }
       continue;
     }

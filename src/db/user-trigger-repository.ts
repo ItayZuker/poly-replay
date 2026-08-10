@@ -16,6 +16,24 @@ export interface TriggerDemoStats {
   pnlUsd: number;
 }
 
+/** BUY/SELL highlight on the Market Trigger card (Mongo source of truth). */
+export interface TriggerLiveUiFill {
+  price: number;
+  shares: number;
+  /** Unix ms — for SELL flash expiry (5s). */
+  atMs?: number;
+}
+
+export interface TriggerLiveUiState {
+  side: "up" | "down";
+  buy: TriggerLiveUiFill | null;
+  sell: TriggerLiveUiFill | null;
+  updatedAt: string;
+}
+
+/** How long SELL highlight stays before auto-clear (also cleared on new BUY / window end). */
+export const TRIGGER_LIVE_SELL_FLASH_MS = 5000;
+
 export interface UserTriggerRecord {
   id: string;
   /**
@@ -63,6 +81,8 @@ export interface UserTriggerRecord {
   runMode: "demo" | "trade";
   paused: boolean;
   demoStats: TriggerDemoStats;
+  /** Live BUY/SELL highlight — patched by trading engine; omitted from full editor saves. */
+  liveUi?: TriggerLiveUiState | null;
   /** Lower = higher in the Market Triggers list (per user). */
   sortOrder: number;
   createdAt: string;
@@ -307,10 +327,119 @@ export function normalizeUserTriggerInput(
     runMode: o.runMode === "trade" ? "trade" : "demo",
     paused: o.paused !== false,
     demoStats: normalizeDemoStats(o.demoStats ?? existing?.demoStats),
+    // Full editor saves omit liveUi — keep existing highlight unless explicitly patched.
+    liveUi:
+      o.liveUi !== undefined
+        ? normalizeLiveUi(o.liveUi)
+        : normalizeLiveUi(existing?.liveUi ?? null),
     sortOrder,
     createdAt,
     updatedAt: now,
   };
+}
+
+function normalizeLiveFill(raw: unknown): TriggerLiveUiFill | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const price = Number(o.price);
+  const shares = Math.max(0, Math.round(Number(o.shares) || 0));
+  if (!Number.isFinite(price) || shares <= 0) return null;
+  const atMs = Number(o.atMs);
+  const fill: TriggerLiveUiFill = { price, shares };
+  if (Number.isFinite(atMs) && atMs > 0) fill.atMs = Math.floor(atMs);
+  return fill;
+}
+
+export function normalizeLiveUi(raw: unknown): TriggerLiveUiState | null {
+  if (raw == null) return null;
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const side = o.side === "down" ? "down" : o.side === "up" ? "up" : null;
+  if (!side) return null;
+  const buy = normalizeLiveFill(o.buy);
+  const sell = normalizeLiveFill(o.sell);
+  if (!buy && !sell) return null;
+  return {
+    side,
+    buy,
+    sell,
+    updatedAt:
+      typeof o.updatedAt === "string" && o.updatedAt
+        ? o.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
+/** Patch only liveUi (BUY/SELL highlight) — does not rewrite the rest of the trigger. */
+export async function setTriggerLiveUi(
+  userId: string,
+  triggerId: string,
+  liveUi: TriggerLiveUiState | null,
+): Promise<TriggerLiveUiState | null> {
+  await ensureIndexes();
+  const uid = String(userId || "").trim();
+  const tid = String(triggerId || "").trim();
+  if (!uid || !tid) return null;
+  const next = normalizeLiveUi(liveUi);
+  const c = await col();
+  const now = new Date().toISOString();
+  if (next) {
+    next.updatedAt = now;
+    await c.updateOne(
+      { userId: uid, id: tid },
+      { $set: { liveUi: next, updatedAt: now } },
+    );
+    return next;
+  }
+  await c.updateOne(
+    { userId: uid, id: tid },
+    { $set: { liveUi: null, updatedAt: now } },
+  );
+  return null;
+}
+
+export async function setTriggerLiveBuy(
+  userId: string,
+  triggerId: string,
+  side: "up" | "down",
+  price: number,
+  shares: number,
+): Promise<TriggerLiveUiState | null> {
+  const fill = normalizeLiveFill({
+    price,
+    shares,
+    atMs: Date.now(),
+  });
+  if (!fill) return setTriggerLiveUi(userId, triggerId, null);
+  return setTriggerLiveUi(userId, triggerId, {
+    side: side === "down" ? "down" : "up",
+    buy: fill,
+    sell: null,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export async function setTriggerLiveSell(
+  userId: string,
+  triggerId: string,
+  side: "up" | "down",
+  price: number,
+  shares: number,
+  prevBuy?: TriggerLiveUiFill | null,
+): Promise<TriggerLiveUiState | null> {
+  const sell = normalizeLiveFill({
+    price,
+    shares,
+    atMs: Date.now(),
+  });
+  if (!sell) return setTriggerLiveUi(userId, triggerId, null);
+  const buy = normalizeLiveFill(prevBuy) ?? null;
+  return setTriggerLiveUi(userId, triggerId, {
+    side: side === "down" ? "down" : "up",
+    buy,
+    sell,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 function compareTriggerDisplayOrder(a: UserTriggerRecord, b: UserTriggerRecord): number {
