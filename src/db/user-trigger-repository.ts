@@ -3,6 +3,7 @@ import {
   appendTriggerModeEvent,
   seedTriggerModeTimelineIfEmpty,
 } from "./trigger-mode-timeline-repository.js";
+import { deleteTriggerDemoStatsCredits } from "./trigger-demo-stats-repository.js";
 
 const COLLECTION = "triggers";
 
@@ -550,6 +551,20 @@ export async function patchUserTrigger(
 ): Promise<UserTriggerRecord | null> {
   const existing = await getUserTrigger(userId, triggerId);
   if (!existing) return null;
+  // Reset Demo stats (all-zero) also clears once-per-card credits so future settles can count.
+  if (patch.demoStats && typeof patch.demoStats === "object") {
+    const d = patch.demoStats as Record<string, unknown>;
+    const allZero =
+      (Number(d.success) || 0) === 0 &&
+      (Number(d.fail) || 0) === 0 &&
+      (Number(d.blue) || 0) === 0 &&
+      (Number(d.takeProfit) || 0) === 0 &&
+      (Number(d.stopLoss) || 0) === 0 &&
+      (Number(d.pnlUsd) || 0) === 0;
+    if (allZero) {
+      await deleteTriggerDemoStatsCredits(userId, triggerId).catch(() => 0);
+    }
+  }
   return upsertUserTrigger(userId, { ...existing, ...patch, id: triggerId });
 }
 

@@ -81,11 +81,13 @@ import {
 } from "./db/fill-attempt-repository.js";
 import { recordTriggerLiveStatsForSettledCard } from "./db/trigger-live-stats-repository.js";
 import { listTriggerModeEvents } from "./db/trigger-mode-timeline-repository.js";
+import { getUserTrigger } from "./db/user-trigger-repository.js";
 import {
-  getUserTrigger,
-  patchUserTrigger,
-  type TriggerDemoStats,
-} from "./db/user-trigger-repository.js";
+  classifyDemoStatKind,
+  recordTriggerDemoStatsForSettledCard,
+  rebuildTriggerDemoStatsFromCards,
+} from "./db/trigger-demo-stats-repository.js";
+import { getMongoClient, getMongoDbName } from "./db/mongo-client.js";
 import { computeScheduleHourSlotStats } from "./schedule-hour-stats.js";
 import { getRollingCutoffUtcSec } from "./heatmap-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
@@ -1291,6 +1293,7 @@ export class LiveTradingService {
         })`,
       );
       await this.syncActivatedSchedulePlacements();
+      await this.reconcileDemoStatsFromPositionCards();
       this.ensureConfirmLoop();
     } catch (err) {
       logService.warn("trading", `Failed to hydrate live stats from Mongo: ${String(err)}`);
@@ -1614,38 +1617,77 @@ export class LiveTradingService {
   }
 
   /**
-   * Trade trigger card stats follow the same settled position card as Positions / Schedule
-   * (sold → green/red, held win/loss → blue/red). Once per card id.
+   * Demo trigger card stats — once per settled Positions card id (atomic credit + $inc).
+   * Demo cards always credit demoStats (independent of current Demo/Trade switch).
    */
   private creditTriggerDemoStatsFromCard(card: TradingPositionCard): void {
-    if (card.demo !== true || card.source !== "trigger") return;
+    if (!isDemoPositionCard(card) || card.source !== "trigger") return;
     const triggerId = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
     if (!triggerId) return;
-    const contrib = contributionFromCard(card);
-    if (!contrib) return;
-    void (async () => {
-      const trigger = await getUserTrigger(this.userId, triggerId);
-      if (!trigger || trigger.runMode === "trade") return;
-      const demo: TriggerDemoStats = {
-        success: Number(trigger.demoStats?.success) || 0,
-        fail: Number(trigger.demoStats?.fail) || 0,
-        blue: Number(trigger.demoStats?.blue) || 0,
-        takeProfit: Number(trigger.demoStats?.takeProfit) || 0,
-        stopLoss: Number(trigger.demoStats?.stopLoss) || 0,
-        pnlUsd: Number(trigger.demoStats?.pnlUsd) || 0,
-      };
-      if (contrib.blue) demo.blue += 1;
-      else if (card.status === "loss" || (contrib.red && card.status !== "sold")) demo.fail += 1;
-      else if (card.status === "sold" && contrib.pnl > 0) demo.takeProfit += 1;
-      else if (card.status === "sold") demo.stopLoss += 1;
-      demo.pnlUsd += contrib.pnl;
-      await patchUserTrigger(this.userId, triggerId, { demoStats: demo });
-    })().catch((err) => {
+    const classified = classifyDemoStatKind(card);
+    if (!classified) return;
+    void recordTriggerDemoStatsForSettledCard(
+      this.userId,
+      triggerId,
+      card.id,
+      classified.kind,
+      classified.pnlUsd,
+    ).catch((err) => {
       logService.warn(
         "trading",
         `Failed to credit Demo stats for ${card.id}: ${String(err)}`,
       );
     });
+  }
+
+  /**
+   * Heal Demo stats vs Positions: if a trigger has no credit rows yet, rebuild from
+   * settled Demo cards; otherwise credit any settled Demo cards missing a credit row.
+   */
+  private async reconcileDemoStatsFromPositionCards(): Promise<void> {
+    try {
+      const cards = await listPositionCards(this.userId, {
+        series: this.boundSeries,
+        includeExpiredSettled: true,
+      });
+      const byTrigger = new Map<string, TradingPositionCard[]>();
+      for (const card of cards) {
+        if (!isDemoPositionCard(card) || card.status === "open") continue;
+        const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+        if (!tid) continue;
+        const list = byTrigger.get(tid) ?? [];
+        list.push(card);
+        byTrigger.set(tid, list);
+      }
+      if (byTrigger.size === 0) return;
+
+      const mongo = await getMongoClient();
+      const credits = mongo.db(getMongoDbName()).collection("trigger_demo_stats_credits");
+
+      for (const [tid, list] of byTrigger) {
+        const creditCount = await credits.countDocuments({
+          userId: this.userId,
+          triggerId: tid,
+        });
+        if (creditCount === 0) {
+          await rebuildTriggerDemoStatsFromCards(this.userId, tid, list);
+          continue;
+        }
+        for (const card of list) {
+          const classified = classifyDemoStatKind(card);
+          if (!classified) continue;
+          await recordTriggerDemoStatsForSettledCard(
+            this.userId,
+            tid,
+            card.id,
+            classified.kind,
+            classified.pnlUsd,
+          );
+        }
+      }
+    } catch (err) {
+      logService.warn("trading", `Failed to reconcile Demo stats from Positions: ${String(err)}`);
+    }
   }
 
   private creditTriggerLiveStatsFromCard(card: TradingPositionCard): void {
