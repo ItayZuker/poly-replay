@@ -3,9 +3,10 @@
  * weekday×hour slot (same trades as Live hour-cell dots), with buy/sell markers
  * from real Trigger / legacy phase fills — not re-sim.
  *
- * Uses the latest calendar day for that slot (ledger fills drive the day).
- * Trade windows are always listed even when Chainlink ticks are missing
- * (`recordingMissing: true`); empty recorded windows with no trade are omitted.
+ * Uses the last occurrence of that weekday×hour (this week once arrived;
+ * otherwise last week) — including empty zero days. Trade windows are always
+ * listed even when Chainlink ticks are missing (`recordingMissing: true`);
+ * empty recorded windows with no trade are omitted.
  */
 import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
 import {
@@ -15,10 +16,12 @@ import {
 } from "./db/trigger-mode-timeline-repository.js";
 import { windowsHavingChainlinkTicks } from "./db/tick-repository.js";
 import { listTradingStatEvents, type TradingStatEvent } from "./db/trading-session-memory-repository.js";
-import { getWeekHistoryCutoffUtcSec } from "./day-hour-slots.js";
 import {
+  activeLiveSlotDayKey,
+  getLiveScheduleStatsCutoffUtcSec,
   triggerTradeWindowMs,
   utcDayKeyFromMs,
+  type ScheduleHourDayId,
 } from "./schedule-hour-stats.js";
 import {
   parseSyntheticHourPlacement,
@@ -263,11 +266,12 @@ export async function buildLiveHourPlayPayload(
   if (!placement) return null;
 
   const nowMs = options.nowMs ?? Date.now();
-  const day = placement.day;
+  const day = placement.day as ScheduleHourDayId;
   const startHour = placement.startHour;
   const series = market._id;
+  const activeDayKey = activeLiveSlotDayKey(day, startHour, nowMs);
 
-  const cutoffUtc = getWeekHistoryCutoffUtcSec(new Date(nowMs));
+  const cutoffUtc = getLiveScheduleStatsCutoffUtcSec(new Date(nowMs));
   const listed = await listRecordedWindowsSince(cutoffUtc, series);
   const recordedByStart = new Map(
     listed
@@ -389,15 +393,7 @@ export async function buildLiveHourPlayPayload(
     });
   }
 
-  let activeDayKey: string | null = null;
-  for (const row of rows) {
-    const dayKey = utcDayKeyFromMs(row.atMs);
-    if (!activeDayKey || dayKey > activeDayKey) activeDayKey = dayKey;
-  }
-
-  const dayRows = activeDayKey
-    ? rows.filter((r) => utcDayKeyFromMs(r.atMs) === activeDayKey)
-    : [];
+  const dayRows = rows.filter((r) => utcDayKeyFromMs(r.atMs) === activeDayKey);
 
   const rowsByWindow = new Map<number, TradeRow[]>();
   for (const row of dayRows) {

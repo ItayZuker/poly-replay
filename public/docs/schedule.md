@@ -18,8 +18,8 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 
 - Days × UTC hours — **all 7×24 cells always show** a stats line (green / red / blue dots) and **P/L**, except Replay slots with no usable recordings (missing CLOB, Chainlink, and/or official Gamma outcome — see below)
 - Each **Live** cell shows Trigger (and legacy) trade outcomes for that UTC weekday×hour:
-  - **Before** this week’s occurrence of that hour arrives (UTC), the cell keeps the **latest prior calendar day** with fills in the ~14-day window (so later hours this week still show last week until you get there).
-  - **When** that weekday×hour arrives (UTC hour start — same moment recording for the slot begins), the cell **resets**: only fills from **this week’s** calendar day count. If there are no buys yet (or no recording), it shows **zero** dots and a **gray** `$0` P/L — it does **not** keep last week’s stats.
+  - Each cell always shows the **last occurrence** of that UTC weekday×hour (~**1 week** lookback): **this week’s** day once that hour arrives; otherwise the **same weekday last week** — including days with **zero** buys (gray `$0`). An empty last occurrence is kept; the cell does **not** skip it to show an older week that had trades.
+  - **When** that weekday×hour arrives (UTC hour start — same moment recording for the slot begins), the cell **resets** to **this week’s** calendar day. If there are no buys yet, it shows **zero** dots and a **gray** `$0` P/L.
   - **Trigger Trade** when the trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade+Active (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
   - **Legacy phase / schedule-placement** fills still in the ledger (from before Trigger-only Schedule) follow the same arrival/reset rule
 - **Replay / Heatmap** recordings still use the **latest calendar day with usable recordings** per weekday×hour (independent of Live trade resets)
@@ -77,7 +77,7 @@ Replay uses the same simulation engine as demo Trigger trading. Window times/out
 
 **Bad recordings:** windows where the Chainlink/asset price is flat for the entire window are discarded (see prior behavior).
 
-**Week grid history (Live stats + Replay + Heatmap):** each UTC weekday×hour keeps the **latest** day for that slot. Hours not re-traded / re-recorded yet still show last week’s data. Retention defaults to ~**14 days**.
+**Week grid history:** **Live** trade hour cells use the **last occurrence** of each weekday×hour (~**1 week**, zeros included). **Replay / Heatmap** recordings still keep the **latest** day with usable recordings per slot; recording retention defaults to ~**14 days**.
 
 | Role | Env | Behavior |
 |------|-----|----------|
