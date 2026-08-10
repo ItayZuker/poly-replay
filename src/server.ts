@@ -1405,11 +1405,12 @@ app.patch("/api/trading-setups/:id", async (req, res) => {
   }
 });
 
-/** Market Trigger card definitions (Mongo, per user). Replay Triggers stay browser-local. */
+/** Market Trigger card definitions (Mongo, per user × series). Replay Triggers stay browser-local. */
 app.get("/api/triggers", async (req, res) => {
   try {
     const userId = requireUserId(req);
-    const triggers = await listUserTriggers(userId);
+    const series = String(req.query.series || "").trim().toLowerCase();
+    const triggers = await listUserTriggers(userId, series || undefined);
     res.json({ triggers });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1435,9 +1436,15 @@ app.post("/api/triggers", async (req, res) => {
 app.post("/api/triggers/migrate", async (req, res) => {
   try {
     const userId = requireUserId(req);
+    const series = String(req.body?.series || "").trim().toLowerCase();
     const items = Array.isArray(req.body?.triggers) ? req.body.triggers : [];
-    const saved = await upsertUserTriggersBulk(userId, items);
-    const triggers = await listUserTriggers(userId);
+    const stamped = series
+      ? items.map((item: unknown) =>
+          item && typeof item === "object" ? { ...(item as object), series } : item,
+        )
+      : items;
+    const saved = await upsertUserTriggersBulk(userId, stamped);
+    const triggers = await listUserTriggers(userId, series || undefined);
     res.json({ migrated: saved.length, triggers });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1445,11 +1452,12 @@ app.post("/api/triggers/migrate", async (req, res) => {
   }
 });
 
-/** Persist Market Triggers display order (per user). Must be before /api/triggers/:id. */
+/** Persist Market Triggers display order (per user × series). Must be before /api/triggers/:id. */
 app.put("/api/triggers/reorder", async (req, res) => {
   try {
     const userId = requireUserId(req);
-    const triggers = await reorderUserTriggers(userId, req.body?.ids);
+    const series = String(req.body?.series || "").trim().toLowerCase();
+    const triggers = await reorderUserTriggers(userId, req.body?.ids, series || undefined);
     res.json({ triggers });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

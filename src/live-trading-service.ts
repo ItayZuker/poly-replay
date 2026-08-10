@@ -71,7 +71,11 @@ import {
 } from "./db/fill-attempt-repository.js";
 import { recordTriggerLiveStatsForSettledCard } from "./db/trigger-live-stats-repository.js";
 import { listTriggerModeEvents } from "./db/trigger-mode-timeline-repository.js";
-import { getUserTrigger } from "./db/user-trigger-repository.js";
+import {
+  getUserTrigger,
+  patchUserTrigger,
+  type TriggerDemoStats,
+} from "./db/user-trigger-repository.js";
 import { computeScheduleHourSlotStats } from "./schedule-hour-stats.js";
 import { getRollingCutoffUtcSec } from "./heatmap-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
@@ -599,6 +603,7 @@ function cardSnapshotFromPosition(card: TradingPositionCard): TradingStatEvent["
     snap.triggerExitReason = card.triggerExitReason;
   }
   if (card.triggerMiss === true) snap.triggerMiss = true;
+  if (card.demo === true) snap.demo = true;
   if (card.buyFees != null) snap.buyFees = card.buyFees;
   if (card.sellPrice != null) snap.sellPrice = card.sellPrice;
   if (card.sellProceeds != null) snap.sellProceeds = card.sellProceeds;
@@ -646,6 +651,7 @@ function positionCardFromEvent(event: TradingStatEvent): TradingPositionCard | n
     card.triggerExitReason = snap.triggerExitReason;
   }
   if (snap.triggerMiss === true) card.triggerMiss = true;
+  if (snap.demo === true) card.demo = true;
   if (snap.sellPrice != null) card.sellPrice = snap.sellPrice;
   if (snap.sellProceeds != null) card.sellProceeds = snap.sellProceeds;
   if (snap.sellFees != null) card.sellFees = snap.sellFees;
@@ -1529,8 +1535,41 @@ export class LiveTradingService {
    * Trade trigger card stats follow the same settled position card as Positions / Schedule
    * (sold → green/red, held win/loss → blue/red). Once per card id.
    */
+  private creditTriggerDemoStatsFromCard(card: TradingPositionCard): void {
+    if (card.demo !== true || card.source !== "trigger") return;
+    const triggerId = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+    if (!triggerId) return;
+    const contrib = contributionFromCard(card);
+    if (!contrib) return;
+    void (async () => {
+      const trigger = await getUserTrigger(this.userId, triggerId);
+      if (!trigger || trigger.runMode === "trade") return;
+      const demo: TriggerDemoStats = {
+        success: Number(trigger.demoStats?.success) || 0,
+        fail: Number(trigger.demoStats?.fail) || 0,
+        blue: Number(trigger.demoStats?.blue) || 0,
+        takeProfit: Number(trigger.demoStats?.takeProfit) || 0,
+        stopLoss: Number(trigger.demoStats?.stopLoss) || 0,
+        pnlUsd: Number(trigger.demoStats?.pnlUsd) || 0,
+      };
+      if (contrib.blue) demo.blue += 1;
+      else if (card.status === "loss" || (contrib.red && card.status !== "sold")) demo.fail += 1;
+      else if (card.status === "sold" && contrib.pnl > 0) demo.takeProfit += 1;
+      else if (card.status === "sold") demo.stopLoss += 1;
+      demo.pnlUsd += contrib.pnl;
+      await patchUserTrigger(this.userId, triggerId, { demoStats: demo });
+    })().catch((err) => {
+      logService.warn(
+        "trading",
+        `Failed to credit Demo stats for ${card.id}: ${String(err)}`,
+      );
+    });
+  }
+
   private creditTriggerLiveStatsFromCard(card: TradingPositionCard): void {
     if (card.source !== "trigger") return;
+    // Demo cards credit demoStats separately (not Trade live totals / Schedule).
+    if (card.demo === true) return;
     const triggerId = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
     if (!triggerId) return;
     const contrib = contributionFromCard(card);
@@ -1602,6 +1641,7 @@ export class LiveTradingService {
 
     // Same settlement clock as phase cards — do not wait for a separate client score.
     this.creditTriggerLiveStatsFromCard(card);
+    this.creditTriggerDemoStatsFromCard(card);
 
     this.statsPersistChain = this.statsPersistChain
       .then(async () => {
@@ -2072,6 +2112,7 @@ export class LiveTradingService {
 
     for (const card of this.positionCards) {
       if (card.status === "open") continue;
+      if (card.demo === true) continue;
       if (!this.cardMatchesBoundSeries(card)) continue;
       if (!this.countsTowardLiveHeader(cardSettledMs(card))) continue;
       const contrib = confirmedContributionFromCard(card);
@@ -2091,6 +2132,7 @@ export class LiveTradingService {
 
     for (const event of this.liveStatLedger.values()) {
       if (seen.has(event.cardId)) continue;
+      if (event.card?.demo === true) continue;
       if (!this.eventMatchesBoundSeries(event)) continue;
       if (!this.countsTowardLiveHeader(eventSettledMs(event))) continue;
       const contrib = eventStatContribution(event);
@@ -5952,6 +5994,93 @@ export class LiveTradingService {
       this.orderInFlight = false;
     }
   }
+
+  /** Server Trigger Demo buy — Positions card only (no wallet / CLOB). */
+  upsertDemoTriggerOpen(input: {
+    triggerId: string;
+    triggerName?: string;
+    side: "up" | "down";
+    shares: number;
+    buyPrice: number;
+    series: string;
+    windowStart: number;
+    slug?: string;
+    triggerMiss?: boolean;
+  }): string {
+    const triggerId = String(input.triggerId || "").trim();
+    const side = input.side === "down" ? "down" : "up";
+    const windowStart = Math.floor(Number(input.windowStart));
+    const shares = Math.max(0, Number(input.shares) || 0);
+    const buyPrice = Number(input.buyPrice);
+    const series =
+      String(input.series || "").trim().toLowerCase() || this.boundSeries || DEFAULT_MARKET_SERIES;
+    if (!triggerId || !Number.isFinite(windowStart) || windowStart <= 0) return "";
+    if (!Number.isFinite(buyPrice) || buyPrice <= 0 || shares <= 0) return "";
+    const id = `demo:${triggerId}:${windowStart}:${side}`;
+    const windowKey = `${series}:${windowStart}`;
+    const buyAt = Math.floor(Date.now() / 1000);
+    const existing = this.positionCards.find((c) => c.id === id);
+    if (existing && existing.status === "open") {
+      existing.shares = shares;
+      existing.buyPrice = buyPrice;
+      existing.buyCost = shares * buyPrice;
+      if (input.triggerMiss) existing.triggerMiss = true;
+      if (input.slug) existing.slug = input.slug;
+      this.notify();
+      return id;
+    }
+    if (existing && existing.status !== "open") return id;
+    const card: TradingPositionCard = {
+      id,
+      windowKey,
+      series,
+      side,
+      shares,
+      buyPrice,
+      buyCost: shares * buyPrice,
+      buyFees: 0,
+      buyAt,
+      status: "open",
+      confirmed: true,
+      source: "trigger",
+      triggerId,
+      demo: true,
+    };
+    if (typeof input.triggerName === "string" && input.triggerName.trim()) {
+      card.triggerName = input.triggerName.trim();
+    }
+    if (input.slug) card.slug = input.slug;
+    if (input.triggerMiss) card.triggerMiss = true;
+    this.positionCards.unshift(card);
+    if (this.positionCards.length > MAX_POSITION_CARDS) {
+      this.positionCards.length = MAX_POSITION_CARDS;
+    }
+    this.notify();
+    return id;
+  }
+
+  /** Server Trigger Demo early exit (TP/SL). */
+  settleDemoTriggerSold(input: {
+    cardId: string;
+    sellPrice: number;
+    exitReason: "tp" | "sl";
+  }): void {
+    const card = this.findCard(input.cardId);
+    if (!card || card.demo !== true || card.status !== "open") return;
+    const sellPrice = Number(input.sellPrice);
+    if (!Number.isFinite(sellPrice)) return;
+    const shares = Number(card.shares) || 0;
+    card.status = "sold";
+    card.sellPrice = sellPrice;
+    card.sellProceeds = shares * sellPrice;
+    card.sellFees = 0;
+    card.soldAt = Math.floor(Date.now() / 1000);
+    card.pl = (sellPrice - Number(card.buyPrice)) * shares;
+    card.triggerExitReason = input.exitReason === "sl" ? "sl" : "tp";
+    card.confirmed = true;
+    this.persistCardStat(card);
+    this.notify();
+  }
 }
 
 class LiveTradingRegistry {
@@ -6039,6 +6168,28 @@ class LiveTradingRegistry {
         } catch {
           /* logged in client */
         }
+      }
+    }
+    // Keep engines + series feeds warm for Active Demo (browser may be closed).
+    if (isTradingExecutor()) {
+      try {
+        const { listAllActiveDemoTriggers } = await import("./db/user-trigger-repository.js");
+        const demos = await listAllActiveDemoTriggers();
+        const seriesSet = new Set<string>();
+        const userSet = new Set<string>();
+        for (const t of demos) {
+          userSet.add(t.userId);
+          if (t.series) seriesSet.add(t.series);
+        }
+        for (const userId of userSet) {
+          const engine = this.get(userId);
+          await engine.loadPersistedConfig({ hydrateStats: false });
+        }
+        if (seriesSet.size > 0) {
+          await seriesMarketHub.ensureSeries([...seriesSet]);
+        }
+      } catch {
+        /* ignore */
       }
     }
   }

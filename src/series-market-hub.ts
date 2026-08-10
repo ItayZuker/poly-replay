@@ -238,6 +238,21 @@ class SeriesMarketHub {
 
   private async sampleAll(): Promise<void> {
     await Promise.all([...this.feeds.values()].map((f) => f.sample()));
+    // Server Demo on background series (Active+Demo with browser closed).
+    try {
+      const { isTradingExecutor } = await import("./trading-executor.js");
+      if (!isTradingExecutor()) return;
+      const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
+      const nowMs = Date.now();
+      await Promise.all(
+        [...this.feeds.keys()].map(async (series) => {
+          const feed = this.getState(series);
+          if (feed) await tickTriggerDemoEngine(feed, nowMs).catch(() => {});
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
   }
 }
 

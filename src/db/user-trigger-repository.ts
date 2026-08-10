@@ -17,6 +17,11 @@ export interface TriggerDemoStats {
 
 export interface UserTriggerRecord {
   id: string;
+  /**
+   * Market series this card belongs to (e.g. btc-5m). Triggers are per user × series.
+   * Empty string = legacy (pre-series) — treated as matching any list until next save.
+   */
+  series: string;
   name: string;
   color?: string;
   durationMs: number;
@@ -77,6 +82,8 @@ async function ensureIndexes(): Promise<void> {
     indexesPromise = (async () => {
       const c = await col();
       await c.createIndex({ userId: 1, id: 1 }, { unique: true });
+      await c.createIndex({ userId: 1, series: 1, sortOrder: 1 });
+      await c.createIndex({ userId: 1, series: 1, paused: 1, runMode: 1 });
       await c.createIndex({ userId: 1, updatedAt: -1 });
       await c.createIndex({ userId: 1, sortOrder: 1 });
     })().catch((err) => {
@@ -85,6 +92,20 @@ async function ensureIndexes(): Promise<void> {
     });
   }
   await indexesPromise;
+}
+
+function normalizeSeriesKey(raw: unknown, fallback = ""): string {
+  const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return s || fallback;
+}
+
+/** Series filter: exact match, or legacy docs with missing/empty series. */
+function seriesMatchFilter(series: string): Record<string, unknown> {
+  const key = normalizeSeriesKey(series);
+  if (!key) return {};
+  return {
+    $or: [{ series: key }, { series: { $exists: false } }, { series: "" }, { series: null }],
+  };
 }
 
 /** Absolute Price/Range ¢ — snap to 0.1¢ steps. */
@@ -233,8 +254,13 @@ export function normalizeUserTriggerInput(
     : Number.isFinite(existing?.sortOrder)
       ? Math.floor(Number(existing?.sortOrder))
       : 0;
+  const series = normalizeSeriesKey(
+    o.series !== undefined ? o.series : existing?.series,
+    "",
+  );
   return {
     id,
+    series,
     name,
     color: typeof o.color === "string" ? o.color : existing?.color || "#58a6ff",
     durationMs,
@@ -305,10 +331,15 @@ function toClient(doc: UserTriggerDoc): UserTriggerRecord {
   return normalizeUserTriggerInput(rest, null) as UserTriggerRecord;
 }
 
-export async function listUserTriggers(userId: string): Promise<UserTriggerRecord[]> {
+export async function listUserTriggers(
+  userId: string,
+  series?: string,
+): Promise<UserTriggerRecord[]> {
   await ensureIndexes();
   const c = await col();
-  const docs = await c.find({ userId }).toArray();
+  const seriesKey = normalizeSeriesKey(series);
+  const query: Record<string, unknown> = { userId, ...seriesMatchFilter(seriesKey) };
+  const docs = await c.find(query).toArray();
   const list = docs.map(toClient).filter(Boolean) as UserTriggerRecord[];
   list.sort(compareTriggerDisplayOrder);
   // Backfill sortOrder for legacy docs (and keep 0..n-1 dense after first load).
@@ -324,6 +355,18 @@ export async function listUserTriggers(userId: string): Promise<UserTriggerRecor
       ),
     );
   }
+  // Stamp series on legacy docs when listed for a specific market.
+  if (seriesKey) {
+    await Promise.all(
+      list
+        .filter((t) => !t.series)
+        .map((t) =>
+          c.updateOne({ userId, id: t.id }, { $set: { series: seriesKey } }).then(() => {
+            t.series = seriesKey;
+          }),
+        ),
+    );
+  }
   // Backfill Active/Paused timeline for triggers created before timeline existed.
   await Promise.all(
     list.map((t) =>
@@ -335,6 +378,51 @@ export async function listUserTriggers(userId: string): Promise<UserTriggerRecor
     ),
   );
   return list;
+}
+
+/** Active Demo triggers for server-side scoring (executor only). */
+export async function listActiveDemoTriggersForSeries(
+  series: string,
+): Promise<Array<UserTriggerRecord & { userId: string }>> {
+  await ensureIndexes();
+  const seriesKey = normalizeSeriesKey(series);
+  if (!seriesKey) return [];
+  const c = await col();
+  const docs = await c
+    .find({
+      paused: false,
+      runMode: "demo",
+      ...seriesMatchFilter(seriesKey),
+    })
+    .toArray();
+  const out: Array<UserTriggerRecord & { userId: string }> = [];
+  for (const doc of docs) {
+    const rec = toClient(doc);
+    if (!rec) continue;
+    const userId = String(doc.userId || "").trim();
+    if (!userId) continue;
+    if (!rec.series) rec.series = seriesKey;
+    out.push({ ...rec, userId });
+  }
+  return out;
+}
+
+/** All Active+Demo triggers (any series) — keep executor feeds / engines warm. */
+export async function listAllActiveDemoTriggers(): Promise<
+  Array<UserTriggerRecord & { userId: string }>
+> {
+  await ensureIndexes();
+  const c = await col();
+  const docs = await c.find({ paused: false, runMode: "demo" }).toArray();
+  const out: Array<UserTriggerRecord & { userId: string }> = [];
+  for (const doc of docs) {
+    const rec = toClient(doc);
+    if (!rec) continue;
+    const userId = String(doc.userId || "").trim();
+    if (!userId) continue;
+    out.push({ ...rec, userId });
+  }
+  return out;
 }
 
 export async function getUserTrigger(
@@ -386,12 +474,17 @@ export async function upsertUserTrigger(
   const next = normalizeUserTriggerInput(raw, existing);
   if (!next) return null;
   const c = await col();
-  // New cards go to the top of the user's list.
+  // Keep series when client omits it on patch of an existing card.
+  if (!next.series && existing?.series) next.series = existing.series;
+  // New cards go to the top of that market's list.
   if (!existing) {
     const rawBody = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
     if (rawBody.sortOrder === undefined) {
       const peers = await c
-        .find({ userId }, { projection: { sortOrder: 1 } })
+        .find(
+          { userId, ...seriesMatchFilter(next.series) },
+          { projection: { sortOrder: 1 } },
+        )
         .toArray();
       let min = 0;
       for (const doc of peers) {
@@ -417,17 +510,19 @@ export async function upsertUserTrigger(
   return next;
 }
 
-/** Persist Market Triggers list order for a user (ids top → bottom). */
+/** Persist Market Triggers list order for a user (ids top → bottom). Optional series scope. */
 export async function reorderUserTriggers(
   userId: string,
   orderedIds: unknown,
+  series?: string,
 ): Promise<UserTriggerRecord[]> {
   await ensureIndexes();
   const c = await col();
+  const seriesKey = normalizeSeriesKey(series);
   const ids = Array.isArray(orderedIds)
     ? orderedIds.map((id) => String(id || "").trim()).filter(Boolean)
     : [];
-  const existing = await c.find({ userId }).toArray();
+  const existing = await c.find({ userId, ...seriesMatchFilter(seriesKey) }).toArray();
   const byId = new Map(existing.map((d) => [String(d.id), d]));
   const ordered: string[] = [];
   const seen = new Set<string>();
@@ -445,7 +540,7 @@ export async function reorderUserTriggers(
   await Promise.all(
     ordered.map((id, i) => c.updateOne({ userId, id }, { $set: { sortOrder: i } })),
   );
-  return listUserTriggers(userId);
+  return listUserTriggers(userId, seriesKey || undefined);
 }
 
 export async function patchUserTrigger(

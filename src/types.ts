@@ -482,6 +482,11 @@ export interface TradingPositionCard {
    * Still uses normal Sell / hold-to-settlement; Positions UI shows "Trigger Miss".
    */
   triggerMiss?: boolean;
+  /**
+   * Server-side Trigger Demo card (no CLOB order). Excluded from Trade / Schedule /
+   * Market P/L; credits trigger.demoStats instead of Trade live stats.
+   */
+  demo?: boolean;
 }
 
 /** Live real-trade aggregates for a schedule placement card. */

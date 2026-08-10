@@ -4660,13 +4660,8 @@ function syncDemoCardsFromLastWindow(lastWindow) {
   });
 }
 
-function ingestDemoPositionCards(state) {
-  const trading = state?.trading;
-  if (!trading) return;
-  syncDemoCardsFromMarkers(trading, state);
-  if (shouldUpdateDemoPositionCards(trading) && trading.demoLastWindow) {
-    syncDemoCardsFromLastWindow(trading.demoLastWindow);
-  }
+function ingestDemoPositionCards(_state) {
+  // Demo Positions come from the server trading engine (SSE). No local ingest.
 }
 
 function positionsFingerprint(cards) {
@@ -4719,16 +4714,17 @@ function filterPositionsCards(cards) {
   return list;
 }
 
-/** Merge live trade cards + demo cards (no Prediction). Newest buyAt first. */
+/** Merge server Positions cards (Trade + Demo). Newest buyAt first. */
 function mergePositionsCards(liveCards, series) {
+  // Server is source of truth for Demo and Trade; browser does not own Demo cards.
   const live = (Array.isArray(liveCards) ? liveCards : [])
     .filter((c) => c && (!c.series || c.series === series) && !isPositionCardHidden(c))
-    .map((c) => ({ ...c, demo: false }));
-  const demo = demoPositionCards.filter(
-    (c) => c && (!c.series || c.series === series) && !isPositionCardHidden(c),
-  );
+    .map((c) => ({
+      ...c,
+      demo: c.demo === true || String(c.id || "").startsWith("demo:"),
+    }));
   return filterPositionsCards(
-    [...demo, ...live].sort((a, b) => {
+    [...live].sort((a, b) => {
       const ta = Number(a?.buyAt);
       const tb = Number(b?.buyAt);
       const aOk = Number.isFinite(ta);
@@ -4746,6 +4742,39 @@ function syncPositionsScrollable() {
   const height = parseFloat(getComputedStyle(body).flexBasis) || body.clientHeight;
   const hasCards = Boolean(body.querySelector(".position-card"));
   body.classList.toggle("is-scrollable", height > 0 && hasCards);
+}
+
+/** Reflect server Demo open cards on Trigger BUY cells; clear when not open. */
+function syncTriggerDemoLiveUiFromServer(state) {
+  if (!Array.isArray(userTriggers)) return;
+  const cards = state?.trading?.positionCards;
+  const openByTrigger = new Map();
+  if (Array.isArray(cards)) {
+    for (const c of cards) {
+      if (!isDemoPositionCard(c)) continue;
+      if (String(c.status || "open").toLowerCase() !== "open") continue;
+      const tid = c.triggerId != null ? String(c.triggerId) : "";
+      if (!tid) continue;
+      openByTrigger.set(tid, c);
+    }
+  }
+  for (const t of userTriggers) {
+    if (t?.runMode === "trade") continue;
+    const id = String(t?.id || "");
+    if (!id) continue;
+    const open = openByTrigger.get(id);
+    if (open) {
+      setTriggerCardLiveUi(id, {
+        side: open.side === "down" ? "down" : "up",
+        leg: "buy",
+        price: open.buyPrice,
+        shares: open.shares,
+      });
+    } else {
+      const rt = triggerRuntimeById.get(id);
+      if (rt?.liveUi) setTriggerCardLiveUi(id, null);
+    }
+  }
 }
 
 function refreshTradeTriggerStatsFromPositions(state) {
@@ -4811,9 +4840,19 @@ function updatePositionsPanel(state) {
   const cards = mergePositionsCards(trading.positionCards, series);
 
   const fingerprint = positionsFingerprint(cards);
-  if (fingerprint === lastPositionsFingerprint) return;
+  if (fingerprint === lastPositionsFingerprint) {
+    syncTriggerDemoLiveUiFromServer(state);
+    return;
+  }
   lastPositionsFingerprint = fingerprint;
   refreshTradeTriggerStatsFromPositions(state);
+  syncTriggerDemoLiveUiFromServer(state);
+  // Demo stats are credited on the server — refresh Trigger card totals when Demo cards change.
+  if (cards.some(isDemoPositionCard)) {
+    void loadUserTriggers().then(() => {
+      for (const t of userTriggers || []) updateTriggerCardStats(String(t?.id || ""));
+    });
+  }
 
   if (cards.length === 0) {
     list.innerHTML = "";
@@ -5216,6 +5255,8 @@ function connectSSE() {
 async function onMarketSeriesChanged(nextSeries) {
   selectedSeries = nextSeries;
   lastPositionsFingerprint = "";
+  // Market Triggers are per series — reload list for the new market.
+  void loadUserTriggers().then(() => renderTriggersList());
   const res = await fetch(`/api/window?series=${encodeURIComponent(selectedSeries)}`);
   if (res.ok) updateWindowUI(await res.json());
   const config = await loadTradingConfig();
@@ -6724,6 +6765,10 @@ function normalizeTriggerRecord(raw) {
     runMode: raw.runMode === "trade" ? "trade" : "demo",
     paused: raw.paused !== false,
     demoStats: normalizeTriggerDemoStats(raw.demoStats),
+    series:
+      typeof raw.series === "string" && raw.series.trim()
+        ? raw.series.trim().toLowerCase()
+        : selectedSeries || "",
     sortOrder: Number.isFinite(Number(raw.sortOrder))
       ? Math.floor(Number(raw.sortOrder))
       : raw.sortOrder,
@@ -6773,7 +6818,7 @@ async function persistTriggerOrder(orderedIds) {
       method: "PUT",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({ ids, series: selectedSeries }),
     });
     if (!res.ok) return;
     const body = await res.json().catch(() => ({}));
@@ -6900,12 +6945,15 @@ function startTriggerCardReorder(e, card, cardsEl) {
 }
 
 /**
- * Load Market Triggers from Mongo (per user). One-time migrate from browser localStorage
- * when the server list is empty. Replay Triggers stay in localStorage via ScheduleReplayTriggers.
+ * Load Market Triggers from Mongo (per user × selected series).
+ * One-time migrate from browser localStorage when the server list is empty.
+ * Replay Triggers stay in localStorage via ScheduleReplayTriggers.
  */
 async function loadUserTriggers() {
+  const series = String(selectedSeries || "").trim().toLowerCase();
+  const qs = series ? `?series=${encodeURIComponent(series)}` : "";
   try {
-    const res = await fetch("/api/triggers", { credentials: "same-origin" });
+    const res = await fetch(`/api/triggers${qs}`, { credentials: "same-origin" });
     if (!res.ok) throw new Error(`triggers ${res.status}`);
     const body = await res.json().catch(() => ({}));
     let list = Array.isArray(body?.triggers)
@@ -6918,7 +6966,7 @@ async function loadUserTriggers() {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ triggers: local }),
+        body: JSON.stringify({ triggers: local, series }),
       });
       if (mig.ok) {
         const migBody = await mig.json().catch(() => ({}));
@@ -6926,6 +6974,11 @@ async function loadUserTriggers() {
           ? migBody.triggers.map(normalizeTriggerRecord).filter(Boolean)
           : local;
         clearLocalUserTriggers();
+        try {
+          localStorage.setItem(userTriggersMigratedKey(), "1");
+        } catch {
+          /* ignore */
+        }
       } else {
         list = local;
       }
@@ -6945,6 +6998,7 @@ async function loadUserTriggers() {
 async function persistUserTrigger(trigger) {
   const record = normalizeTriggerRecord(trigger);
   if (!record) return null;
+  if (!record.series) record.series = String(selectedSeries || "").trim().toLowerCase();
   const id = String(record.id);
   const gen = (triggerPersistGenById[id] = (triggerPersistGenById[id] || 0) + 1);
   try {
@@ -12503,6 +12557,14 @@ function settleTriggerHeldToWindowEnd(trigger, rt, state) {
 async function openTriggerPosition(trigger, rt, state, side) {
   if (rt.orderInFlight || rt.phase === "open" || rt.phase === "opening") return;
   const runMode = trigger.runMode === "trade" ? "trade" : "demo";
+  // Demo buys/stats/Positions are scored on the trading host (feed latency) — not here.
+  if (runMode !== "trade") {
+    rt.phase = "idle";
+    rt.side = null;
+    rt.watchStartedAtMs = null;
+    rt.startPriceCents = null;
+    return;
+  }
   const buyShares = normalizeTriggerBuyShares(trigger.buyShares);
   const sellOrderType = normalizeTriggerSellOrderType(trigger.sellOrderType);
   const watchStartedAtMs = Number(rt.watchStartedAtMs);
@@ -12948,6 +13010,19 @@ function tickUserTriggers(state) {
     if (!id) continue;
     const rt = getOrCreateTriggerRuntime(id);
     const buyGtd = triggerUsesBuyGtd(trigger);
+
+    // Demo evaluation is server-side (executor + feedLatencyMs). Keep UI re-armed.
+    if (trigger.runMode !== "trade") {
+      if (rt.phase !== "idle" || rt.liveUi) {
+        rt.phase = "idle";
+        rt.side = null;
+        rt.watchStartedAtMs = null;
+        rt.startPriceCents = null;
+        rt.entryPrice = null;
+        setTriggerCardLiveUi(id, null);
+      }
+      continue;
+    }
 
     if (rt.windowStart != null && state.windowStart !== rt.windowStart) {
       if (rt.phase === "open") {

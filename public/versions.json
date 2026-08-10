@@ -1,6 +1,11 @@
 {
-    "current":  "1.64.0",
+    "current":  "1.65.0",
     "releases":  [
+                     {
+                         "version":  "1.65.0",
+                         "releasedAt":  "2026-08-10T07:58:03.388Z",
+                         "notes":  "Active Demo triggers score on the trading host with feed latency; triggers and Demo Positions are per market; browser reflects server only. Docs updated."
+                     },
                      {
                          "version":  "1.64.0",
                          "releasedAt":  "2026-08-09T12:30:23.412Z",
