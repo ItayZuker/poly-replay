@@ -10,7 +10,36 @@ let chartWindowStart = null;
 let chainlinkChartFrame = null;
 let pendingChainlinkTicks = [];
 
+/** Prediction sim cards (legacy local). */
 const MAX_POSITION_CARDS = 50;
+/** Server Positions: separate caps for Demo vs Trade (newest kept). */
+const MAX_DEMO_POSITION_CARDS = 300;
+const MAX_TRADE_POSITION_CARDS = 300;
+
+/** Keep up to maxDemo Demo + maxTrade Trade cards (list order preserved; typically newest first). */
+function trimDemoTradePositionCards(
+  cards,
+  maxDemo = MAX_DEMO_POSITION_CARDS,
+  maxTrade = MAX_TRADE_POSITION_CARDS,
+) {
+  const list = Array.isArray(cards) ? cards : [];
+  const out = [];
+  let demoN = 0;
+  let tradeN = 0;
+  for (const c of list) {
+    if (!c) continue;
+    const isDemo = c.demo === true || String(c.id || "").startsWith("demo:");
+    if (isDemo) {
+      if (demoN >= maxDemo) continue;
+      demoN += 1;
+    } else {
+      if (tradeN >= maxTrade) continue;
+      tradeN += 1;
+    }
+    out.push(c);
+  }
+  return out;
+}
 const LOG_CLEARED_SESSION_KEY = "poly-real:log-cleared";
 const SCHEDULE_WORKSPACE_STORAGE_KEY = "poly-real:schedule-workspace-mode";
 
@@ -4723,17 +4752,19 @@ function mergePositionsCards(liveCards, series) {
       ...c,
       demo: c.demo === true || String(c.id || "").startsWith("demo:"),
     }));
-  return filterPositionsCards(
-    [...live].sort((a, b) => {
-      const ta = Number(a?.buyAt);
-      const tb = Number(b?.buyAt);
-      const aOk = Number.isFinite(ta);
-      const bOk = Number.isFinite(tb);
-      if (aOk && bOk && tb !== ta) return tb - ta;
-      if (aOk !== bOk) return aOk ? -1 : 1;
-      return 0;
-    }),
-  ).slice(0, MAX_POSITION_CARDS);
+  return trimDemoTradePositionCards(
+    filterPositionsCards(
+      [...live].sort((a, b) => {
+        const ta = Number(a?.buyAt);
+        const tb = Number(b?.buyAt);
+        const aOk = Number.isFinite(ta);
+        const bOk = Number.isFinite(tb);
+        if (aOk && bOk && tb !== ta) return tb - ta;
+        if (aOk !== bOk) return aOk ? -1 : 1;
+        return 0;
+      }),
+    ),
+  );
 }
 
 function syncPositionsScrollable() {
@@ -4884,6 +4915,40 @@ function bindPositionsFilter() {
     persistPositionsFilter();
     lastPositionsFingerprint = "";
     updatePositionsPanel(windowState);
+  });
+}
+
+function bindPositionsClear() {
+  const btn = $("positions-clear");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", async () => {
+    const filter = normalizePositionsFilter(positionsFilter);
+    const scopeLabel =
+      filter === "demo" ? "Demo" : filter === "trade" ? "Trade" : "all";
+    const ok = window.confirm(
+      `Clear settled ${scopeLabel} positions?\n\nOpen cards stay. This cannot be undone.`,
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/trading/positions/clear", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "settled", filter }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.error || `Clear failed (${res.status})`);
+      }
+      lastPositionsFingerprint = "";
+      updatePositionsPanel(windowState);
+    } catch (err) {
+      window.alert(String(err?.message || err || "Clear failed"));
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
@@ -6995,19 +7060,36 @@ async function loadUserTriggers() {
   return userTriggers;
 }
 
-async function persistUserTrigger(trigger) {
+/**
+ * Persist a Market Trigger.
+ * @param {{ allowCreate?: boolean }} [opts] allowCreate true (default) → POST create;
+ *   false → PUT replace existing only (404 drops the stale client card).
+ */
+async function persistUserTrigger(trigger, opts = {}) {
+  const allowCreate = opts.allowCreate !== false;
   const record = normalizeTriggerRecord(trigger);
   if (!record) return null;
   if (!record.series) record.series = String(selectedSeries || "").trim().toLowerCase();
   const id = String(record.id);
   const gen = (triggerPersistGenById[id] = (triggerPersistGenById[id] || 0) + 1);
   try {
-    const res = await fetch(`/api/triggers/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(record),
-    });
+    const res = allowCreate
+      ? await fetch("/api/triggers", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(record),
+        })
+      : await fetch(`/api/triggers/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(record),
+        });
+    if (!allowCreate && res.status === 404) {
+      dropMissingUserTrigger(id);
+      return null;
+    }
     if (!res.ok) return null;
     const saved = normalizeTriggerRecord(await res.json().catch(() => null));
     if (!saved || gen !== triggerPersistGenById[id]) return saved;
@@ -7019,6 +7101,27 @@ async function persistUserTrigger(trigger) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Mongo is source of truth: if a card is gone server-side, drop it locally.
+ * Do not recreate via PUT — a refresh will restore it only if Mongo still has it.
+ */
+function dropMissingUserTrigger(id) {
+  const key = String(id || "");
+  if (!key) return;
+  const before = Array.isArray(userTriggers) ? userTriggers.length : 0;
+  userTriggers = (Array.isArray(userTriggers) ? userTriggers : []).filter(
+    (t) => String(t?.id) !== key,
+  );
+  if (userTriggers.length === before) return;
+  clearTriggerRuntime(key);
+  delete triggerPersistGenById[key];
+  renderTriggersList();
+  if (triggerCreateEditingId && String(triggerCreateEditingId) === key) {
+    closeTriggerCreateModal();
+  }
+  window.ScheduleLiveTriggers?.render?.();
 }
 
 async function persistUserTriggerPatch(id, patch) {
@@ -7033,8 +7136,8 @@ async function persistUserTriggerPatch(id, patch) {
       body: JSON.stringify(patch),
     });
     if (res.status === 404) {
-      const local = findUserTrigger(key);
-      return local ? persistUserTrigger(local) : null;
+      dropMissingUserTrigger(key);
+      return null;
     }
     if (!res.ok) return null;
     const saved = normalizeTriggerRecord(await res.json().catch(() => null));
@@ -8285,7 +8388,8 @@ function submitTriggerCreate() {
     closeTriggerCreateModal();
     return;
   }
-  if (triggerCreateEditingId) {
+  const isEdit = Boolean(triggerCreateEditingId);
+  if (isEdit) {
     const idx = userTriggers.findIndex(
       (t) => String(t?.id) === String(triggerCreateEditingId),
     );
@@ -8296,7 +8400,7 @@ function submitTriggerCreate() {
   }
   renderTriggersList();
   closeTriggerCreateModal();
-  void persistUserTrigger(trigger);
+  void persistUserTrigger(trigger, { allowCreate: !isEdit });
   invalidateTriggerGtdArmKeys(trigger.id);
   scheduleTriggerGtdArming(windowState);
 }
@@ -14088,6 +14192,7 @@ async function init() {
   demoPositionCards = loadDemoPositionCards();
   scanAndResumeStuckDemoOpenCards();
   bindPositionsFilter();
+  bindPositionsClear();
   initSimulatorBoxScrollbars();
   initChart();
   initColumnSplitter();

@@ -50,6 +50,7 @@ import {
 } from "./taker-fee.js";
 import {
   addActivatedPlacementId,
+  deleteTradingStatEventsByCardIds,
   ensureLiveCollectionStartedAt,
   getLiveCollectionStartedAt,
   getLiveResetAt,
@@ -671,7 +672,30 @@ const GTD_SELL_BALANCE_REPRESS_MS = 2500;
 /** While a buy is pending confirmation, poll CLOB/positions on this cadence. */
 const PENDING_BUY_CONFIRM_POLL_MS = 2500;
 /** Max position cards kept in RAM and sent to the UI scroll. */
-const MAX_POSITION_CARDS = 50;
+const MAX_DEMO_POSITION_CARDS = 300;
+const MAX_TRADE_POSITION_CARDS = 300;
+
+function isDemoPositionCard(card: Pick<TradingPositionCard, "demo" | "id">): boolean {
+  return card.demo === true || String(card.id || "").startsWith("demo:");
+}
+
+/** Keep up to 300 Demo + 300 Trade (preserves list order; newest-first lists drop oldest of each kind). */
+function trimDemoTradePositionCards(cards: TradingPositionCard[]): TradingPositionCard[] {
+  const out: TradingPositionCard[] = [];
+  let demoN = 0;
+  let tradeN = 0;
+  for (const c of cards) {
+    if (isDemoPositionCard(c)) {
+      if (demoN >= MAX_DEMO_POSITION_CARDS) continue;
+      demoN += 1;
+    } else {
+      if (tradeN >= MAX_TRADE_POSITION_CARDS) continue;
+      tradeN += 1;
+    }
+    out.push(c);
+  }
+  return out;
+}
 
 function isRoutineGtdCancelReason(reason: string): boolean {
   return reason.startsWith("gap filter");
@@ -1238,7 +1262,7 @@ export class LiveTradingService {
       }
 
       restored.sort((a, b) => (b.buyAt ?? 0) - (a.buyAt ?? 0));
-      this.positionCards = [...openCards, ...restored].slice(0, MAX_POSITION_CARDS);
+      this.positionCards = trimDemoTradePositionCards([...openCards, ...restored]);
 
       const backfilled = await this.backfillOrphanPlacementIds();
       logService.info(
@@ -2193,6 +2217,48 @@ export class LiveTradingService {
         logService.warn("trading", `Failed to mark live stats reset: ${String(err)}`);
       });
     this.notify();
+  }
+
+  /**
+   * Remove settled Positions cards for the current filter. Never removes status "open".
+   * scope: demo | trade | all (matches Positions header filter).
+   */
+  async clearSettledPositionCards(scope: "demo" | "trade" | "all"): Promise<number> {
+    const want = scope === "demo" || scope === "trade" || scope === "all" ? scope : "all";
+    const toRemove: string[] = [];
+    for (const card of this.positionCards) {
+      if (!card || card.status === "open") continue;
+      if (!this.cardMatchesBoundSeries(card)) continue;
+      const demo = isDemoPositionCard(card);
+      if (want === "demo" && !demo) continue;
+      if (want === "trade" && demo) continue;
+      toRemove.push(card.id);
+    }
+    // Also drop settled ledger rows for this series that are not in RAM (hydrated events).
+    for (const [cardId, event] of this.liveStatLedger) {
+      if (toRemove.includes(cardId)) continue;
+      if (String(event.status || "").toLowerCase() === "open") continue;
+      if (!this.eventMatchesBoundSeries(event)) continue;
+      const demo = event.card?.demo === true || String(cardId).startsWith("demo:");
+      if (want === "demo" && !demo) continue;
+      if (want === "trade" && demo) continue;
+      toRemove.push(cardId);
+    }
+    if (toRemove.length === 0) {
+      this.notify();
+      return 0;
+    }
+    const removeSet = new Set(toRemove);
+    this.positionCards = this.positionCards.filter((c) => !removeSet.has(c.id));
+    for (const id of removeSet) {
+      this.liveStatLedger.delete(id);
+      this.lastPersistedStatFingerprint.delete(id);
+    }
+    await deleteTradingStatEventsByCardIds(this.userId, [...removeSet]).catch((err) => {
+      logService.warn("trading", `Failed to delete settled position events: ${String(err)}`);
+    });
+    this.notify();
+    return removeSet.size;
   }
 
   private shouldShowPhases(): boolean {
@@ -4530,9 +4596,7 @@ export class LiveTradingService {
       if (source !== "manual" && resolvedPlacementId) {
         this.rememberActivatedPlacement(resolvedPlacementId);
       }
-      if (this.positionCards.length > MAX_POSITION_CARDS) {
-        this.positionCards.length = MAX_POSITION_CARDS;
-      }
+      this.positionCards = trimDemoTradePositionCards(this.positionCards);
       void this.enrichCardFromPolymarketBuy(cardId);
     }
 
@@ -6052,9 +6116,7 @@ export class LiveTradingService {
     if (input.slug) card.slug = input.slug;
     if (input.triggerMiss) card.triggerMiss = true;
     this.positionCards.unshift(card);
-    if (this.positionCards.length > MAX_POSITION_CARDS) {
-      this.positionCards.length = MAX_POSITION_CARDS;
-    }
+    this.positionCards = trimDemoTradePositionCards(this.positionCards);
     this.notify();
     return id;
   }

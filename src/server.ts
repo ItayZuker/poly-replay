@@ -75,6 +75,7 @@ import {
 } from "./db/trigger-mode-timeline-repository.js";
 import {
   deleteUserTrigger,
+  getUserTrigger,
   listUserTriggers,
   patchUserTrigger,
   reorderUserTriggers,
@@ -1013,6 +1014,16 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
 
 app.post("/api/trading/positions/clear", async (req, res) => {
   try {
+    const mode = String(req.body?.mode || "").trim().toLowerCase();
+    if (mode === "settled") {
+      const filterRaw = String(req.body?.filter || "all").trim().toLowerCase();
+      const filter =
+        filterRaw === "demo" || filterRaw === "trade" ? filterRaw : "all";
+      const removed = await tradingFor(req).clearSettledPositionCards(filter);
+      pushWindowStateImmediate();
+      res.json({ ok: true, mode: "settled", filter, removed });
+      return;
+    }
     // Reset Live header counters only — Market / Week keep full history in Mongo.
     // Schedule placement card stats keep collecting until cards are removed.
     tradingFor(req).clearPositionCards();
@@ -1471,6 +1482,12 @@ app.put("/api/triggers/:id", async (req, res) => {
     const triggerId = String(req.params.id || "").trim();
     if (!triggerId) {
       res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    // Replace existing only — never upsert-resurrect a deleted card (POST creates).
+    const existing = await getUserTrigger(userId, triggerId);
+    if (!existing) {
+      res.status(404).json({ error: "trigger not found" });
       return;
     }
     const saved = await upsertUserTrigger(userId, { ...req.body, id: triggerId });
