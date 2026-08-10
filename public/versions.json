@@ -1,595 +1,600 @@
 {
-    "current":  "1.65.0",
-    "releases":  [
-                     {
-                         "version":  "1.65.0",
-                         "releasedAt":  "2026-08-10T07:58:03.388Z",
-                         "notes":  "Active Demo triggers score on the trading host with feed latency; triggers and Demo Positions are per market; browser reflects server only. Docs updated."
-                     },
-                     {
-                         "version":  "1.64.0",
-                         "releasedAt":  "2026-08-09T12:30:23.412Z",
-                         "notes":  "Market Triggers use the same responsive card grid as Positions, with drag-to-reorder across the grid. Docs updated."
-                     },
-                     {
-                         "version":  "1.63.2",
-                         "releasedAt":  "2026-08-09T12:22:54.913Z",
-                         "notes":  "Trigger card BUY highlight clears on sell or window end; Positions stay Open until Gamma resolve."
-                     },
-                     {
-                         "version":  "1.63.1",
-                         "releasedAt":  "2026-08-09T12:06:58.512Z",
-                         "notes":  "Past-window Open Demo Positions cards resume official Gamma settlement after refresh or poll pause. Docs updated."
-                     },
-                     {
-                         "version":  "1.63.0",
-                         "releasedAt":  "2026-08-09T11:56:04.467Z",
-                         "notes":  "Positions: Demo/Trade/All filter (Clear removed), equal-width card grid, and Positions header drag no longer collapses Log. Docs updated."
-                     },
-                     {
-                         "version":  "1.62.0",
-                         "releasedAt":  "2026-08-09T11:34:44.178Z",
-                         "notes":  "Positions cards show the trigger title (Demo beside it), flex-wrap 300?600px, Settlement label, and buy time/fill on the Bet row. Docs updated."
-                     },
-                     {
-                         "version":  "1.61.3",
-                         "releasedAt":  "2026-08-09T11:12:39.767Z",
-                         "notes":  "Demo held Positions settle the entry-window card with the same official Gamma outcome as Trade cards; Open no longer keeps stale Market/P/L. Docs updated."
-                     },
-                     {
-                         "version":  "1.61.2",
-                         "releasedAt":  "2026-08-09T07:17:10.840Z",
-                         "notes":  "Trigger FAK/FOK buys are share-capped at live Ask inside the user band; Positions show Trigger Miss on out-of-band/oversized fills without auto-flatten. Docs updated."
-                     },
-                     {
-                         "version":  "1.61.1",
-                         "releasedAt":  "2026-08-09T06:02:53.117Z",
-                         "notes":  "Trigger buys require best Ask inside the full diagram band (low and high), not only at/below the high. Docs updated."
-                     },
-                     {
-                         "version":  "1.61.0",
-                         "releasedAt":  "2026-08-09T04:58:38.072Z",
-                         "notes":  "Live Schedule hour cells reset when that UTC weekday?hour arrives; no buys show zeros with gray $0 P/L instead of last week. Docs updated."
-                     },
-                     {
-                         "version":  "1.60.0",
-                         "releasedAt":  "2026-08-08T17:11:46.618Z",
-                         "notes":  "Recorder background-polls Gamma up to 20m after window end; Replay and Live Open Replay require official Gamma outcome. Docs updated."
-                     },
-                     {
-                         "version":  "1.59.1",
-                         "releasedAt":  "2026-08-07T07:07:22.387Z",
-                         "notes":  "Add repair:held-gamma and rebuild:trigger-live-stats scripts to realign held Win/Loss and Trade trigger totals to Gamma payout."
-                     },
-                     {
-                         "version":  "1.59.0",
-                         "releasedAt":  "2026-08-07T06:14:45.915Z",
-                         "notes":  "Held Win/Loss and official window outcome use Gamma payout (~$1/~$0) instead of crypto-price; token-mark safety net; outcome backfill stamps Gamma close on Chainlink tip. Docs updated."
-                     },
-                     {
-                         "version":  "1.58.0",
-                         "releasedAt":  "2026-08-06T11:52:39.503Z",
-                         "notes":  "Desktop and mobile: Market | Schedule | Heatmap header tabs; remove Schedule sub-header toggle; mobile segmented tabs with gap; Live/Replay in Schedule bottom bar (right-aligned, Schedule-only). Docs updated."
-                     },
-                     {
-                         "version":  "1.57.0",
-                         "releasedAt":  "2026-08-06T11:41:56.368Z",
-                         "notes":  "Mobile header tabs Market | Schedule | Heatmap; side-panel arrow bar moves to bottom; desktop keeps combined Schedule/Heatmap tab and sub-header switcher. Docs updated."
-                     },
-                     {
-                         "version":  "1.56.0",
-                         "releasedAt":  "2026-08-06T11:13:40.958Z",
-                         "notes":  "Schedule sub-header with Schedule/Heatmap toggle and mobile animated side-panel arrow; wallet balance always in mobile header; market dropdown label matches stats color. Docs updated."
-                     },
-                     {
-                         "version":  "1.55.0",
-                         "releasedAt":  "2026-08-06T10:32:59.751Z",
-                         "notes":  "Allow trade moved to Settings ? User; mobile Market/Schedule tabs inset with accent border and active corner radius; section headers under the graph get top borders and expand/collapse chevrons; Trade left column removed; header market/stats label alignment. Docs updated."
-                     },
-                     {
-                         "version":  "1.54.0",
-                         "releasedAt":  "2026-08-06T09:54:10.773Z",
-                         "notes":  "Mobile Market layout: stacked graph/sections with accordion headers, header wallet/Trade/countdown chrome, Market/Schedule bottom tabs; Replay idle counts and Run require usable CLOB+Chainlink windows. Docs updated."
-                     },
-                     {
-                         "version":  "1.53.1",
-                         "releasedAt":  "2026-08-06T05:37:46.214Z",
-                         "notes":  "Recording: recover from CLOB-only silence (~20s) without waiting for Chainlink to die; keep the window and reconnect the market WebSocket. Docs updated."
-                     },
-                     {
-                         "version":  "1.53.0",
-                         "releasedAt":  "2026-08-05T14:43:27.333Z",
-                         "notes":  "Responsive app header (market/toggle wrap, then full-width stats; timer/profile stay top-right); Schedule day-column hover/pin; Replay Settings defaults Latency 20 / Fill Success 90 and trigger card stats layout. Docs updated."
-                     },
-                     {
-                         "version":  "1.52.0",
-                         "releasedAt":  "2026-08-05T11:59:20.644Z",
-                         "notes":  "Rename to Poly Replay; Market graph header rows share one horizontal scroll; header title colors (red Poly on Market/Live, blue Replay on Replay); remove Replay blue page frame; Live Triggers title (Trade + Active). Docs updated."
-                     },
-                     {
-                         "version":  "1.51.0",
-                         "releasedAt":  "2026-08-05T10:17:03.486Z",
-                         "notes":  "Trigger Stats: Demo Stats / Live Stats sub-tabs (default from Pause/Demo/Trade); Total + Average tables; Demo+Active duration via demoActiveMs. Docs updated."
-                     },
-                     {
-                         "version":  "1.50.0",
-                         "releasedAt":  "2026-08-05T09:18:01.580Z",
-                         "notes":  "Trigger Create/Edit: ? toggles Buy/Sell order-type FAK/FOK/GTD help; TP/SL 100 shows (Disabled); modal scrolls with Log-style scrollbar and viewport max-height. Docs updated."
-                     },
-                     {
-                         "version":  "1.49.0",
-                         "releasedAt":  "2026-08-05T08:44:18.701Z",
-                         "notes":  "Trigger Stats: Loss/Sell/Win/Stop Loss meanings and labels (remove Success); % share; color dots; P/L chip; Trade+Active Weeks/Days/Hours with avg P/L. Docs updated."
-                     },
-                     {
-                         "version":  "1.48.2",
-                         "releasedAt":  "2026-08-05T07:17:46.948Z",
-                         "notes":  "Allow trade Off/On switcher in Trade header; Market/Live trigger card stats layout (dots, Stop Loss, P/L chip, Demo reset); day header green/red bottom border by P/L; remove Live Schedule refresh control. Docs updated."
-                     },
-                     {
-                         "version":  "1.48.1",
-                         "releasedAt":  "2026-08-04T10:07:28.237Z",
-                         "notes":  "Heatmap empty slots show No Recordings; Replay Schedule all-zero hour cells (incl. gray) show No Recordings instead of a zero-dot row. Docs updated."
-                     },
-                     {
-                         "version":  "1.48.0",
-                         "releasedAt":  "2026-08-04T08:57:56.393Z",
-                         "notes":  "Market Book: live UP/DOWN CLOB depth (10 levels), mid/vertical dividers, best bid/ask borders, BUY/SELL labels. Positions show a loading spinner until live cards are ready (no list jump). Docs updated."
-                     },
-                     {
-                         "version":  "1.47.0",
-                         "releasedAt":  "2026-08-04T08:06:22.641Z",
-                         "notes":  "Market Triggers: Duplicate (Paused/Demo); card color on border + grip handle; BUY/SELL wrap with controls; switcher labels vertically centered. Docs updated."
-                     },
-                     {
-                         "version":  "1.46.0",
-                         "releasedAt":  "2026-08-04T07:17:52.062Z",
-                         "notes":  "Market Triggers: drag the wide colored left strip to reorder cards; order saved per user in Mongo. Docs updated."
-                     },
-                     {
-                         "version":  "1.45.1",
-                         "releasedAt":  "2026-08-04T06:59:03.273Z",
-                         "notes":  "Left-column section headers no longer jump when pushed to the top/bottom edge. Allow trade label shows ∑ On / ∑ Off. Docs updated."
-                     },
-                     {
-                         "version":  "1.45.0",
-                         "releasedAt":  "2026-08-03T17:28:03.499Z",
-                         "notes":  "Trigger Price/Range at 0.1¢; keyboard ?/? on bar handles; Positions show UTC window range; Replay Trigger Duplicate; Live Open Replay lists traded windows without Chainlink. Docs updated."
-                     },
-                     {
-                         "version":  "1.44.0",
-                         "releasedAt":  "2026-08-03T14:30:16.320Z",
-                         "notes":  "Trigger Buy GTD (no Gap): rest both UP and DOWN at Price; first fill cancels the sibling. Docs updated."
-                     },
-                     {
-                         "version":  "1.43.0",
-                         "releasedAt":  "2026-08-03T13:40:23.388Z",
-                         "notes":  "Trigger gaps: Fixed/Relative mode (Gap With/Against BUY); UP/DOWN Price/Range labels; Relative UI without green/red graph and gold Min/Max above PTB. Docs updated."
-                     },
-                     {
-                         "version":  "1.42.0",
-                         "releasedAt":  "2026-08-03T12:16:26.835Z",
-                         "notes":  "Positions: remove Live/Demo toggle, Clear all cards, Demo label on demo bets (no Prediction cards). Trigger GTD latch only after CLOB accepts an order; stop latch log spam; keep rest on side flip. Docs updated."
-                     },
-                     {
-                         "version":  "1.41.5",
-                         "releasedAt":  "2026-08-03T11:54:44.610Z",
-                         "notes":  "Trigger Buy GTD: only with no Gap; one resting order per trigger per window (hard place latch). Gap forces FAK/FOK. Docs updated."
-                     },
-                     {
-                         "version":  "1.41.4",
-                         "releasedAt":  "2026-08-03T11:30:25.002Z",
-                         "notes":  "Fix Trigger GTD double-buy: treat Polymarket unmatched as still resting (not cancelled); free slot only on full fill, canceled/expired, or window end; hard-cap re-place at Shares."
-                     },
-                     {
-                         "version":  "1.41.3",
-                         "releasedAt":  "2026-08-03T11:09:25.802Z",
-                         "notes":  "Tighten Trigger GTD double-buy guard: free a rest slot only on full fill, explicit cancel/expire status, or window end ? never on unknown/empty status."
-                     },
-                     {
-                         "version":  "1.41.2",
-                         "releasedAt":  "2026-08-03T06:17:23.327Z",
-                         "notes":  "Fix left-column header drag: keep empty Trade body in layout (do not hide it) so Positions/Triggers/Log resize works again."
-                     },
-                     {
-                         "version":  "1.41.1",
-                         "releasedAt":  "2026-08-03T06:08:38.847Z",
-                         "notes":  "Fix Trigger GTD double-buy: keep tracking rests until Polymarket cancel is confirmed so a second 1¢ order cannot be placed. Market chart uses the default cursor."
-                     },
-                     {
-                         "version":  "1.41.0",
-                         "releasedAt":  "2026-08-03T05:40:37.667Z",
-                         "notes":  "Trigger-only live trading: remove Size / Manual Override and clickable graph quote boxes; disable Prediction Trade orders (sim scoring only). Server rejects manual and prediction order sources. Docs updated."
-                     },
-                     {
-                         "version":  "1.40.0",
-                         "releasedAt":  "2026-08-03T05:21:38.169Z",
-                         "notes":  "Live Schedule keeps latest day per weekday◊hour (no week wipe). Replay: gray = recorded window counts / No Recordings; idle Open Replay is clean; Run keeps gray under spinner; stats persist across refresh; Live?Replay boards no longer cross-flash. Recorder rollover cannot stick finalizing. Docs updated."
-                     },
-                     {
-                         "version":  "1.39.11",
-                         "releasedAt":  "2026-08-02T19:11:14.901Z",
-                         "notes":  "Replay: Paused trigger cards keep stats across Runs; card reset clears Replay stats (available on Paused during Run). Header stats zero while switching Market/Live/Schedule. Live/Replay bar matches Schedule/Heatmap chrome; Market/Schedule toggle keeps width; remove Replay triggers note."
-                     },
-                     {
-                         "version":  "1.39.10",
-                         "releasedAt":  "2026-08-02T18:10:16.843Z",
-                         "notes":  "Live Open Replay: ask the recorder which windows have Chainlink ticks so production trading hosts no longer show an empty window list. Docs updated."
-                     },
-                     {
-                         "version":  "1.39.9",
-                         "releasedAt":  "2026-08-02T17:54:05.207Z",
-                         "notes":  "Market chart: remove leftover phase bands (P1/P2/P3) so the graph matches Trigger-only docs; Open Replay hits map no longer draws phase bars."
-                     },
-                     {
-                         "version":  "1.39.8",
-                         "releasedAt":  "2026-08-02T17:33:49.442Z",
-                         "notes":  "Fix Replay P/L vs Official mismatch: sync Mongo recorded_windows outcomes from disk, keep future outcome backfills in sync with Mongo, and document that Mongo stays aligned with local window JSON."
-                     },
-                     {
-                         "version":  "1.39.7",
-                         "releasedAt":  "2026-08-02T14:24:49.753Z",
-                         "notes":  "Replay / Open Replay: skip windows with no Chainlink ticks so missing recordings cannot produce false Run stats or empty charts with trade dots. Docs updated."
-                     },
-                     {
-                         "version":  "1.39.6",
-                         "releasedAt":  "2026-08-02T12:57:58.368Z",
-                         "notes":  "Fix: stop repeating Account connected in the live log; reuse the connected CLOB client instead of reconnecting on every Schedule stats refresh."
-                     },
-                     {
-                         "version":  "1.39.5",
-                         "releasedAt":  "2026-08-02T12:33:14.963Z",
-                         "notes":  "Open Replay: Official UP/DOWN beside play controls; end tip/Current/PTB/Gap from stored settlement open/close; no-data when outcome missing. Remove day-header double-click Custom highlight."
-                     },
-                     {
-                         "version":  "1.39.4",
-                         "releasedAt":  "2026-08-02T11:32:44.033Z",
-                         "notes":  "Open Replay: price line from Chainlink ticks only (same Live/Replay); drop settlement mirror tip that caused opposite end spikes; ignore bad Mongo PTB."
-                     },
-                     {
-                         "version":  "1.39.3",
-                         "releasedAt":  "2026-08-02T11:12:24.362Z",
-                         "notes":  "Schedule Live/Replay trigger cards: P/L value-only badge on the stats row (header-style colors), wraps right-aligned when space is tight."
-                     },
-                     {
-                         "version":  "1.39.2",
-                         "releasedAt":  "2026-08-02T11:05:48.491Z",
-                         "notes":  "Open Replay: spinner while price ticks load; empty-recording message only after load finishes."
-                     },
-                     {
-                         "version":  "1.39.1",
-                         "releasedAt":  "2026-08-02T10:44:21.165Z",
-                         "notes":  "Open Replay PTB/Gap from Chainlink ticks (and persist PTB on new recordings); Trigger Stats tab shows Held win; Success labeled as TP."
-                     },
-                     {
-                         "version":  "1.39.0",
-                         "releasedAt":  "2026-08-02T09:01:08.247Z",
-                         "notes":  "Live Open Replay: double-click Live Schedule hour cells to review recorder ticks with real ledger buy/sell markers; held settlements no longer show fake Sell dots; clearer empty chart when Chainlink recording is missing; docs updated."
-                     },
-                     {
-                         "version":  "1.38.0",
-                         "releasedAt":  "2026-08-02T07:54:11.545Z",
-                         "notes":  "Trigger-only Schedule: 7x24 hour-cell stats from Trade+Active timeline; Replay Open on double-click; day-header day totals; GTD hold latch; docs updated."
-                     },
-                     {
-                         "version":  "1.37.2",
-                         "releasedAt":  "2026-08-02T05:29:18.463Z",
-                         "notes":  "Fix Heroku build: type Mongo string _ids in trigger stats rebuild script."
-                     },
-                     {
-                         "version":  "1.37.1",
-                         "releasedAt":  "2026-08-02T05:22:28.642Z",
-                         "notes":  "Add script to audit/rebuild Market Trigger Trade stats from settled position cards (drops client-guessed totals)."
-                     },
-                     {
-                         "version":  "1.37.0",
-                         "releasedAt":  "2026-08-02T05:08:29.749Z",
-                         "notes":  "Buy GTD rests at Apply/window start by wall clock (no tick wait). Trigger Trade card stats credit only from settled position cards (same as phases), not client flat guesses. Docs updated."
-                     },
-                     {
-                         "version":  "1.36.0",
-                         "releasedAt":  "2026-08-01T20:51:54.174Z",
-                         "notes":  "Trigger Trade fills always count on the Live Schedule placement covering the window (Use Schedule not required). Phase Auto Trade still needs Use Schedule. Docs updated."
-                     },
-                     {
-                         "version":  "1.35.0",
-                         "releasedAt":  "2026-08-01T20:17:11.023Z",
-                         "notes":  "Triggers: left Range/Price (0-100√?¬¢), Duration 0 fires on start only, Buy FAK/FOK/GTD (GTD at Apply start when Duration 0 + Price). Schedule Live lists Trade+Active Market Triggers; fills attribute to placement cards and Schedule totals. Docs updated."
-                     },
-                     {
-                         "version":  "1.34.0",
-                         "releasedAt":  "2026-08-01T18:45:26.210Z",
-                         "notes":  "Trigger Duration band full graph height (fill only); one buy/sell dot per fill (no double trigger+trade markers). Docs updated."
-                     },
-                     {
-                         "version":  "1.33.1",
-                         "releasedAt":  "2026-08-01T18:33:00.173Z",
-                         "notes":  "Trade trigger cards: when position goes flat early (e.g. manual sell), record actual sell P/L instead of a false held blue/red. Docs updated."
-                     },
-                     {
-                         "version":  "1.33.0",
-                         "releasedAt":  "2026-08-01T18:23:06.440Z",
-                         "notes":  "Trigger Price Change 0 = quote must stay unchanged after Duration (live + Replay); Trade buys refuse Ask above band high. Docs updated."
-                     },
-                     {
-                         "version":  "1.32.1",
-                         "releasedAt":  "2026-08-01T18:00:21.624Z",
-                         "notes":  "Fix Trade trigger card stats 500 (Mongo upsert path conflict on blue)."
-                     },
-                     {
-                         "version":  "1.32.0",
-                         "releasedAt":  "2026-08-01T07:50:47.658Z",
-                         "notes":  "Trigger cards: BUY/SELL live row (left buy UP/DOWN, right sell); both cells use green/red for the trigger side. Docs updated."
-                     },
-                     {
-                         "version":  "1.31.0",
-                         "releasedAt":  "2026-08-01T07:16:59.739Z",
-                         "notes":  "Trigger cards: live UP/DOWN status (buy/sell price \u0026 shares); remove Take Profit count (green dots); Demo reset icon vertically centered; safer held-settle entry validation. Docs updated."
-                     },
-                     {
-                         "version":  "1.30.0",
-                         "releasedAt":  "2026-08-01T06:35:46.316Z",
-                         "notes":  "Trigger price-trend wheel (Min/Max $ Change over Duration when same-side gaps); Demo stats reset icon; held settles wait for official outcome. Docs updated."
-                     },
-                     {
-                         "version":  "1.29.0",
-                         "releasedAt":  "2026-07-31T21:12:40.536Z",
-                         "notes":  "Market Triggers sync per user in Mongo (edit on prod or local); one-time migrate from browser storage. Real Trigger Trade only on the production executor. Replay Triggers stay browser-local. Docs updated."
-                     },
-                     {
-                         "version":  "1.28.0",
-                         "releasedAt":  "2026-07-31T15:35:34.592Z",
-                         "notes":  "Market + Replay Triggers: create/edit cards, TP/SL as √?‚??√?¬¢ offsets from fill (100=off), FOK buys capped to band high, held wins as blue dots, Replay Duration bands and trigger stats. Docs updated."
-                     },
-                     {
-                         "version":  "1.27.0",
-                         "releasedAt":  "2026-07-30T14:42:39.177Z",
-                         "notes":  "Prediction Profit / Right-Wrong use actual buy fill + Profit prediction (√?‚??√?¬¢), not trigger Ask. Docs updated."
-                     },
-                     {
-                         "version":  "1.26.0",
-                         "releasedAt":  "2026-07-30T14:20:49.784Z",
-                         "notes":  "Prediction Trade Sell can use GTD: resting limit at buy + Profit prediction as soon as Buy fills. Docs updated."
-                     },
-                     {
-                         "version":  "1.25.0",
-                         "releasedAt":  "2026-07-30T13:54:14.393Z",
-                         "notes":  "Prediction position cards show Buy and Target prices; Prediction Off collapses Trade/settings (info icon still opens the note). Docs updated."
-                     },
-                     {
-                         "version":  "1.24.0",
-                         "releasedAt":  "2026-07-30T13:05:06.693Z",
-                         "notes":  "Manual quote click logging; Open Replay multi locked Buy/Sell prices; targets-map hover rings buy/sell pairs. Docs updated."
-                     },
-                     {
-                         "version":  "1.23.0",
-                         "releasedAt":  "2026-07-30T12:29:01.498Z",
-                         "notes":  "Replay: per-trade green/red/blue dots (phase + Prediction) in card stats and Open Replay; Right/Wrong from Prediction trade settlement; multi Prediction Duration bands. Docs updated."
-                     },
-                     {
-                         "version":  "1.22.0",
-                         "releasedAt":  "2026-07-30T11:37:42.894Z",
-                         "notes":  "Prediction vs phase Auto Trade open race on Live and Replay (first buy holds until sell). Open Replay shows one check/cross per prediction. Docs updated."
-                     },
-                     {
-                         "version":  "1.21.0",
-                         "releasedAt":  "2026-07-30T09:08:43.477Z",
-                         "notes":  "Prediction Trade (Market): Trade switch, shares, Buy/Sell order types; real orders when Allow trade is On. Replay Prediction: Order type + Shares with simulated fills. Replay Prediction panel scroll/layout polish. Docs updated."
-                     },
-                     {
-                         "version":  "1.20.1",
-                         "releasedAt":  "2026-07-30T07:48:31.521Z",
-                         "notes":  "After a Right Prediction, the detector can re-trigger in the same window while Trigger Area remains open (live and Replay). Docs updated."
-                     },
-                     {
-                         "version":  "1.20.0",
-                         "releasedAt":  "2026-07-30T07:30:12.098Z",
-                         "notes":  "Prediction scores by Profit prediction (√?‚??√?¬¢) rise after trigger, not window outcome. Dual Buy/Sell quote controls under Trigger Area. Docs updated."
-                     },
-                     {
-                         "version":  "1.19.2",
-                         "releasedAt":  "2026-07-29T16:04:39.948Z",
-                         "notes":  "Held bets settle on the same Gamma clock as Prediction (no extra portfolio wait for Win/Loss). Docs updated."
-                     },
-                     {
-                         "version":  "1.19.1",
-                         "releasedAt":  "2026-07-29T15:45:12.727Z",
-                         "notes":  "Prediction Buy status matches quote Buys (fill only after a real buy). Prediction cards: √?¬¢√?‚??√¢‚?¨≈?/√?¬¢√?‚??√¢‚?¨¬¢ status; Trigger + Source only (no Market/P/L). Docs updated."
-                     },
-                     {
-                         "version":  "1.19.0",
-                         "releasedAt":  "2026-07-29T15:28:42.368Z",
-                         "notes":  "Active Prediction status is a Buy shortcut (UP/DOWN): same style and hover lift as quote Buy boxes; click places that Buy with the same Size/Manual Override/armed gates. Docs updated."
-                     },
-                     {
-                         "version":  "1.18.0",
-                         "releasedAt":  "2026-07-29T15:10:41.521Z",
-                         "notes":  "Prediction cards in Positions (pending √?¬¢√¢‚?¨¬†√¢‚?¨‚?¢ right/wrong). Settlement (positions, Prediction, recorder) waits for explicit Gamma resolved markets only √?¬¢√¢‚??¬¨√¢‚?¨¬ù correctness over speed. Docs updated."
-                     },
-                     {
-                         "version":  "1.17.3",
-                         "releasedAt":  "2026-07-29T14:22:45.797Z",
-                         "notes":  "Manual Live fills count only on Market/Live (not Schedule cards or Schedule totals). Persist trade source; stop linking manuals to schedule placements. Docs updated."
-                     },
-                     {
-                         "version":  "1.17.2",
-                         "releasedAt":  "2026-07-29T13:49:31.126Z",
-                         "notes":  "Fix position-card Market outcome: match Polymarket rows to bet side, settle only on clear ~0/~1 marks or official Gamma outcome (no mid-book flips). Docs updated."
-                     },
-                     {
-                         "version":  "1.17.1",
-                         "releasedAt":  "2026-07-29T13:31:11.531Z",
-                         "notes":  "Fix Prediction Wrong scores: freeze Chainlink close/PTB for the predicted window (do not use the next window); prefer settled ~1/0 token prices over Gamma metadata. Docs updated."
-                     },
-                     {
-                         "version":  "1.17.0",
-                         "releasedAt":  "2026-07-29T10:46:39.311Z",
-                         "notes":  "Prediction Min Quote (√?‚??√?¬¢) under Max Quote on Market and Replay (default 70; cheapening Buy must be in [Min, Max] when Duration starts). Replay Prediction switcher muted while a Run is active. Docs updated."
-                     },
-                     {
-                         "version":  "1.16.0",
-                         "releasedAt":  "2026-07-29T10:25:11.054Z",
-                         "notes":  "Replay Prediction: Max Quote, Shift, Duration, Trigger Area, On/Off (collapses to switcher when Off), Right/Wrong totals; Open Replay prediction badge, scores, and Duration band. Market Prediction Shift (√?‚??√?¬¢). Fill Success label and Trigger Area spacing. Docs updated."
-                     },
-                     {
-                         "version":  "1.15.1",
-                         "releasedAt":  "2026-07-29T08:15:09.296Z",
-                         "notes":  "Prediction: configurable Max Quote (√?‚??√?¬¢) above Duration (default 90); trim info tip copy. Docs updated."
-                     },
-                     {
-                         "version":  "1.15.0",
-                         "releasedAt":  "2026-07-29T07:54:43.859Z",
-                         "notes":  "Prediction: persist across refresh; background Pending while a new trigger takes the UI; skip triggers at 90√?‚??√?¬¢+ Buy/Sell; triggers/scoring only on deployed host (settings editable anywhere); clickable info panel; Trigger Area rename and Trade UI polish. Docs updated."
-                     },
-                     {
-                         "version":  "1.14.0",
-                         "releasedAt":  "2026-07-29T07:29:16.491Z",
-                         "notes":  "Trade Prediction: Detecting status, UP/DOWN scoring with Right/Wrong stats, green/red graph border until window end; Manual Override FAK/FOK; fix premature Wrong scores from mid-book Gamma prices. Docs updated."
-                     },
-                     {
-                         "version":  "1.13.0",
-                         "releasedAt":  "2026-07-29T06:09:20.368Z",
-                         "notes":  "Trade Detector (manipulation): per-series On/Off with Duration and Window area; graph border flash on trigger. Settings: Session into User, Stats tab with Fill success; Trade toggle labels show On/Off; remove Trade Latency. Docs updated."
-                     },
-                     {
-                         "version":  "1.12.5",
-                         "releasedAt":  "2026-07-28T12:39:58.129Z",
-                         "notes":  "Browser tab title set to Poly Replay."
-                     },
-                     {
-                         "version":  "1.12.4",
-                         "releasedAt":  "2026-07-28T11:53:21.930Z",
-                         "notes":  "Admin CRM is Mongo-only: Available/Recording/retention and user admin live in shared Mongo (no poly-replay /api/admin bridge or CRM secret). Drop user disabled flag; Recording applies on recorder sync (~30s). Docs updated."
-                     },
-                     {
-                         "version":  "1.12.3",
-                         "releasedAt":  "2026-07-28T10:32:28.000Z",
-                         "notes":  "Open Replay scrubber: smaller handle; can sit slightly past the final plot point (inside the chart) so it does not cover the last price dot."
-                     },
-                     {
-                         "version":  "1.12.2",
-                         "releasedAt":  "2026-07-28T08:39:31.000Z",
-                         "notes":  "Open Replay: view-only phase settings on phase click; Settlement-aligned close tip (draw at window end, mirror wrong-side closes); hide schedule-edit hint in view-only phase modal; docs updated."
-                     },
-                     {
-                         "version":  "1.12.1",
-                         "releasedAt":  "2026-07-27T19:13:07.000Z",
-                         "notes":  "Open Replay metrics: PTB, Current, and Gap only (equal width); drop quote boxes and book-tick fetch for faster Heroku loads; docs updated."
-                     },
-                     {
-                         "version":  "1.12.0",
-                         "releasedAt":  "2026-07-27T18:56:38.000Z",
-                         "notes":  "Open Replay: Market metric boxes (PTB/Current/Gap/Tick + UP/DOWN quotes) above the graph, updating with the scrubber; Chainlink price line + outcome coloring polish; live/Heroku proxies GET /api/ticks to the recorder; docs updated."
-                     },
-                     {
-                         "version":  "1.11.0",
-                         "releasedAt":  "2026-07-27T13:50:06.000Z",
-                         "notes":  "Heatmap wallets: Polymarket all-time P/L per trader (not app-user), Address|P/L column order; open/close icon, blue Wallets highlight, disable other color cards while open; address link icons; sort spinner/alignment polish; docs updated."
-                     },
-                     {
-                         "version":  "1.10.0",
-                         "releasedAt":  "2026-07-27T13:06:25.000Z",
-                         "notes":  "Heatmap wallets list: top 100 by sightings with I WON/I LOST per user, sortable columns, Polymarket profile links; store per-window traders; 30-day idle wallet prune; Settings Credentials tab; Replay health recovery and UI polish; docs updated."
-                     },
-                     {
-                         "version":  "1.9.0",
-                         "releasedAt":  "2026-07-27T04:04:19.000Z",
-                         "notes":  "Heatmap/Replay keep latest UTC weekday√?∆?√¢‚?¨‚?ùhour only √?¬¢√¢‚??¬¨√¢‚?¨¬ù new recordings override that hour; missed hours keep last week. Disk retention ~14 days. Docs updated."
-                     },
-                     {
-                         "version":  "1.8.0",
-                         "releasedAt":  "2026-07-26T21:02:59.000Z",
-                         "notes":  "Live fill-success % (buys+sells, rolling 7 days) on Market √?¬¢√¢‚?¨¬†√¢‚?¨‚?¢ Trade with feed latency; Replay Fill success (%) input with per-attempt random fills, prefills from live; Simulator footer expands for Replay + inputs; docs updated."
-                     },
-                     {
-                         "version":  "1.7.0",
-                         "releasedAt":  "2026-07-26T19:50:48.000Z",
-                         "notes":  "Simulator Replay latency (ms) on Schedule; latency/GTD delay applied in the sim engine; Heroku live app proxies Replay (placements, setups, latency) to SCHEDULE_REPLAY_SERVICE_URL and streams card results back; No Data cards, header range spinner, week fill; schedule docs updated."
-                     },
-                     {
-                         "version":  "1.6.1",
-                         "releasedAt":  "2026-07-26T17:36:00.000Z",
-                         "notes":  "Fix schedule Replay: match Mongo recorded windows, derive Chainlink assetGap, harden SSE stats streaming, and avoid Dropbox tick-read stalls so weekend cards can finish; schedule docs note local ticks vs heatmap."
-                     },
-                     {
-                         "version":  "1.6.0",
-                         "releasedAt":  "2026-07-26T13:54:17.901Z",
-                         "notes":  "Unify recording and Replay in one app: per-market Recording toggle on Market √?¬¢√¢‚?¨¬†√¢‚?¨‚?¢ Trade; ticks/windows under DATA_DIR; schedule Replay runs in-process or via SCHEDULE_REPLAY_SERVICE_URL worker; drop zip archives (delete data older than 7 days); docs updated for live vs recorder roles."
-                     },
-                     {
-                         "version":  "1.5.5",
-                         "releasedAt":  "2026-07-26T12:17:01.143Z",
-                         "notes":  "Schedule workspace polish: Live/Demo switcher with sliding handle and Replay screen border; hide Add setup on Heatmap; Replay run button matches Add setup and only shows in Demo; fix Replay card move/delete; docs updated."
-                     },
-                     {
-                         "version":  "1.5.4",
-                         "releasedAt":  "2026-07-25T04:32:00.000Z",
-                         "notes":  "Fix: Market P/L no longer keeps false wins after a market resolves to a loss; confirmed win/loss is re-checked against Polymarket; fees use trade USDC notional when available; market docs clarify P/L vs wallet cash."
-                     },
-                     {
-                         "version":  "1.5.3",
-                         "releasedAt":  "2026-07-24T14:37:00.000Z",
-                         "notes":  "Position cards show times in UTC (matching the schedule board) and display the buy fill immediately while the trade is still pending confirmation."
-                     },
-                     {
-                         "version":  "1.5.2",
-                         "releasedAt":  "2026-07-24T13:31:00.000Z",
-                         "notes":  "Fix: header Market totals now render reliably (in-flight fetches are coalesced and late responses still display); stats range selection is no longer forced when switching pages; legacy btc_5m stat events normalized to btc-5m."
-                     },
-                     {
-                         "version":  "1.5.1",
-                         "releasedAt":  "2026-07-23T07:46:55.000Z",
-                         "notes":  "Header Market range is all-time for the selected series; empty stats show 0 / +$0.00 instead of dashes; schedule docs updated."
-                     },
-                     {
-                         "version":  "1.5.0",
-                         "releasedAt":  "2026-07-22T17:34:26.000Z",
-                         "notes":  "Gap vs PTB First and Both (same rules for FAK and GTD); setup delete and locked schedule-card removal confirmations; docs updates."
-                     },
-                     {
-                         "version":  "1.4.1",
-                         "releasedAt":  "2026-07-22T13:30:32.925Z",
-                         "notes":  "Schedule setups list scrolls when cards overflow, using the same thin scrollbar as the log panel."
-                     },
-                     {
-                         "version":  "1.4.0",
-                         "releasedAt":  "2026-07-22T12:59:38.000Z",
-                         "notes":  "Schedule Replay mode: separate setups and placements from Live, Live/Replay switcher, Replay run button (service URL stub), and docs for Replay."
-                     },
-                     {
-                         "version":  "1.3.2",
-                         "releasedAt":  "2026-07-22T11:44:57.745Z",
-                         "notes":  "Shorter product docs; Docs/Versions no longer flash Market on refresh; Poly Replay title and App label stay stable; docs section hover no longer shifts layout."
-                     },
-                     {
-                         "version":  "1.3.1",
-                         "releasedAt":  "2026-07-22T10:51:10.450Z",
-                         "notes":  "Settings button and top bar height matched across Market/Schedule/Settings and Docs/Versions."
-                     },
-                     {
-                         "version":  "1.3.0",
-                         "releasedAt":  "2026-07-22T10:38:01.071Z",
-                         "notes":  "GTD resting buys cancel ~3s before phase end and the next phase places without waiting on cancel; docs section layout/hover polish; Settings stays available on Docs/Versions when signed in."
-                     },
-                     {
-                         "version":  "1.2.1",
-                         "releasedAt":  "2026-07-22T09:34:00.000Z",
-                         "notes":  "Settings Documentation card moved to the top as a single-row label + Open control."
-                     },
-                     {
-                         "version":  "1.2.0",
-                         "releasedAt":  "2026-07-22T09:25:00.000Z",
-                         "notes":  "Docs \u0026 Versions as /docs and /version routes; setups/phases and information-flow docs with UI demos and flow diagrams; docs search; Settings link to documentation; signed-in Back control; docs permission Cursor rules."
-                     },
-                     {
-                         "version":  "1.1.0",
-                         "releasedAt":  "2026-07-22T07:14:00.000Z",
-                         "notes":  "Homepage Main / Docs / Versions tabs; right-column auth layout; Markdown product docs under public/docs; versions changelog; Cursor rules for dev√?¬¢√¢‚?¨¬†√¢‚?¨‚?¢main workflow."
-                     },
-                     {
-                         "version":  "1.0.0",
-                         "releasedAt":  "2026-07-01T00:00:00.000Z",
-                         "notes":  "Initial Poly Replay app: auth, Market, Schedule / Heatmap, Settings, and live/demo trading."
-                     }
-                 ]
+    "current": "1.66.0",
+    "releases": [
+        {
+            "version": "1.66.0",
+            "releasedAt": "2026-08-10T08:32:50.464Z",
+            "notes": "Positions Clear removes settled cards for the current Demo/Trade/All filter (Open kept); keep up to 300 Demo and 300 Trade cards; deleted Market Triggers stay deleted across hosts (Mongo source of truth). Docs updated."
+        },
+        {
+            "version": "1.65.0",
+            "releasedAt": "2026-08-10T07:58:03.388Z",
+            "notes": "Active Demo triggers score on the trading host with feed latency; triggers and Demo Positions are per market; browser reflects server only. Docs updated."
+        },
+        {
+            "version": "1.64.0",
+            "releasedAt": "2026-08-09T12:30:23.412Z",
+            "notes": "Market Triggers use the same responsive card grid as Positions, with drag-to-reorder across the grid. Docs updated."
+        },
+        {
+            "version": "1.63.2",
+            "releasedAt": "2026-08-09T12:22:54.913Z",
+            "notes": "Trigger card BUY highlight clears on sell or window end; Positions stay Open until Gamma resolve."
+        },
+        {
+            "version": "1.63.1",
+            "releasedAt": "2026-08-09T12:06:58.512Z",
+            "notes": "Past-window Open Demo Positions cards resume official Gamma settlement after refresh or poll pause. Docs updated."
+        },
+        {
+            "version": "1.63.0",
+            "releasedAt": "2026-08-09T11:56:04.467Z",
+            "notes": "Positions: Demo/Trade/All filter (Clear removed), equal-width card grid, and Positions header drag no longer collapses Log. Docs updated."
+        },
+        {
+            "version": "1.62.0",
+            "releasedAt": "2026-08-09T11:34:44.178Z",
+            "notes": "Positions cards show the trigger title (Demo beside it), flex-wrap 300?600px, Settlement label, and buy time/fill on the Bet row. Docs updated."
+        },
+        {
+            "version": "1.61.3",
+            "releasedAt": "2026-08-09T11:12:39.767Z",
+            "notes": "Demo held Positions settle the entry-window card with the same official Gamma outcome as Trade cards; Open no longer keeps stale Market/P/L. Docs updated."
+        },
+        {
+            "version": "1.61.2",
+            "releasedAt": "2026-08-09T07:17:10.840Z",
+            "notes": "Trigger FAK/FOK buys are share-capped at live Ask inside the user band; Positions show Trigger Miss on out-of-band/oversized fills without auto-flatten. Docs updated."
+        },
+        {
+            "version": "1.61.1",
+            "releasedAt": "2026-08-09T06:02:53.117Z",
+            "notes": "Trigger buys require best Ask inside the full diagram band (low and high), not only at/below the high. Docs updated."
+        },
+        {
+            "version": "1.61.0",
+            "releasedAt": "2026-08-09T04:58:38.072Z",
+            "notes": "Live Schedule hour cells reset when that UTC weekday?hour arrives; no buys show zeros with gray $0 P/L instead of last week. Docs updated."
+        },
+        {
+            "version": "1.60.0",
+            "releasedAt": "2026-08-08T17:11:46.618Z",
+            "notes": "Recorder background-polls Gamma up to 20m after window end; Replay and Live Open Replay require official Gamma outcome. Docs updated."
+        },
+        {
+            "version": "1.59.1",
+            "releasedAt": "2026-08-07T07:07:22.387Z",
+            "notes": "Add repair:held-gamma and rebuild:trigger-live-stats scripts to realign held Win/Loss and Trade trigger totals to Gamma payout."
+        },
+        {
+            "version": "1.59.0",
+            "releasedAt": "2026-08-07T06:14:45.915Z",
+            "notes": "Held Win/Loss and official window outcome use Gamma payout (~$1/~$0) instead of crypto-price; token-mark safety net; outcome backfill stamps Gamma close on Chainlink tip. Docs updated."
+        },
+        {
+            "version": "1.58.0",
+            "releasedAt": "2026-08-06T11:52:39.503Z",
+            "notes": "Desktop and mobile: Market | Schedule | Heatmap header tabs; remove Schedule sub-header toggle; mobile segmented tabs with gap; Live/Replay in Schedule bottom bar (right-aligned, Schedule-only). Docs updated."
+        },
+        {
+            "version": "1.57.0",
+            "releasedAt": "2026-08-06T11:41:56.368Z",
+            "notes": "Mobile header tabs Market | Schedule | Heatmap; side-panel arrow bar moves to bottom; desktop keeps combined Schedule/Heatmap tab and sub-header switcher. Docs updated."
+        },
+        {
+            "version": "1.56.0",
+            "releasedAt": "2026-08-06T11:13:40.958Z",
+            "notes": "Schedule sub-header with Schedule/Heatmap toggle and mobile animated side-panel arrow; wallet balance always in mobile header; market dropdown label matches stats color. Docs updated."
+        },
+        {
+            "version": "1.55.0",
+            "releasedAt": "2026-08-06T10:32:59.751Z",
+            "notes": "Allow trade moved to Settings ? User; mobile Market/Schedule tabs inset with accent border and active corner radius; section headers under the graph get top borders and expand/collapse chevrons; Trade left column removed; header market/stats label alignment. Docs updated."
+        },
+        {
+            "version": "1.54.0",
+            "releasedAt": "2026-08-06T09:54:10.773Z",
+            "notes": "Mobile Market layout: stacked graph/sections with accordion headers, header wallet/Trade/countdown chrome, Market/Schedule bottom tabs; Replay idle counts and Run require usable CLOB+Chainlink windows. Docs updated."
+        },
+        {
+            "version": "1.53.1",
+            "releasedAt": "2026-08-06T05:37:46.214Z",
+            "notes": "Recording: recover from CLOB-only silence (~20s) without waiting for Chainlink to die; keep the window and reconnect the market WebSocket. Docs updated."
+        },
+        {
+            "version": "1.53.0",
+            "releasedAt": "2026-08-05T14:43:27.333Z",
+            "notes": "Responsive app header (market/toggle wrap, then full-width stats; timer/profile stay top-right); Schedule day-column hover/pin; Replay Settings defaults Latency 20 / Fill Success 90 and trigger card stats layout. Docs updated."
+        },
+        {
+            "version": "1.52.0",
+            "releasedAt": "2026-08-05T11:59:20.644Z",
+            "notes": "Rename to Poly Replay; Market graph header rows share one horizontal scroll; header title colors (red Poly on Market/Live, blue Replay on Replay); remove Replay blue page frame; Live Triggers title (Trade + Active). Docs updated."
+        },
+        {
+            "version": "1.51.0",
+            "releasedAt": "2026-08-05T10:17:03.486Z",
+            "notes": "Trigger Stats: Demo Stats / Live Stats sub-tabs (default from Pause/Demo/Trade); Total + Average tables; Demo+Active duration via demoActiveMs. Docs updated."
+        },
+        {
+            "version": "1.50.0",
+            "releasedAt": "2026-08-05T09:18:01.580Z",
+            "notes": "Trigger Create/Edit: ? toggles Buy/Sell order-type FAK/FOK/GTD help; TP/SL 100 shows (Disabled); modal scrolls with Log-style scrollbar and viewport max-height. Docs updated."
+        },
+        {
+            "version": "1.49.0",
+            "releasedAt": "2026-08-05T08:44:18.701Z",
+            "notes": "Trigger Stats: Loss/Sell/Win/Stop Loss meanings and labels (remove Success); % share; color dots; P/L chip; Trade+Active Weeks/Days/Hours with avg P/L. Docs updated."
+        },
+        {
+            "version": "1.48.2",
+            "releasedAt": "2026-08-05T07:17:46.948Z",
+            "notes": "Allow trade Off/On switcher in Trade header; Market/Live trigger card stats layout (dots, Stop Loss, P/L chip, Demo reset); day header green/red bottom border by P/L; remove Live Schedule refresh control. Docs updated."
+        },
+        {
+            "version": "1.48.1",
+            "releasedAt": "2026-08-04T10:07:28.237Z",
+            "notes": "Heatmap empty slots show No Recordings; Replay Schedule all-zero hour cells (incl. gray) show No Recordings instead of a zero-dot row. Docs updated."
+        },
+        {
+            "version": "1.48.0",
+            "releasedAt": "2026-08-04T08:57:56.393Z",
+            "notes": "Market Book: live UP/DOWN CLOB depth (10 levels), mid/vertical dividers, best bid/ask borders, BUY/SELL labels. Positions show a loading spinner until live cards are ready (no list jump). Docs updated."
+        },
+        {
+            "version": "1.47.0",
+            "releasedAt": "2026-08-04T08:06:22.641Z",
+            "notes": "Market Triggers: Duplicate (Paused/Demo); card color on border + grip handle; BUY/SELL wrap with controls; switcher labels vertically centered. Docs updated."
+        },
+        {
+            "version": "1.46.0",
+            "releasedAt": "2026-08-04T07:17:52.062Z",
+            "notes": "Market Triggers: drag the wide colored left strip to reorder cards; order saved per user in Mongo. Docs updated."
+        },
+        {
+            "version": "1.45.1",
+            "releasedAt": "2026-08-04T06:59:03.273Z",
+            "notes": "Left-column section headers no longer jump when pushed to the top/bottom edge. Allow trade label shows ÔøΩ On / ÔøΩ Off. Docs updated."
+        },
+        {
+            "version": "1.45.0",
+            "releasedAt": "2026-08-03T17:28:03.499Z",
+            "notes": "Trigger Price/Range at 0.1ÔøΩ; keyboard ?/? on bar handles; Positions show UTC window range; Replay Trigger Duplicate; Live Open Replay lists traded windows without Chainlink. Docs updated."
+        },
+        {
+            "version": "1.44.0",
+            "releasedAt": "2026-08-03T14:30:16.320Z",
+            "notes": "Trigger Buy GTD (no Gap): rest both UP and DOWN at Price; first fill cancels the sibling. Docs updated."
+        },
+        {
+            "version": "1.43.0",
+            "releasedAt": "2026-08-03T13:40:23.388Z",
+            "notes": "Trigger gaps: Fixed/Relative mode (Gap With/Against BUY); UP/DOWN Price/Range labels; Relative UI without green/red graph and gold Min/Max above PTB. Docs updated."
+        },
+        {
+            "version": "1.42.0",
+            "releasedAt": "2026-08-03T12:16:26.835Z",
+            "notes": "Positions: remove Live/Demo toggle, Clear all cards, Demo label on demo bets (no Prediction cards). Trigger GTD latch only after CLOB accepts an order; stop latch log spam; keep rest on side flip. Docs updated."
+        },
+        {
+            "version": "1.41.5",
+            "releasedAt": "2026-08-03T11:54:44.610Z",
+            "notes": "Trigger Buy GTD: only with no Gap; one resting order per trigger per window (hard place latch). Gap forces FAK/FOK. Docs updated."
+        },
+        {
+            "version": "1.41.4",
+            "releasedAt": "2026-08-03T11:30:25.002Z",
+            "notes": "Fix Trigger GTD double-buy: treat Polymarket unmatched as still resting (not cancelled); free slot only on full fill, canceled/expired, or window end; hard-cap re-place at Shares."
+        },
+        {
+            "version": "1.41.3",
+            "releasedAt": "2026-08-03T11:09:25.802Z",
+            "notes": "Tighten Trigger GTD double-buy guard: free a rest slot only on full fill, explicit cancel/expire status, or window end ? never on unknown/empty status."
+        },
+        {
+            "version": "1.41.2",
+            "releasedAt": "2026-08-03T06:17:23.327Z",
+            "notes": "Fix left-column header drag: keep empty Trade body in layout (do not hide it) so Positions/Triggers/Log resize works again."
+        },
+        {
+            "version": "1.41.1",
+            "releasedAt": "2026-08-03T06:08:38.847Z",
+            "notes": "Fix Trigger GTD double-buy: keep tracking rests until Polymarket cancel is confirmed so a second 1ÔøΩ order cannot be placed. Market chart uses the default cursor."
+        },
+        {
+            "version": "1.41.0",
+            "releasedAt": "2026-08-03T05:40:37.667Z",
+            "notes": "Trigger-only live trading: remove Size / Manual Override and clickable graph quote boxes; disable Prediction Trade orders (sim scoring only). Server rejects manual and prediction order sources. Docs updated."
+        },
+        {
+            "version": "1.40.0",
+            "releasedAt": "2026-08-03T05:21:38.169Z",
+            "notes": "Live Schedule keeps latest day per weekdayÔøΩhour (no week wipe). Replay: gray = recorded window counts / No Recordings; idle Open Replay is clean; Run keeps gray under spinner; stats persist across refresh; Live?Replay boards no longer cross-flash. Recorder rollover cannot stick finalizing. Docs updated."
+        },
+        {
+            "version": "1.39.11",
+            "releasedAt": "2026-08-02T19:11:14.901Z",
+            "notes": "Replay: Paused trigger cards keep stats across Runs; card reset clears Replay stats (available on Paused during Run). Header stats zero while switching Market/Live/Schedule. Live/Replay bar matches Schedule/Heatmap chrome; Market/Schedule toggle keeps width; remove Replay triggers note."
+        },
+        {
+            "version": "1.39.10",
+            "releasedAt": "2026-08-02T18:10:16.843Z",
+            "notes": "Live Open Replay: ask the recorder which windows have Chainlink ticks so production trading hosts no longer show an empty window list. Docs updated."
+        },
+        {
+            "version": "1.39.9",
+            "releasedAt": "2026-08-02T17:54:05.207Z",
+            "notes": "Market chart: remove leftover phase bands (P1/P2/P3) so the graph matches Trigger-only docs; Open Replay hits map no longer draws phase bars."
+        },
+        {
+            "version": "1.39.8",
+            "releasedAt": "2026-08-02T17:33:49.442Z",
+            "notes": "Fix Replay P/L vs Official mismatch: sync Mongo recorded_windows outcomes from disk, keep future outcome backfills in sync with Mongo, and document that Mongo stays aligned with local window JSON."
+        },
+        {
+            "version": "1.39.7",
+            "releasedAt": "2026-08-02T14:24:49.753Z",
+            "notes": "Replay / Open Replay: skip windows with no Chainlink ticks so missing recordings cannot produce false Run stats or empty charts with trade dots. Docs updated."
+        },
+        {
+            "version": "1.39.6",
+            "releasedAt": "2026-08-02T12:57:58.368Z",
+            "notes": "Fix: stop repeating Account connected in the live log; reuse the connected CLOB client instead of reconnecting on every Schedule stats refresh."
+        },
+        {
+            "version": "1.39.5",
+            "releasedAt": "2026-08-02T12:33:14.963Z",
+            "notes": "Open Replay: Official UP/DOWN beside play controls; end tip/Current/PTB/Gap from stored settlement open/close; no-data when outcome missing. Remove day-header double-click Custom highlight."
+        },
+        {
+            "version": "1.39.4",
+            "releasedAt": "2026-08-02T11:32:44.033Z",
+            "notes": "Open Replay: price line from Chainlink ticks only (same Live/Replay); drop settlement mirror tip that caused opposite end spikes; ignore bad Mongo PTB."
+        },
+        {
+            "version": "1.39.3",
+            "releasedAt": "2026-08-02T11:12:24.362Z",
+            "notes": "Schedule Live/Replay trigger cards: P/L value-only badge on the stats row (header-style colors), wraps right-aligned when space is tight."
+        },
+        {
+            "version": "1.39.2",
+            "releasedAt": "2026-08-02T11:05:48.491Z",
+            "notes": "Open Replay: spinner while price ticks load; empty-recording message only after load finishes."
+        },
+        {
+            "version": "1.39.1",
+            "releasedAt": "2026-08-02T10:44:21.165Z",
+            "notes": "Open Replay PTB/Gap from Chainlink ticks (and persist PTB on new recordings); Trigger Stats tab shows Held win; Success labeled as TP."
+        },
+        {
+            "version": "1.39.0",
+            "releasedAt": "2026-08-02T09:01:08.247Z",
+            "notes": "Live Open Replay: double-click Live Schedule hour cells to review recorder ticks with real ledger buy/sell markers; held settlements no longer show fake Sell dots; clearer empty chart when Chainlink recording is missing; docs updated."
+        },
+        {
+            "version": "1.38.0",
+            "releasedAt": "2026-08-02T07:54:11.545Z",
+            "notes": "Trigger-only Schedule: 7x24 hour-cell stats from Trade+Active timeline; Replay Open on double-click; day-header day totals; GTD hold latch; docs updated."
+        },
+        {
+            "version": "1.37.2",
+            "releasedAt": "2026-08-02T05:29:18.463Z",
+            "notes": "Fix Heroku build: type Mongo string _ids in trigger stats rebuild script."
+        },
+        {
+            "version": "1.37.1",
+            "releasedAt": "2026-08-02T05:22:28.642Z",
+            "notes": "Add script to audit/rebuild Market Trigger Trade stats from settled position cards (drops client-guessed totals)."
+        },
+        {
+            "version": "1.37.0",
+            "releasedAt": "2026-08-02T05:08:29.749Z",
+            "notes": "Buy GTD rests at Apply/window start by wall clock (no tick wait). Trigger Trade card stats credit only from settled position cards (same as phases), not client flat guesses. Docs updated."
+        },
+        {
+            "version": "1.36.0",
+            "releasedAt": "2026-08-01T20:51:54.174Z",
+            "notes": "Trigger Trade fills always count on the Live Schedule placement covering the window (Use Schedule not required). Phase Auto Trade still needs Use Schedule. Docs updated."
+        },
+        {
+            "version": "1.35.0",
+            "releasedAt": "2026-08-01T20:17:11.023Z",
+            "notes": "Triggers: left Range/Price (0-100ÔøΩ?¬¢), Duration 0 fires on start only, Buy FAK/FOK/GTD (GTD at Apply start when Duration 0 + Price). Schedule Live lists Trade+Active Market Triggers; fills attribute to placement cards and Schedule totals. Docs updated."
+        },
+        {
+            "version": "1.34.0",
+            "releasedAt": "2026-08-01T18:45:26.210Z",
+            "notes": "Trigger Duration band full graph height (fill only); one buy/sell dot per fill (no double trigger+trade markers). Docs updated."
+        },
+        {
+            "version": "1.33.1",
+            "releasedAt": "2026-08-01T18:33:00.173Z",
+            "notes": "Trade trigger cards: when position goes flat early (e.g. manual sell), record actual sell P/L instead of a false held blue/red. Docs updated."
+        },
+        {
+            "version": "1.33.0",
+            "releasedAt": "2026-08-01T18:23:06.440Z",
+            "notes": "Trigger Price Change 0 = quote must stay unchanged after Duration (live + Replay); Trade buys refuse Ask above band high. Docs updated."
+        },
+        {
+            "version": "1.32.1",
+            "releasedAt": "2026-08-01T18:00:21.624Z",
+            "notes": "Fix Trade trigger card stats 500 (Mongo upsert path conflict on blue)."
+        },
+        {
+            "version": "1.32.0",
+            "releasedAt": "2026-08-01T07:50:47.658Z",
+            "notes": "Trigger cards: BUY/SELL live row (left buy UP/DOWN, right sell); both cells use green/red for the trigger side. Docs updated."
+        },
+        {
+            "version": "1.31.0",
+            "releasedAt": "2026-08-01T07:16:59.739Z",
+            "notes": "Trigger cards: live UP/DOWN status (buy/sell price & shares); remove Take Profit count (green dots); Demo reset icon vertically centered; safer held-settle entry validation. Docs updated."
+        },
+        {
+            "version": "1.30.0",
+            "releasedAt": "2026-08-01T06:35:46.316Z",
+            "notes": "Trigger price-trend wheel (Min/Max $ Change over Duration when same-side gaps); Demo stats reset icon; held settles wait for official outcome. Docs updated."
+        },
+        {
+            "version": "1.29.0",
+            "releasedAt": "2026-07-31T21:12:40.536Z",
+            "notes": "Market Triggers sync per user in Mongo (edit on prod or local); one-time migrate from browser storage. Real Trigger Trade only on the production executor. Replay Triggers stay browser-local. Docs updated."
+        },
+        {
+            "version": "1.28.0",
+            "releasedAt": "2026-07-31T15:35:34.592Z",
+            "notes": "Market + Replay Triggers: create/edit cards, TP/SL as ÔøΩ?ÔøΩ??ÔøΩ?¬¢ offsets from fill (100=off), FOK buys capped to band high, held wins as blue dots, Replay Duration bands and trigger stats. Docs updated."
+        },
+        {
+            "version": "1.27.0",
+            "releasedAt": "2026-07-30T14:42:39.177Z",
+            "notes": "Prediction Profit / Right-Wrong use actual buy fill + Profit prediction (ÔøΩ?ÔøΩ??ÔøΩ?¬¢), not trigger Ask. Docs updated."
+        },
+        {
+            "version": "1.26.0",
+            "releasedAt": "2026-07-30T14:20:49.784Z",
+            "notes": "Prediction Trade Sell can use GTD: resting limit at buy + Profit prediction as soon as Buy fills. Docs updated."
+        },
+        {
+            "version": "1.25.0",
+            "releasedAt": "2026-07-30T13:54:14.393Z",
+            "notes": "Prediction position cards show Buy and Target prices; Prediction Off collapses Trade/settings (info icon still opens the note). Docs updated."
+        },
+        {
+            "version": "1.24.0",
+            "releasedAt": "2026-07-30T13:05:06.693Z",
+            "notes": "Manual quote click logging; Open Replay multi locked Buy/Sell prices; targets-map hover rings buy/sell pairs. Docs updated."
+        },
+        {
+            "version": "1.23.0",
+            "releasedAt": "2026-07-30T12:29:01.498Z",
+            "notes": "Replay: per-trade green/red/blue dots (phase + Prediction) in card stats and Open Replay; Right/Wrong from Prediction trade settlement; multi Prediction Duration bands. Docs updated."
+        },
+        {
+            "version": "1.22.0",
+            "releasedAt": "2026-07-30T11:37:42.894Z",
+            "notes": "Prediction vs phase Auto Trade open race on Live and Replay (first buy holds until sell). Open Replay shows one check/cross per prediction. Docs updated."
+        },
+        {
+            "version": "1.21.0",
+            "releasedAt": "2026-07-30T09:08:43.477Z",
+            "notes": "Prediction Trade (Market): Trade switch, shares, Buy/Sell order types; real orders when Allow trade is On. Replay Prediction: Order type + Shares with simulated fills. Replay Prediction panel scroll/layout polish. Docs updated."
+        },
+        {
+            "version": "1.20.1",
+            "releasedAt": "2026-07-30T07:48:31.521Z",
+            "notes": "After a Right Prediction, the detector can re-trigger in the same window while Trigger Area remains open (live and Replay). Docs updated."
+        },
+        {
+            "version": "1.20.0",
+            "releasedAt": "2026-07-30T07:30:12.098Z",
+            "notes": "Prediction scores by Profit prediction (ÔøΩ?ÔøΩ??ÔøΩ?¬¢) rise after trigger, not window outcome. Dual Buy/Sell quote controls under Trigger Area. Docs updated."
+        },
+        {
+            "version": "1.19.2",
+            "releasedAt": "2026-07-29T16:04:39.948Z",
+            "notes": "Held bets settle on the same Gamma clock as Prediction (no extra portfolio wait for Win/Loss). Docs updated."
+        },
+        {
+            "version": "1.19.1",
+            "releasedAt": "2026-07-29T15:45:12.727Z",
+            "notes": "Prediction Buy status matches quote Buys (fill only after a real buy). Prediction cards: ÔøΩ?¬¢ÔøΩ?ÔøΩ??√¢ÔøΩ?ÔøΩÔøΩ?/ÔøΩ?¬¢ÔøΩ?ÔøΩ??√¢ÔøΩ?ÔøΩ¬¢ status; Trigger + Source only (no Market/P/L). Docs updated."
+        },
+        {
+            "version": "1.19.0",
+            "releasedAt": "2026-07-29T15:28:42.368Z",
+            "notes": "Active Prediction status is a Buy shortcut (UP/DOWN): same style and hover lift as quote Buy boxes; click places that Buy with the same Size/Manual Override/armed gates. Docs updated."
+        },
+        {
+            "version": "1.18.0",
+            "releasedAt": "2026-07-29T15:10:41.521Z",
+            "notes": "Prediction cards in Positions (pending ÔøΩ?¬¢√¢ÔøΩ?ÔøΩ¬†√¢ÔøΩ?ÔøΩÔøΩ?ÔøΩ right/wrong). Settlement (positions, Prediction, recorder) waits for explicit Gamma resolved markets only ÔøΩ?¬¢√¢ÔøΩ??¬¨√¢ÔøΩ?ÔøΩ¬ù correctness over speed. Docs updated."
+        },
+        {
+            "version": "1.17.3",
+            "releasedAt": "2026-07-29T14:22:45.797Z",
+            "notes": "Manual Live fills count only on Market/Live (not Schedule cards or Schedule totals). Persist trade source; stop linking manuals to schedule placements. Docs updated."
+        },
+        {
+            "version": "1.17.2",
+            "releasedAt": "2026-07-29T13:49:31.126Z",
+            "notes": "Fix position-card Market outcome: match Polymarket rows to bet side, settle only on clear ~0/~1 marks or official Gamma outcome (no mid-book flips). Docs updated."
+        },
+        {
+            "version": "1.17.1",
+            "releasedAt": "2026-07-29T13:31:11.531Z",
+            "notes": "Fix Prediction Wrong scores: freeze Chainlink close/PTB for the predicted window (do not use the next window); prefer settled ~1/0 token prices over Gamma metadata. Docs updated."
+        },
+        {
+            "version": "1.17.0",
+            "releasedAt": "2026-07-29T10:46:39.311Z",
+            "notes": "Prediction Min Quote (ÔøΩ?ÔøΩ??ÔøΩ?¬¢) under Max Quote on Market and Replay (default 70; cheapening Buy must be in [Min, Max] when Duration starts). Replay Prediction switcher muted while a Run is active. Docs updated."
+        },
+        {
+            "version": "1.16.0",
+            "releasedAt": "2026-07-29T10:25:11.054Z",
+            "notes": "Replay Prediction: Max Quote, Shift, Duration, Trigger Area, On/Off (collapses to switcher when Off), Right/Wrong totals; Open Replay prediction badge, scores, and Duration band. Market Prediction Shift (ÔøΩ?ÔøΩ??ÔøΩ?¬¢). Fill Success label and Trigger Area spacing. Docs updated."
+        },
+        {
+            "version": "1.15.1",
+            "releasedAt": "2026-07-29T08:15:09.296Z",
+            "notes": "Prediction: configurable Max Quote (ÔøΩ?ÔøΩ??ÔøΩ?¬¢) above Duration (default 90); trim info tip copy. Docs updated."
+        },
+        {
+            "version": "1.15.0",
+            "releasedAt": "2026-07-29T07:54:43.859Z",
+            "notes": "Prediction: persist across refresh; background Pending while a new trigger takes the UI; skip triggers at 90ÔøΩ?ÔøΩ??ÔøΩ?¬¢+ Buy/Sell; triggers/scoring only on deployed host (settings editable anywhere); clickable info panel; Trigger Area rename and Trade UI polish. Docs updated."
+        },
+        {
+            "version": "1.14.0",
+            "releasedAt": "2026-07-29T07:29:16.491Z",
+            "notes": "Trade Prediction: Detecting status, UP/DOWN scoring with Right/Wrong stats, green/red graph border until window end; Manual Override FAK/FOK; fix premature Wrong scores from mid-book Gamma prices. Docs updated."
+        },
+        {
+            "version": "1.13.0",
+            "releasedAt": "2026-07-29T06:09:20.368Z",
+            "notes": "Trade Detector (manipulation): per-series On/Off with Duration and Window area; graph border flash on trigger. Settings: Session into User, Stats tab with Fill success; Trade toggle labels show On/Off; remove Trade Latency. Docs updated."
+        },
+        {
+            "version": "1.12.5",
+            "releasedAt": "2026-07-28T12:39:58.129Z",
+            "notes": "Browser tab title set to Poly Replay."
+        },
+        {
+            "version": "1.12.4",
+            "releasedAt": "2026-07-28T11:53:21.930Z",
+            "notes": "Admin CRM is Mongo-only: Available/Recording/retention and user admin live in shared Mongo (no poly-replay /api/admin bridge or CRM secret). Drop user disabled flag; Recording applies on recorder sync (~30s). Docs updated."
+        },
+        {
+            "version": "1.12.3",
+            "releasedAt": "2026-07-28T10:32:28.000Z",
+            "notes": "Open Replay scrubber: smaller handle; can sit slightly past the final plot point (inside the chart) so it does not cover the last price dot."
+        },
+        {
+            "version": "1.12.2",
+            "releasedAt": "2026-07-28T08:39:31.000Z",
+            "notes": "Open Replay: view-only phase settings on phase click; Settlement-aligned close tip (draw at window end, mirror wrong-side closes); hide schedule-edit hint in view-only phase modal; docs updated."
+        },
+        {
+            "version": "1.12.1",
+            "releasedAt": "2026-07-27T19:13:07.000Z",
+            "notes": "Open Replay metrics: PTB, Current, and Gap only (equal width); drop quote boxes and book-tick fetch for faster Heroku loads; docs updated."
+        },
+        {
+            "version": "1.12.0",
+            "releasedAt": "2026-07-27T18:56:38.000Z",
+            "notes": "Open Replay: Market metric boxes (PTB/Current/Gap/Tick + UP/DOWN quotes) above the graph, updating with the scrubber; Chainlink price line + outcome coloring polish; live/Heroku proxies GET /api/ticks to the recorder; docs updated."
+        },
+        {
+            "version": "1.11.0",
+            "releasedAt": "2026-07-27T13:50:06.000Z",
+            "notes": "Heatmap wallets: Polymarket all-time P/L per trader (not app-user), Address|P/L column order; open/close icon, blue Wallets highlight, disable other color cards while open; address link icons; sort spinner/alignment polish; docs updated."
+        },
+        {
+            "version": "1.10.0",
+            "releasedAt": "2026-07-27T13:06:25.000Z",
+            "notes": "Heatmap wallets list: top 100 by sightings with I WON/I LOST per user, sortable columns, Polymarket profile links; store per-window traders; 30-day idle wallet prune; Settings Credentials tab; Replay health recovery and UI polish; docs updated."
+        },
+        {
+            "version": "1.9.0",
+            "releasedAt": "2026-07-27T04:04:19.000Z",
+            "notes": "Heatmap/Replay keep latest UTC weekdayÔøΩ?ÔøΩ?√¢ÔøΩ?ÔøΩÔøΩ?ÔøΩhour only ÔøΩ?¬¢√¢ÔøΩ??¬¨√¢ÔøΩ?ÔøΩ¬ù new recordings override that hour; missed hours keep last week. Disk retention ~14 days. Docs updated."
+        },
+        {
+            "version": "1.8.0",
+            "releasedAt": "2026-07-26T21:02:59.000Z",
+            "notes": "Live fill-success % (buys+sells, rolling 7 days) on Market ÔøΩ?¬¢√¢ÔøΩ?ÔøΩ¬†√¢ÔøΩ?ÔøΩÔøΩ?ÔøΩ Trade with feed latency; Replay Fill success (%) input with per-attempt random fills, prefills from live; Simulator footer expands for Replay + inputs; docs updated."
+        },
+        {
+            "version": "1.7.0",
+            "releasedAt": "2026-07-26T19:50:48.000Z",
+            "notes": "Simulator Replay latency (ms) on Schedule; latency/GTD delay applied in the sim engine; Heroku live app proxies Replay (placements, setups, latency) to SCHEDULE_REPLAY_SERVICE_URL and streams card results back; No Data cards, header range spinner, week fill; schedule docs updated."
+        },
+        {
+            "version": "1.6.1",
+            "releasedAt": "2026-07-26T17:36:00.000Z",
+            "notes": "Fix schedule Replay: match Mongo recorded windows, derive Chainlink assetGap, harden SSE stats streaming, and avoid Dropbox tick-read stalls so weekend cards can finish; schedule docs note local ticks vs heatmap."
+        },
+        {
+            "version": "1.6.0",
+            "releasedAt": "2026-07-26T13:54:17.901Z",
+            "notes": "Unify recording and Replay in one app: per-market Recording toggle on Market ÔøΩ?¬¢√¢ÔøΩ?ÔøΩ¬†√¢ÔøΩ?ÔøΩÔøΩ?ÔøΩ Trade; ticks/windows under DATA_DIR; schedule Replay runs in-process or via SCHEDULE_REPLAY_SERVICE_URL worker; drop zip archives (delete data older than 7 days); docs updated for live vs recorder roles."
+        },
+        {
+            "version": "1.5.5",
+            "releasedAt": "2026-07-26T12:17:01.143Z",
+            "notes": "Schedule workspace polish: Live/Demo switcher with sliding handle and Replay screen border; hide Add setup on Heatmap; Replay run button matches Add setup and only shows in Demo; fix Replay card move/delete; docs updated."
+        },
+        {
+            "version": "1.5.4",
+            "releasedAt": "2026-07-25T04:32:00.000Z",
+            "notes": "Fix: Market P/L no longer keeps false wins after a market resolves to a loss; confirmed win/loss is re-checked against Polymarket; fees use trade USDC notional when available; market docs clarify P/L vs wallet cash."
+        },
+        {
+            "version": "1.5.3",
+            "releasedAt": "2026-07-24T14:37:00.000Z",
+            "notes": "Position cards show times in UTC (matching the schedule board) and display the buy fill immediately while the trade is still pending confirmation."
+        },
+        {
+            "version": "1.5.2",
+            "releasedAt": "2026-07-24T13:31:00.000Z",
+            "notes": "Fix: header Market totals now render reliably (in-flight fetches are coalesced and late responses still display); stats range selection is no longer forced when switching pages; legacy btc_5m stat events normalized to btc-5m."
+        },
+        {
+            "version": "1.5.1",
+            "releasedAt": "2026-07-23T07:46:55.000Z",
+            "notes": "Header Market range is all-time for the selected series; empty stats show 0 / +$0.00 instead of dashes; schedule docs updated."
+        },
+        {
+            "version": "1.5.0",
+            "releasedAt": "2026-07-22T17:34:26.000Z",
+            "notes": "Gap vs PTB First and Both (same rules for FAK and GTD); setup delete and locked schedule-card removal confirmations; docs updates."
+        },
+        {
+            "version": "1.4.1",
+            "releasedAt": "2026-07-22T13:30:32.925Z",
+            "notes": "Schedule setups list scrolls when cards overflow, using the same thin scrollbar as the log panel."
+        },
+        {
+            "version": "1.4.0",
+            "releasedAt": "2026-07-22T12:59:38.000Z",
+            "notes": "Schedule Replay mode: separate setups and placements from Live, Live/Replay switcher, Replay run button (service URL stub), and docs for Replay."
+        },
+        {
+            "version": "1.3.2",
+            "releasedAt": "2026-07-22T11:44:57.745Z",
+            "notes": "Shorter product docs; Docs/Versions no longer flash Market on refresh; Poly Replay title and App label stay stable; docs section hover no longer shifts layout."
+        },
+        {
+            "version": "1.3.1",
+            "releasedAt": "2026-07-22T10:51:10.450Z",
+            "notes": "Settings button and top bar height matched across Market/Schedule/Settings and Docs/Versions."
+        },
+        {
+            "version": "1.3.0",
+            "releasedAt": "2026-07-22T10:38:01.071Z",
+            "notes": "GTD resting buys cancel ~3s before phase end and the next phase places without waiting on cancel; docs section layout/hover polish; Settings stays available on Docs/Versions when signed in."
+        },
+        {
+            "version": "1.2.1",
+            "releasedAt": "2026-07-22T09:34:00.000Z",
+            "notes": "Settings Documentation card moved to the top as a single-row label + Open control."
+        },
+        {
+            "version": "1.2.0",
+            "releasedAt": "2026-07-22T09:25:00.000Z",
+            "notes": "Docs & Versions as /docs and /version routes; setups/phases and information-flow docs with UI demos and flow diagrams; docs search; Settings link to documentation; signed-in Back control; docs permission Cursor rules."
+        },
+        {
+            "version": "1.1.0",
+            "releasedAt": "2026-07-22T07:14:00.000Z",
+            "notes": "Homepage Main / Docs / Versions tabs; right-column auth layout; Markdown product docs under public/docs; versions changelog; Cursor rules for devÔøΩ?¬¢√¢ÔøΩ?ÔøΩ¬†√¢ÔøΩ?ÔøΩÔøΩ?ÔøΩmain workflow."
+        },
+        {
+            "version": "1.0.0",
+            "releasedAt": "2026-07-01T00:00:00.000Z",
+            "notes": "Initial Poly Replay app: auth, Market, Schedule / Heatmap, Settings, and live/demo trading."
+        }
+    ]
 }

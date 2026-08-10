@@ -408,6 +408,19 @@ export async function upsertTradingStatEvent(
   return out;
 }
 
+/** Delete settled-stat rows by card id (Positions Clear). */
+export async function deleteTradingStatEventsByCardIds(
+  userId: string,
+  cardIds: string[],
+): Promise<number> {
+  await ensureReady();
+  const ids = [...new Set(cardIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (ids.length === 0) return 0;
+  const col = await eventsCollection();
+  const result = await col.deleteMany({ userId, cardId: { $in: ids } });
+  return result.deletedCount ?? 0;
+}
+
 export async function listTradingStatEvents(
   userId: string,
   options: {
