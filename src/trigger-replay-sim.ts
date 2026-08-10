@@ -98,8 +98,19 @@ type Rt = {
   /** Realized P/L from partial exits before the round-trip is fully closed. */
   realizedPl: number;
   buyReadyAtMs: number | null;
+  /** Delayed FAK/FOK exit (feed latency); GTD sells fire with latency 0. */
+  exitReadyAtMs: number | null;
+  exitReason: "tp" | "sl" | null;
   stats: TriggerReplayStat;
 };
+
+function isBuyGtd(def: ReplayTriggerDef): boolean {
+  return (
+    def.buyOrderType === "GTD" &&
+    def.durationMs === 0 &&
+    def.startMode === "price"
+  );
+}
 
 /** Absolute Price/Range ¢ — snap to 0.1¢ steps. */
 function clampCents(raw: unknown, fallback: number): number {
@@ -459,7 +470,7 @@ function startConditionMet(def: ReplayTriggerDef, currentCents: number): boolean
 }
 
 /**
- * Buy GTD: no gap → both UP and DOWN (first Ask ≤ Price fills; sibling unused in sim).
+ * Buy GTD: no gap → both UP and DOWN (Ask ≤ Price; try each side until a fill).
  * Any gap → GTD not allowed (normalize coerces to FOK); empty sides.
  */
 function gtdDesiredSides(
@@ -488,6 +499,11 @@ function endConditionMet(def: ReplayTriggerDef, startCents: number, endCents: nu
 
 /** Buy Ask band (¢) — same diagram band as the fire start/end condition. */
 function buyAskBandCents(def: ReplayTriggerDef): { lowCents: number; highCents: number } {
+  // Buy GTD: resting limit — fill when Ask ≤ Price (any ask at or below the limit).
+  if (isBuyGtd(def)) {
+    const p = clampCents(def.startPriceCents, 50);
+    return { lowCents: 0, highCents: p };
+  }
   const useStart = def.durationMs === 0 || def.endMode === "change-side";
   if (useStart) {
     if (def.startMode === "price") {
@@ -550,8 +566,20 @@ export class TriggerReplayRaceSession {
       positionCost: 0,
       realizedPl: 0,
       buyReadyAtMs: null,
+      exitReadyAtMs: null,
+      exitReason: null,
       stats: emptyStat(def),
     }));
+  }
+
+  /** Feed latency for taker buys; Buy GTD resting limits ignore latency. */
+  private buyLatencyMs(def: ReplayTriggerDef): number {
+    return isBuyGtd(def) ? 0 : this.latency;
+  }
+
+  /** Feed latency for taker sells; Sell GTD resting TP ignores latency. */
+  private sellLatencyMs(def: ReplayTriggerDef): number {
+    return def.sellOrderType === "GTD" ? 0 : this.latency;
   }
 
   isHolding(): boolean {
@@ -618,10 +646,9 @@ export class TriggerReplayRaceSession {
     const durationRaw = Number(def.durationMs);
     const durationMs = Number.isFinite(durationRaw) && durationRaw >= 0 ? durationRaw : 5000;
     const priceSide = "buy" as const;
-    const buyGtd =
-      def.buyOrderType === "GTD" && durationMs === 0 && def.startMode === "price";
+    const buyGtd = isBuyGtd(def);
 
-    // Buy GTD: rest at Price from Apply-window start; fill when Ask ≤ Price.
+    // Buy GTD: rest at Price; fill when Ask ≤ Price (no feed latency). Try each side.
     if (buyGtd) {
       const sides = gtdDesiredSides(def, tick);
       const priceCents = clampCents(def.startPriceCents, 50);
@@ -631,11 +658,10 @@ export class TriggerReplayRaceSession {
         rt.side = side;
         rt.watchStartedAtMs = tick.tMs;
         rt.startPriceCents = priceCents;
-        rt.buyReadyAtMs = tick.tMs + this.latency;
-        if (tick.tMs >= rt.buyReadyAtMs) {
-          this.tryBuy(rt, tick, slotBusy);
-        }
-        break;
+        rt.buyReadyAtMs = tick.tMs; // Buy GTD: no latency
+        this.tryBuy(rt, tick, slotBusy);
+        if (rt.phase === "open") return;
+        // Fill failed (size/band) — try the other side; do not stick on UP-only.
       }
       return;
     }
@@ -656,7 +682,7 @@ export class TriggerReplayRaceSession {
         trendOk &&
         endConditionMet(def, Number(rt.startPriceCents), endCents)
       ) {
-        rt.buyReadyAtMs = tick.tMs + this.latency;
+        rt.buyReadyAtMs = tick.tMs + this.buyLatencyMs(def);
         if (tick.tMs >= rt.buyReadyAtMs) {
           this.tryBuy(rt, tick, slotBusy);
         }
@@ -685,7 +711,7 @@ export class TriggerReplayRaceSession {
         : null;
       if (durationMs === 0) {
         // Immediate fire: start Range/Price + start gap only (no end wait).
-        rt.buyReadyAtMs = tick.tMs + this.latency;
+        rt.buyReadyAtMs = tick.tMs + this.buyLatencyMs(def);
         if (tick.tMs >= rt.buyReadyAtMs) {
           this.tryBuy(rt, tick, slotBusy);
         }
@@ -731,12 +757,12 @@ export class TriggerReplayRaceSession {
       rt.startPriceCents = null;
       return;
     }
-    // Only walk asks inside the user band; share-capped (FAK may partial).
+    // Only walk asks inside the user band; share-capped (FAK / Buy GTD may partial).
     const asks = bookAsks.filter(
       (l) => l.price >= minAsk - 1e-9 && l.price <= maxAsk + 1e-9,
     );
     const buyFill =
-      rt.def.buyOrderType === "FAK"
+      rt.def.buyOrderType === "FAK" || isBuyGtd(rt.def)
         ? walkAsksAvailable(asks, rt.def.buyShares, true, undefined, maxAsk)
         : walkAsks(asks, rt.def.buyShares, true);
     if (!buyFill || buyFill.shares <= 0) {
@@ -795,13 +821,29 @@ export class TriggerReplayRaceSession {
     const hitTp = tpEnabled && bid >= tpLevel;
     const hitSl = slEnabled && bid <= slLevel;
     // TP/SL are ¢ offsets from the buy fill; TP fills only use bids at/above that target.
-    if (!hitTp && !hitSl) return;
+    if (!hitTp && !hitSl) {
+      rt.exitReadyAtMs = null;
+      rt.exitReason = null;
+      return;
+    }
     const reason = hitTp ? "tp" : "sl";
+    // Arm exit clock once; Sell GTD uses 0 latency (resting TP), FAK/FOK wait feed latency.
+    if (rt.exitReadyAtMs == null || rt.exitReason !== reason) {
+      rt.exitReason = reason;
+      rt.exitReadyAtMs = tick.tMs + this.sellLatencyMs(rt.def);
+    }
+    if (tick.tMs < rt.exitReadyAtMs) return;
     if (!acceptFillSuccess(this.fillSuccessPct)) {
       // Keep trying on later ticks for FAK-style; for failed roll still retry.
       return;
     }
-    const sellType = rt.def.sellOrderType === "FOK" ? "FOK" : "FAK";
+    // GTD sell TP: limit-style (bids at/above TP). SL / FAK/FOK: book walk as before.
+    const sellType =
+      rt.def.sellOrderType === "FOK"
+        ? "FOK"
+        : rt.def.sellOrderType === "GTD" && reason === "tp"
+          ? "FOK"
+          : "FAK";
     const bids = bidsForSide(tick, rt.side);
     const tpLimit = tpLevel / 100;
     const sellBids =
@@ -845,6 +887,9 @@ export class TriggerReplayRaceSession {
     rt.entryShares = rt.def.buyShares;
     rt.positionCost = 0;
     rt.realizedPl = 0;
+    rt.buyReadyAtMs = null;
+    rt.exitReadyAtMs = null;
+    rt.exitReason = null;
   }
 
   private settleFilled(

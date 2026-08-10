@@ -13256,7 +13256,7 @@ function tickUserTriggers(state) {
           });
         }
       } else {
-        // Demo: fill when Ask is at/below the resting Price on an allowed side.
+        // Demo fallback: Ask ≤ Price; try each side (server Demo is primary on executor).
         for (const side of sides) {
           const ask = triggerAskPrice(state, side);
           if (!Number.isFinite(ask) || ask * 100 > priceCents + 1e-6) continue;
@@ -13264,7 +13264,7 @@ function tickUserTriggers(state) {
           rt.watchStartedAtMs = nowMs;
           rt.startPriceCents = priceCents;
           void openTriggerPosition(trigger, rt, state, side);
-          break;
+          if (rt.phase === "open" || rt.phase === "opening") break;
         }
       }
       continue;
