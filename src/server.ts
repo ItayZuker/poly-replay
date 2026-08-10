@@ -65,6 +65,10 @@ import {
 } from "./db/trading-session-memory-repository.js";
 import { deleteAllPositionCardsForUser } from "./db/position-card-repository.js";
 import {
+  deleteAllTriggerDemoStatsCreditsForUser,
+  deleteTriggerDemoStatsCredits,
+} from "./db/trigger-demo-stats-repository.js";
+import {
   deleteAllTriggerLiveStatsForUser,
   deleteTriggerLiveStats,
   getTriggerLiveStats,
@@ -317,6 +321,7 @@ app.delete("/api/auth/account", async (req, res) => {
       deleteAllPositionCardsForUser(userId),
       deleteAllUserTriggers(userId),
       deleteAllTriggerLiveStatsForUser(userId),
+      deleteAllTriggerDemoStatsCreditsForUser(userId),
     ]);
 
     const deleted = await deleteUserById(oid);
@@ -1541,6 +1546,7 @@ app.delete("/api/triggers/:id", async (req, res) => {
     const ok = await deleteUserTrigger(userId, triggerId);
     if (ok) {
       await deleteTriggerLiveStats(userId, triggerId).catch(() => undefined);
+      await deleteTriggerDemoStatsCredits(userId, triggerId).catch(() => undefined);
       // Demo Positions are owned by the trigger; Trade Positions / stats ledger stay.
       await tradingFor(req)
         .dropDemoPositionCardsForTrigger(triggerId)
