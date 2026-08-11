@@ -363,11 +363,12 @@ export interface SimLastWindow {
   plLabel: "Trade" | "Settlement" | "No trade";
 }
 
+/** Fill latch prices per quote box — oldest first; UI shows newest on the left. */
 export interface SimQuoteLocks {
-  upBuy: number | null;
-  upSell: number | null;
-  downBuy: number | null;
-  downSell: number | null;
+  upBuy: number[];
+  upSell: number[];
+  downBuy: number[];
+  downSell: number[];
 }
 
 export interface SimPublicState {

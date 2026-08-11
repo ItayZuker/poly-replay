@@ -1,6 +1,11 @@
 {
-    "current": "1.68.8",
+    "current": "1.68.9",
     "releases": [
+        {
+            "version": "1.68.9",
+            "releasedAt": "2026-08-11T10:23:56.806Z",
+            "notes": "Buy/Sell quote boxes: live market quote fixed outside scroll; latched fills in a fixed-width handle-only strip; Buy?Sell scroll sync with spacer alignment. Docs updated."
+        },
         {
             "version": "1.68.8",
             "releasedAt": "2026-08-11T08:28:24.156Z",

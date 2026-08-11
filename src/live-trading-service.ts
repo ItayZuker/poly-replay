@@ -639,7 +639,7 @@ function positionCardFromEvent(event: TradingStatEvent): TradingPositionCard | n
 }
 
 function emptyQuoteLocks(): SimQuoteLocks {
-  return { upBuy: null, upSell: null, downBuy: null, downSell: null };
+  return { upBuy: [], upSell: [], downBuy: [], downSell: [] };
 }
 
 /** Quiet period after gap-filter cancel before placing another resting GTD buy. */
@@ -2064,7 +2064,14 @@ export class LiveTradingService {
         this.config.autoTrade && !this.isLiveArmed()
           ? this.autoEngine.getLastWindow()
           : null,
-      quoteLocks: previewMode ? this.autoEngine.getQuoteLocks() : { ...this.quoteLocks },
+      quoteLocks: previewMode
+        ? this.autoEngine.getQuoteLocks()
+        : {
+            upBuy: [...this.quoteLocks.upBuy],
+            upSell: [...this.quoteLocks.upSell],
+            downBuy: [...this.quoteLocks.downBuy],
+            downSell: [...this.quoteLocks.downSell],
+          },
       markers: this.getDisplayMarkers(),
       phaseSetup: phasesVisible ? this.getDisplayPhaseSetup() : null,
       phasesVisible,
@@ -2612,14 +2619,16 @@ export class LiveTradingService {
   }
 
   private lockQuote(side: "up" | "down", leg: "buy" | "sell", price: number): void {
+    if (!Number.isFinite(price)) return;
     const key = leg === "buy" ? (`${side}Buy` as const) : (`${side}Sell` as const);
-    this.quoteLocks[key] = price;
+    // Append oldest→newest; UI reverses so newest is on the left.
+    this.quoteLocks[key] = [...this.quoteLocks[key], price];
   }
 
   /** Clear a quote latch (e.g. resting sell cancelled without a fill). */
   private unlockQuote(side: "up" | "down", leg: "buy" | "sell"): void {
     const key = leg === "buy" ? (`${side}Buy` as const) : (`${side}Sell` as const);
-    this.quoteLocks[key] = null;
+    this.quoteLocks[key] = [];
   }
 
   private addMarker(

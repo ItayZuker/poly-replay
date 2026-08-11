@@ -505,28 +505,110 @@
     return locks;
   }
 
-  /** Newest locked ¢ on the left, older to its right, live quote last. */
-  function setPlayLockedPrices(values, lockedAnchor, pricesOldestFirst) {
+  /** Pad Buy/Sell lists to same length so scroll slots stay aligned. */
+  function alignPlayQuoteLockPair(buyOldestFirst, sellOldestFirst) {
+    const buys = Array.isArray(buyOldestFirst) ? buyOldestFirst : [];
+    const sells = Array.isArray(sellOldestFirst) ? sellOldestFirst : [];
+    const n = Math.max(buys.length, sells.length);
+    const buy = [];
+    const sell = [];
+    for (let i = 0; i < n; i += 1) {
+      buy.push(i < buys.length ? buys[i] : null);
+      sell.push(i < sells.length ? sells[i] : null);
+    }
+    return { buy, sell };
+  }
+
+  function playQuoteLockSlotsSignature(slotsOldestFirst) {
+    return (slotsOldestFirst || [])
+      .map((v) => (v == null || !Number.isFinite(Number(v)) ? "_" : String(Number(v))))
+      .join("|");
+  }
+
+  /** Newest locked ¢ on the left → older (null = spacer). Live market ¢ stays outside. */
+  function setPlayLockedPrices(values, lockedAnchor, slotsOldestFirst) {
+    if (!values || !lockedAnchor) return;
+    const slots = Array.isArray(slotsOldestFirst) ? slotsOldestFirst : [];
+    const sig = playQuoteLockSlotsSignature(slots);
+    const prevSig = values.dataset.quoteLockSig || "";
+    const changed = sig !== prevSig;
+
     for (const el of [...values.querySelectorAll(".quote-locked")]) {
       if (el !== lockedAnchor) el.remove();
     }
-    if (!pricesOldestFirst.length) {
+    if (!slots.length) {
       lockedAnchor.hidden = true;
       lockedAnchor.textContent = "";
+      lockedAnchor.classList.remove("quote-locked-spacer");
       values.classList.remove("quote-has-locked");
+      values.dataset.quoteLockSig = "";
+      if (changed) values.scrollLeft = 0;
       return;
     }
+
     values.classList.add("quote-has-locked");
-    const newestFirst = pricesOldestFirst.slice().reverse();
-    lockedAnchor.hidden = false;
-    lockedAnchor.textContent = fmtPlayQuote(newestFirst[0]);
+    values.dataset.quoteLockSig = sig;
+    const newestFirst = slots.slice().reverse();
+    const applySlot = (el, price) => {
+      const isSpacer = price == null || !Number.isFinite(Number(price));
+      el.hidden = false;
+      el.classList.toggle("quote-locked-spacer", isSpacer);
+      el.textContent = isSpacer ? "" : fmtPlayQuote(price);
+      if (isSpacer) el.setAttribute("aria-hidden", "true");
+      else el.removeAttribute("aria-hidden");
+    };
+    applySlot(lockedAnchor, newestFirst[0]);
     let prev = lockedAnchor;
     for (let i = 1; i < newestFirst.length; i += 1) {
       const span = document.createElement("span");
       span.className = "quote-locked";
-      span.textContent = fmtPlayQuote(newestFirst[i]);
+      applySlot(span, newestFirst[i]);
       prev.after(span);
       prev = span;
+    }
+    if (changed) {
+      const snapLeft = () => {
+        values.scrollLeft = 0;
+      };
+      snapLeft();
+      requestAnimationFrame(snapLeft);
+    }
+  }
+
+  const PLAY_QUOTE_LOCK_SCROLL_PAIRS = [
+    ["play-up-buy-locked", "play-up-sell-locked"],
+    ["play-down-buy-locked", "play-down-sell-locked"],
+  ];
+  let playQuoteLockScrollSyncing = false;
+  let playQuoteLockScrollPairsBound = false;
+
+  function bindPlayQuoteLockScrollPairs() {
+    if (playQuoteLockScrollPairsBound) return;
+    const pairs = [];
+    for (const [aId, bId] of PLAY_QUOTE_LOCK_SCROLL_PAIRS) {
+      const aLocked = $(aId);
+      const bLocked = $(bId);
+      const a = aLocked?.closest(".quote-values") || aLocked?.parentElement;
+      const b = bLocked?.closest(".quote-values") || bLocked?.parentElement;
+      if (!a || !b) return;
+      pairs.push([a, b]);
+    }
+    playQuoteLockScrollPairsBound = true;
+    for (const [a, b] of pairs) {
+      const sync = (from, to) => {
+        from.addEventListener(
+          "scroll",
+          () => {
+            if (playQuoteLockScrollSyncing) return;
+            playQuoteLockScrollSyncing = true;
+            to.scrollLeft = from.scrollLeft;
+            playQuoteLockScrollSyncing = false;
+          },
+          { passive: true },
+        );
+      };
+      sync(a, b);
+      sync(b, a);
     }
   }
 
@@ -546,7 +628,7 @@
       const box = $(cfg.boxId);
       const locked = $(cfg.lockedId);
       const live = $(cfg.liveId);
-      const values = locked?.parentElement;
+      const values = locked?.closest(".quote-values") || locked?.parentElement;
       if (live) live.textContent = "—";
       if (values && locked) setPlayLockedPrices(values, locked, []);
       else if (locked) {
@@ -570,20 +652,28 @@
     const samples = bookQuoteCache.get(win.windowStart) || [];
     const liveSample = bookQuoteAtPlayhead(samples);
     const locks = quoteLockListsAtPlayhead(win);
+    const upPair = alignPlayQuoteLockPair(locks.upBuy, locks.upSell);
+    const downPair = alignPlayQuoteLockPair(locks.downBuy, locks.downSell);
+    const aligned = {
+      upBuy: upPair.buy,
+      upSell: upPair.sell,
+      downBuy: downPair.buy,
+      downSell: downPair.sell,
+    };
+    bindPlayQuoteLockScrollPairs();
     for (const cfg of PLAY_QUOTE_BOXES) {
       const box = $(cfg.boxId);
       const locked = $(cfg.lockedId);
       const live = $(cfg.liveId);
-      const values = locked?.parentElement;
+      const values = locked?.closest(".quote-values") || locked?.parentElement;
       if (!box || !locked || !live || !values) continue;
 
       live.textContent = fmtPlayQuote(liveSample?.[cfg.liveKey]);
-      // Keep live last after dynamic locked spans.
-      if (live.parentElement === values) values.appendChild(live);
 
-      const prices = locks[cfg.lockKey] || [];
-      setPlayLockedPrices(values, locked, prices);
-      if (prices.length > 0) {
+      const slots = aligned[cfg.lockKey] || [];
+      setPlayLockedPrices(values, locked, slots);
+      const hasRealLock = slots.some((p) => p != null && Number.isFinite(Number(p)));
+      if (hasRealLock) {
         box.classList.add(cfg.tone === "up" ? "quote-triggered-up" : "quote-triggered-down");
         box.classList.add("quote-box-latched");
         box.classList.remove("quote-box-pressing");

@@ -1991,14 +1991,153 @@ function updateBookPanel(state) {
   renderBookLadder(downEl, state?.noAsks, state?.noBids);
 }
 
+/** Normalize quoteLocks value: array (oldest→newest) or legacy single number. */
+function normalizeQuoteLockPrices(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map(Number).filter((n) => Number.isFinite(n));
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? [n] : [];
+}
+
+/**
+ * Pad Buy/Sell lock lists to the same length (oldest→newest) so scroll slots align.
+ * Extra buys (no sell yet) get sell spacers; extra sells get buy spacers.
+ */
+function alignQuoteLockPair(buyOldestFirst, sellOldestFirst) {
+  const buys = Array.isArray(buyOldestFirst) ? buyOldestFirst : [];
+  const sells = Array.isArray(sellOldestFirst) ? sellOldestFirst : [];
+  const n = Math.max(buys.length, sells.length);
+  const buy = [];
+  const sell = [];
+  for (let i = 0; i < n; i += 1) {
+    buy.push(i < buys.length ? buys[i] : null);
+    sell.push(i < sells.length ? sells[i] : null);
+  }
+  return { buy, sell };
+}
+
+function quoteLockSlotsSignature(slotsOldestFirst) {
+  return (slotsOldestFirst || [])
+    .map((v) => (v == null || !Number.isFinite(Number(v)) ? "_" : String(Number(v))))
+    .join("|");
+}
+
+/** Newest locked ¢ on the left → older (null = spacer). Live market ¢ stays outside .quote-values. */
+function setQuoteLockedPrices(values, lockedAnchor, slotsOldestFirst) {
+  if (!values || !lockedAnchor) return;
+  const slots = Array.isArray(slotsOldestFirst) ? slotsOldestFirst : [];
+  const sig = quoteLockSlotsSignature(slots);
+  const prevSig = values.dataset.quoteLockSig || "";
+  const changed = sig !== prevSig;
+
+  for (const el of [...values.querySelectorAll(".quote-locked")]) {
+    if (el !== lockedAnchor) el.remove();
+  }
+  if (!slots.length) {
+    lockedAnchor.hidden = true;
+    lockedAnchor.textContent = "";
+    lockedAnchor.classList.remove("quote-locked-spacer");
+    values.classList.remove("quote-has-locked");
+    values.dataset.quoteLockSig = "";
+    if (changed) values.scrollLeft = 0;
+    return;
+  }
+
+  values.classList.add("quote-has-locked");
+  values.dataset.quoteLockSig = sig;
+  const newestFirst = slots.slice().reverse();
+  const applySlot = (el, price) => {
+    const isSpacer = price == null || !Number.isFinite(Number(price));
+    el.hidden = false;
+    el.classList.toggle("quote-locked-spacer", isSpacer);
+    el.textContent = isSpacer ? "" : fmtQuote(price);
+    if (isSpacer) el.setAttribute("aria-hidden", "true");
+    else el.removeAttribute("aria-hidden");
+  };
+  applySlot(lockedAnchor, newestFirst[0]);
+  let prev = lockedAnchor;
+  for (let i = 1; i < newestFirst.length; i += 1) {
+    const span = document.createElement("span");
+    span.className = "quote-locked";
+    applySlot(span, newestFirst[i]);
+    prev.after(span);
+    prev = span;
+  }
+  if (changed) {
+    const snapLeft = () => {
+      values.scrollLeft = 0;
+    };
+    snapLeft();
+    requestAnimationFrame(snapLeft);
+  }
+}
+
+const QUOTE_LOCK_SCROLL_PAIRS = [
+  ["up-buy-locked", "up-sell-locked"],
+  ["down-buy-locked", "down-sell-locked"],
+];
+let quoteLockScrollSyncing = false;
+let quoteLockScrollPairsBound = false;
+
+function quoteValuesElFromLockedId(lockedId) {
+  const locked = $(lockedId);
+  return locked?.closest(".quote-values") || locked?.parentElement || null;
+}
+
+function bindQuoteLockScrollPairs() {
+  if (quoteLockScrollPairsBound) return;
+  for (const [aId, bId] of QUOTE_LOCK_SCROLL_PAIRS) {
+    const a = quoteValuesElFromLockedId(aId);
+    const b = quoteValuesElFromLockedId(bId);
+    if (!a || !b) return;
+  }
+  quoteLockScrollPairsBound = true;
+  for (const [aId, bId] of QUOTE_LOCK_SCROLL_PAIRS) {
+    const a = quoteValuesElFromLockedId(aId);
+    const b = quoteValuesElFromLockedId(bId);
+    const sync = (from, to) => {
+      from.addEventListener(
+        "scroll",
+        () => {
+          if (quoteLockScrollSyncing) return;
+          quoteLockScrollSyncing = true;
+          to.scrollLeft = from.scrollLeft;
+          quoteLockScrollSyncing = false;
+        },
+        { passive: true },
+      );
+    };
+    sync(a, b);
+    sync(b, a);
+  }
+}
+
 function updateQuoteBoxes(state) {
   const trading = tradingState(state);
   const locks = trading?.quoteLocks ?? state?.sim?.quoteLocks ?? {};
+  const upPair = alignQuoteLockPair(
+    normalizeQuoteLockPrices(locks.upBuy),
+    normalizeQuoteLockPrices(locks.upSell),
+  );
+  const downPair = alignQuoteLockPair(
+    normalizeQuoteLockPrices(locks.downBuy),
+    normalizeQuoteLockPrices(locks.downSell),
+  );
+  const aligned = {
+    upBuy: upPair.buy,
+    upSell: upPair.sell,
+    downBuy: downPair.buy,
+    downSell: downPair.sell,
+  };
+
+  bindQuoteLockScrollPairs();
+
   for (const cfg of QUOTE_BOXES) {
     const box = $(cfg.boxId);
     const locked = $(cfg.lockedId);
     const live = $(cfg.liveId);
-    const values = locked?.parentElement;
+    const values = locked?.closest(".quote-values") || locked?.parentElement;
     if (!box || !locked || !live || !values) continue;
 
     live.textContent = fmtQuote(cfg.livePrice(state));
@@ -2008,17 +2147,13 @@ function updateQuoteBoxes(state) {
     box.classList.remove("quote-box-pressing", "quote-box-pending");
     box.setAttribute("aria-disabled", "true");
 
-    const lockedPrice = locks[cfg.lockKey];
-    if (lockedPrice != null && Number.isFinite(lockedPrice)) {
-      locked.hidden = false;
-      locked.textContent = fmtQuote(lockedPrice);
-      values.classList.add("quote-has-locked");
+    const slots = aligned[cfg.lockKey] || [];
+    setQuoteLockedPrices(values, locked, slots);
+    const hasRealLock = slots.some((p) => p != null && Number.isFinite(Number(p)));
+    if (hasRealLock) {
       box.classList.add(cfg.tone === "up" ? "quote-triggered-up" : "quote-triggered-down");
       box.classList.add("quote-box-latched");
     } else {
-      locked.hidden = true;
-      locked.textContent = "";
-      values.classList.remove("quote-has-locked");
       box.classList.remove("quote-triggered-up", "quote-triggered-down", "quote-box-latched");
     }
   }

@@ -227,10 +227,10 @@ export class SimulatorEngine {
   private windowEndSnapshot: WindowCloseSnapshot | null = null;
   private lastWindow: SimLastWindow | null = null;
   private quoteLocks: SimQuoteLocks = {
-    upBuy: null,
-    upSell: null,
-    downBuy: null,
-    downSell: null,
+    upBuy: [],
+    upSell: [],
+    downBuy: [],
+    downSell: [],
   };
   /** After gap-filter cancels, wait before re-placing to avoid tick thrash. */
   private gtdRepressUntilMs = 0;
@@ -242,7 +242,12 @@ export class SimulatorEngine {
   }
 
   getQuoteLocks(): SimQuoteLocks {
-    return { ...this.quoteLocks };
+    return {
+      upBuy: [...this.quoteLocks.upBuy],
+      upSell: [...this.quoteLocks.upSell],
+      downBuy: [...this.quoteLocks.downBuy],
+      downSell: [...this.quoteLocks.downSell],
+    };
   }
 
   getWindowResult(): SimLastWindow | null {
@@ -370,18 +375,18 @@ export class SimulatorEngine {
   }
 
   private resetQuoteLocks(): void {
-    this.quoteLocks = { upBuy: null, upSell: null, downBuy: null, downSell: null };
+    this.quoteLocks = { upBuy: [], upSell: [], downBuy: [], downSell: [] };
   }
 
   private lockQuoteBox(side: Side, leg: "buy" | "sell", price: number): void {
     if (!Number.isFinite(price)) return;
     if (side === "up") {
-      if (leg === "buy") this.quoteLocks.upBuy = price;
-      else this.quoteLocks.upSell = price;
+      if (leg === "buy") this.quoteLocks.upBuy = [...this.quoteLocks.upBuy, price];
+      else this.quoteLocks.upSell = [...this.quoteLocks.upSell, price];
       return;
     }
-    if (leg === "buy") this.quoteLocks.downBuy = price;
-    else this.quoteLocks.downSell = price;
+    if (leg === "buy") this.quoteLocks.downBuy = [...this.quoteLocks.downBuy, price];
+    else this.quoteLocks.downSell = [...this.quoteLocks.downSell, price];
   }
 
   private resetRuntime(state: LiveWindowState): void {
