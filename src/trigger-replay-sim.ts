@@ -817,11 +817,11 @@ export class TriggerReplayRaceSession {
     const slEnabled = !isExitDisabled(slOff);
     if (!tpEnabled && !slEnabled) return;
     const tpLevel = Math.min(100, entryCents + tpOff);
-    // SL is a real ¢ drop from fill — do not floor to 0¢ (buy @ 1¢ + SL 10 would
-    // otherwise fire immediately whenever Bid is 0).
+    // SL only if buy price (¢) > SL offset (e.g. SL 10 needs buy > 10¢). Never floor to 0¢.
+    const slActive = slEnabled && entryCents > slOff;
     const slLevel = entryCents - slOff;
     const hitTp = tpEnabled && bid >= tpLevel;
-    const hitSl = slEnabled && bid <= slLevel;
+    const hitSl = slActive && bid <= slLevel;
     // TP/SL are ¢ offsets from the buy fill; TP fills only use bids at/above that target.
     if (!hitTp && !hitSl) {
       rt.exitReadyAtMs = null;

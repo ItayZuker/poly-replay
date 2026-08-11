@@ -5583,10 +5583,11 @@ function triggerExitTargetsFromFill(entryPriceDollars, takeProfitOffsetCents, st
   if (!Number.isFinite(entryCents)) return null;
   const tpOff = clampTriggerOffsetCents(takeProfitOffsetCents, 10);
   const slOff = clampTriggerOffsetCents(stopLossOffsetCents, 10);
+  // SL only when buy (¢) > SL offset (e.g. SL 10 needs buy > 10¢); otherwise ignored.
+  const slActive = entryCents > slOff;
   return {
     tpCents: Math.min(TRIGGER_PRICE_MAX_CENTS, entryCents + tpOff),
-    // May be negative when offset > entry — SL then never hits on a real Bid (≥ 0).
-    slCents: entryCents - slOff,
+    slCents: slActive ? entryCents - slOff : null,
   };
 }
 
@@ -12883,7 +12884,12 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
       rt.takeProfitCents,
       rt.stopLossCents,
     );
-    if (targets && bidCents <= targets.slCents) {
+    if (
+      targets &&
+      targets.slCents != null &&
+      Number.isFinite(targets.slCents) &&
+      bidCents <= targets.slCents
+    ) {
       await forceTriggerMarketSell(trigger, rt, state, "sl");
     }
     return;
@@ -12902,7 +12908,11 @@ async function maybeExitTriggerPosition(trigger, rt, state) {
   );
   if (!targets) return;
   const hitTp = tpEnabled && bidCents >= targets.tpCents;
-  const hitSl = slEnabled && bidCents <= targets.slCents;
+  const hitSl =
+    slEnabled &&
+    targets.slCents != null &&
+    Number.isFinite(targets.slCents) &&
+    bidCents <= targets.slCents;
   if (!hitTp && !hitSl) return;
 
   const reason = hitTp ? "tp" : "sl";
