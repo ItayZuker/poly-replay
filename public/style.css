@@ -9633,6 +9633,26 @@ body.is-column-resizing * {
   transition: background-color 0.12s ease, opacity 0.12s ease;
 }
 
+/* Allow scrolling the latched-price strip (parent is pointer-events: none). */
+.quote-box.quote-box-display .quote-values,
+.schedule-play-quote-row .quote-box .quote-values {
+  pointer-events: auto;
+  cursor: default;
+}
+
+/* Live market Ask/Bid stays fixed on the right; only latched fills scroll. */
+.quote-prices {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .quote-box:not(.quote-box-display):not(.quote-box-disabled):not(.quote-box-latched):hover {
   transform: translateY(-4px);
   box-shadow:
@@ -9911,43 +9931,100 @@ body.is-column-resizing * {
   color: inherit;
 }
 
+/*
+ * Scrollable latched fills only (fixed width). Live market ¢ sits outside in .quote-prices.
+ * Newest locked on the left; scrollbar shows thumb/handle only (no track).
+ */
 .quote-values {
-  position: relative;
-  margin-left: auto;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  flex: 0 0 0;
   align-self: stretch;
-  width: 3.25rem;
+  box-sizing: border-box;
+  width: 0;
+  max-width: 0;
+  min-width: 0;
   min-height: 1.2em;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Firefox: hide track, keep thin thumb */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 148, 158, 0.9) transparent;
 }
 
 .quote-values.quote-has-locked {
-  width: 6.75rem;
+  flex: 0 0 3.5rem;
+  width: 3.5rem;
+  max-width: 3.5rem;
 }
 
-.quote-live {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+/* Chromium/WebKit: thumb/handle only (no track / buttons / corner). */
+.quote-values::-webkit-scrollbar {
+  height: 3px;
+  background: transparent;
+}
+
+.quote-values::-webkit-scrollbar-track,
+.quote-values::-webkit-scrollbar-track-piece {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.quote-values::-webkit-scrollbar-thumb {
+  background: rgba(139, 148, 158, 0.9);
+  border: none;
+  border-radius: 3px;
+  min-width: 12px;
+}
+
+.quote-values::-webkit-scrollbar-button,
+.quote-values::-webkit-scrollbar-corner {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+.quote-live,
+.quote-locked {
+  position: static;
+  top: auto;
+  right: auto;
+  transform: none;
   width: 3.25rem;
+  flex: 0 0 3.25rem;
   text-align: right;
+  margin-left: 0;
+}
+
+.quote-prices > .quote-live {
+  flex: 0 0 3.25rem;
 }
 
 .quote-locked {
-  position: absolute;
-  right: 3.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3.25rem;
-  text-align: right;
   font-variant-numeric: tabular-nums;
   opacity: 0.9;
   padding-right: 0.35rem;
   border-right: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+/* Empty slot so Buy/Sell latch strips stay column-aligned. */
+.quote-locked.quote-locked-spacer {
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
 .quote-locked[hidden] {
-  display: none;
+  display: none !important;
 }
 
 .quote-box.quote-triggered-up {
@@ -10968,35 +11045,7 @@ body.is-column-resizing * {
   box-shadow: none;
 }
 
-/* Stack multiple fill locks: newest … oldest, then live (flex, not single absolute slot). */
-.schedule-play-quote-row .quote-values {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0;
-  width: auto;
-  min-width: 3.25rem;
-}
-
-.schedule-play-quote-row .quote-values.quote-has-locked {
-  width: auto;
-}
-
-.schedule-play-quote-row .quote-live,
-.schedule-play-quote-row .quote-locked {
-  position: static;
-  top: auto;
-  right: auto;
-  transform: none;
-  width: 3.25rem;
-  flex-shrink: 0;
-}
-
-.schedule-play-quote-row .quote-locked {
-  padding-right: 0.35rem;
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
-}
+/* Open Replay: same fixed scroll strip + pinned live quote as Market. */
 
 .schedule-play-modal.is-hits-view .schedule-play-metrics {
   display: none;
