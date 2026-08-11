@@ -1002,6 +1002,8 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
           typeof d?.triggerName === "string" && d.triggerName.trim()
             ? String(d.triggerName).trim().slice(0, 120)
             : undefined;
+        const windowStart = Math.floor(Number(d?.windowStart));
+        const windowEnd = Math.floor(Number(d?.windowEnd));
         return {
           triggerId,
           sides: sides as Array<"up" | "down">,
@@ -1010,6 +1012,8 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
           ...(sellOrderType ? { sellOrderType } : {}),
           ...(Number.isFinite(takeProfitCents) ? { takeProfitCents } : {}),
           ...(triggerName ? { triggerName } : {}),
+          ...(Number.isFinite(windowStart) && windowStart > 0 ? { windowStart } : {}),
+          ...(Number.isFinite(windowEnd) && windowEnd > 0 ? { windowEnd } : {}),
         };
       })
       .filter(Boolean);

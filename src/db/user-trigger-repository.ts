@@ -78,6 +78,8 @@ export interface UserTriggerRecord {
   buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: "FAK" | "FOK" | "GTD";
   windowArea: { start: number; end: number };
+  /** Ms before Apply start to place Buy GTD (0 = at Apply start). */
+  gtdPlaceOffsetMs: number;
   runMode: "demo" | "trade";
   paused: boolean;
   demoStats: TriggerDemoStats;
@@ -324,6 +326,12 @@ export function normalizeUserTriggerInput(
           ? "FAK"
           : existing?.sellOrderType || "FAK",
     windowArea: normalizeWindowArea(o.windowArea ?? existing?.windowArea),
+    gtdPlaceOffsetMs: (() => {
+      const n = Math.floor(Number(o.gtdPlaceOffsetMs));
+      if (Number.isFinite(n) && n >= 0) return Math.min(n, 1_000_000_000);
+      const prev = Math.floor(Number(existing?.gtdPlaceOffsetMs));
+      return Number.isFinite(prev) && prev >= 0 ? Math.min(prev, 1_000_000_000) : 0;
+    })(),
     runMode: o.runMode === "trade" ? "trade" : "demo",
     paused: o.paused !== false,
     demoStats: normalizeDemoStats(o.demoStats ?? existing?.demoStats),

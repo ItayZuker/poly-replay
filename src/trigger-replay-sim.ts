@@ -54,6 +54,8 @@ export interface ReplayTriggerDef {
   buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: TriggerSellOrderType;
   windowArea: { start: number; end: number };
+  /** Ms before Apply start to arm Buy GTD (0 = at Apply start). */
+  gtdPlaceOffsetMs: number;
 }
 
 export interface TriggerReplayStat {
@@ -249,6 +251,11 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price" && !hasPtbGap)
       ? "FOK"
       : buyOrderTypeRaw;
+  const gtdPlaceOffsetRaw = Math.floor(Number(o.gtdPlaceOffsetMs));
+  const gtdPlaceOffsetMs =
+    Number.isFinite(gtdPlaceOffsetRaw) && gtdPlaceOffsetRaw >= 0
+      ? Math.min(gtdPlaceOffsetRaw, 1_000_000_000)
+      : 0;
   return {
     id,
     name: typeof o.name === "string" ? o.name : undefined,
@@ -283,6 +290,7 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     buyOrderType,
     sellOrderType,
     windowArea: { start: areaStart, end: areaEnd },
+    gtdPlaceOffsetMs,
   };
 }
 
@@ -527,6 +535,22 @@ function inApplyWindow(tick: ReplayTickDocument, windowStart: number, windowEnd:
   return frac >= area.start && frac <= area.end;
 }
 
+/** Buy GTD place window: Apply start − offset → Apply end (offset 0 = Apply start). */
+function inBuyGtdPlaceWindow(
+  tick: ReplayTickDocument,
+  windowStart: number,
+  windowEnd: number,
+  area: { start: number; end: number },
+  offsetMs: number,
+): boolean {
+  const duration = Math.max(1, windowEnd - windowStart);
+  const applyStart = windowStart + area.start * duration;
+  const applyEnd = windowStart + area.end * duration;
+  const offsetSec = Math.max(0, Number(offsetMs) || 0) / 1000;
+  const placeAt = applyStart - offsetSec;
+  return tick.t + 1e-9 >= placeAt && tick.t <= applyEnd + 1e-9;
+}
+
 export class TriggerReplayRaceSession {
   private readonly rts: Rt[];
   private readonly endMs: number;
@@ -641,7 +665,17 @@ export class TriggerReplayRaceSession {
       return;
     }
 
-    if (!inApplyWindow(tick, this.windowStart, this.windowEnd, def.windowArea)) {
+    const buyGtd = isBuyGtd(def);
+    const inArea = buyGtd
+      ? inBuyGtdPlaceWindow(
+          tick,
+          this.windowStart,
+          this.windowEnd,
+          def.windowArea,
+          def.gtdPlaceOffsetMs,
+        )
+      : inApplyWindow(tick, this.windowStart, this.windowEnd, def.windowArea);
+    if (!inArea) {
       if (rt.phase === "watching") {
         rt.phase = "idle";
         rt.side = null;
@@ -654,7 +688,6 @@ export class TriggerReplayRaceSession {
     const durationRaw = Number(def.durationMs);
     const durationMs = Number.isFinite(durationRaw) && durationRaw >= 0 ? durationRaw : 5000;
     const priceSide = "buy" as const;
-    const buyGtd = isBuyGtd(def);
 
     // Buy GTD: rest at Price; fill when Ask ≤ Price (no feed latency). Try each side.
     if (buyGtd) {
