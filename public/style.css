@@ -7781,6 +7781,18 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   gap: 8px;
 }
 
+.trigger-buy-order-row .trigger-buy-sides-mode {
+  flex: 0 1 auto;
+  min-width: 168px;
+  max-width: 220px;
+}
+
+.trigger-buy-sides-mode .trigger-run-mode-btn {
+  font-size: 11px;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+
 .trigger-buy-order-row .trigger-shares-caption,
 .trigger-buy-order-row .trigger-order-type-info-toggle .settings-field-label {
   font-size: 0.85rem;

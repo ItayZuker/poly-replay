@@ -4852,10 +4852,6 @@ function persistPositionsFilter() {
   }
 }
 
-function isDemoPositionCard(card) {
-  return Boolean(card && (card.demo === true || String(card.id || "").startsWith("demo:")));
-}
-
 /** Apply header Demo / Trade / All filter. */
 function filterPositionsCards(cards) {
   const list = Array.isArray(cards) ? cards : [];
@@ -5603,6 +5599,8 @@ let triggerCreateBuyShares = 10;
 let triggerCreateSellOrderType = "FAK";
 /** Buy placement: FOK default; GTD only when Duration 0 + left Price. */
 let triggerCreateBuyOrderType = "FOK";
+/** first = one side; both = UP and DOWN independently. */
+let triggerCreateBuySidesMode = "first";
 /** Ms before Apply start to place Buy GTD (0 = at Apply start). */
 let triggerCreateGtdPlaceOffsetMs = 0;
 /** Fraction of market window [0–1] when the trigger may apply. */
@@ -7019,6 +7017,25 @@ function syncTriggerCreateBuyOrderTypeDraft() {
   syncTriggerCreateBuyOrderTypeUi();
 }
 
+function normalizeTriggerBuySidesMode(raw) {
+  return raw === "both" ? "both" : "first";
+}
+
+function syncTriggerCreateBuySidesModeUi() {
+  const mode = normalizeTriggerBuySidesMode(triggerCreateBuySidesMode);
+  triggerCreateBuySidesMode = mode;
+  const wrap = $("trigger-buy-sides-mode");
+  if (!wrap) return;
+  wrap.querySelectorAll("[data-buy-sides]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.getAttribute("data-buy-sides") === mode);
+  });
+}
+
+function setTriggerCreateBuySidesMode(mode) {
+  triggerCreateBuySidesMode = normalizeTriggerBuySidesMode(mode);
+  syncTriggerCreateBuySidesModeUi();
+}
+
 function applyTriggerBuyOrderTypeToInput(orderType) {
   triggerCreateBuyOrderType = normalizeTriggerBuyOrderType(
     orderType ?? "FOK",
@@ -7061,6 +7078,7 @@ function normalizeTriggerRecord(raw) {
       raw.ptbGap,
     ),
     sellOrderType: normalizeTriggerSellOrderType(raw.sellOrderType),
+    buySidesMode: normalizeTriggerBuySidesMode(raw.buySidesMode),
     gtdPlaceOffsetMs: normalizeTriggerGtdPlaceOffsetMs(raw.gtdPlaceOffsetMs, 0),
     takeProfitCents: exits.takeProfitCents,
     stopLossCents: exits.stopLossCents,
@@ -8618,6 +8636,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   applyTriggerDurationToInputs(trigger?.durationMs ?? 5000);
   applyTriggerBuySharesToInput(trigger?.buyShares);
   applyTriggerBuyOrderTypeToInput(trigger?.buyOrderType ?? "FOK");
+  setTriggerCreateBuySidesMode(trigger?.buySidesMode ?? "first");
   applyTriggerGtdPlaceOffsetToInputs(trigger?.gtdPlaceOffsetMs ?? 0);
   applyTriggerSellToInputs(
     trigger?.takeProfitCents,
@@ -8707,6 +8726,7 @@ function buildTriggerFromCreateDraft() {
       triggerCreatePtbGap,
     ),
     sellOrderType: normalizeTriggerSellOrderType(triggerCreateSellOrderType),
+    buySidesMode: normalizeTriggerBuySidesMode(triggerCreateBuySidesMode),
     windowArea: normalizeTriggerWindowArea(
       triggerCreateWindowArea.start,
       triggerCreateWindowArea.end,
@@ -8828,6 +8848,7 @@ function resetTriggerCreateForm() {
   triggerCreatePriceTrend = { dollars: 0, bound: "min" };
   applyTriggerBuySharesToInput(10);
   applyTriggerBuyOrderTypeToInput("FOK");
+  setTriggerCreateBuySidesMode("first");
   applyTriggerGtdPlaceOffsetToInputs(0);
   applyTriggerSellToInputs(10, 10, "FAK");
   triggerCreateWindowArea = { start: 0, end: 1 };
@@ -9016,6 +9037,12 @@ function bindTriggerCreateModal() {
   });
   $("trigger-buy-order-type")?.addEventListener("change", () => {
     syncTriggerCreateBuyOrderTypeDraft();
+  });
+  $("trigger-buy-sides-mode")?.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("[data-buy-sides]");
+    if (!btn) return;
+    e.preventDefault();
+    setTriggerCreateBuySidesMode(btn.getAttribute("data-buy-sides"));
   });
   $("trigger-gtd-place-offset-value")?.addEventListener("input", () => {
     syncTriggerGtdPlaceOffsetDraft();
@@ -12195,6 +12222,26 @@ const triggerRuntimeById = new Map();
  * Trade+Active race: first open/opening card owns the slot until sell or window end.
  * Demo cards never use this (server Demo scores independently).
  */
+function triggerRuntimeKey(triggerId, lockedSide = null) {
+  const id = String(triggerId || "");
+  if (!id) return "";
+  return lockedSide === "up" || lockedSide === "down" ? `${id}:${lockedSide}` : id;
+}
+
+function triggerRuntimeKeysForId(triggerId) {
+  const id = String(triggerId || "");
+  if (!id) return [];
+  return [id, `${id}:up`, `${id}:down`];
+}
+
+function isTradeTriggerRuntimeBusy(triggerId) {
+  for (const key of triggerRuntimeKeysForId(triggerId)) {
+    const rt = triggerRuntimeById.get(key);
+    if (rt && (rt.phase === "open" || rt.phase === "opening")) return true;
+  }
+  return false;
+}
+
 function isTradeTriggerSlotBusy(exceptTriggerId = null) {
   const except = exceptTriggerId != null ? String(exceptTriggerId) : "";
   if (!Array.isArray(userTriggers)) return false;
@@ -12203,8 +12250,7 @@ function isTradeTriggerSlotBusy(exceptTriggerId = null) {
     if (trigger.paused !== false) continue;
     const id = String(trigger.id || "");
     if (!id || (except && id === except)) continue;
-    const rt = triggerRuntimeById.get(id);
-    if (rt && (rt.phase === "open" || rt.phase === "opening")) return true;
+    if (isTradeTriggerRuntimeBusy(id)) return true;
   }
   const ws = Number(windowState?.windowStart);
   const series = String(windowState?.series || selectedSeries || "")
@@ -12321,16 +12367,23 @@ function clearTriggerRuntime(triggerId) {
     return;
   }
   clearTriggerCardLiveUiTimer(id);
-  triggerRuntimeById.delete(id);
+  for (const key of triggerRuntimeKeysForId(id)) {
+    const rt = triggerRuntimeById.get(key);
+    if (rt?.liveUiTimer) clearTimeout(rt.liveUiTimer);
+    triggerRuntimeById.delete(key);
+  }
   clearTriggerPendingHeld(id);
   syncTriggerCardLiveUi(id);
 }
 
-function getOrCreateTriggerRuntime(triggerId) {
+function getOrCreateTriggerRuntime(triggerId, lockedSide = null) {
   const id = String(triggerId || "");
-  let rt = triggerRuntimeById.get(id);
+  const key = triggerRuntimeKey(id, lockedSide);
+  let rt = triggerRuntimeById.get(key);
   if (!rt) {
     rt = {
+      triggerId: id,
+      lockedSide: lockedSide === "up" || lockedSide === "down" ? lockedSide : null,
       phase: "idle",
       side: null,
       watchStartedAtMs: null,
@@ -12351,7 +12404,7 @@ function getOrCreateTriggerRuntime(triggerId) {
       liveUi: null,
       liveUiTimer: null,
     };
-    triggerRuntimeById.set(id, rt);
+    triggerRuntimeById.set(key, rt);
   }
   return rt;
 }
@@ -13376,6 +13429,34 @@ function invalidateTriggerGtdArmKeys(triggerId) {
   }
 }
 
+function triggerBuySidesModeOf(trigger) {
+  return normalizeTriggerBuySidesMode(trigger?.buySidesMode);
+}
+
+function triggerSideRuntimeIsOpen(triggerId, side) {
+  const rt = triggerRuntimeById.get(triggerRuntimeKey(triggerId, side));
+  if (rt && (rt.phase === "open" || rt.phase === "opening")) return true;
+  const ws = Number(windowState?.windowStart);
+  const series = String(windowState?.series || selectedSeries || "")
+    .trim()
+    .toLowerCase();
+  const windowKey =
+    Number.isFinite(ws) && ws > 0 && series ? `${series}:${ws}` : "";
+  const cards = Array.isArray(windowState?.trading?.positionCards)
+    ? windowState.trading.positionCards
+    : [];
+  return cards.some(
+    (c) =>
+      c &&
+      c.status === "open" &&
+      c.demo !== true &&
+      c.source === "trigger" &&
+      String(c.triggerId || "") === String(triggerId) &&
+      c.side === side &&
+      (!windowKey || !c.windowKey || String(c.windowKey) === windowKey),
+  );
+}
+
 /** Push one Trade GTD desire for a target market window when inside its place window. */
 function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
   const id = String(trigger?.id || "");
@@ -13391,7 +13472,11 @@ function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
   ) {
     return;
   }
-  const sides = triggerGtdDesiredSides(trigger, stateForWindow);
+  const both = triggerBuySidesModeOf(trigger) === "both";
+  let sides = triggerGtdDesiredSides(trigger, stateForWindow);
+  if (both) {
+    sides = sides.filter((s) => !triggerSideRuntimeIsOpen(id, s));
+  }
   if (!sides.length) return;
   const ws = Number(stateForWindow.windowStart);
   const we = Number(stateForWindow.windowEnd);
@@ -13403,6 +13488,7 @@ function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
     shares: normalizeTriggerBuyShares(trigger.buyShares),
     sellOrderType: normalizeTriggerSellOrderType(trigger.sellOrderType),
     takeProfitCents: clampTriggerOffsetCents(trigger.takeProfitCents ?? 10, 10),
+    buySidesMode: both ? "both" : "first",
     ...(Number.isFinite(ws) ? { windowStart: ws } : {}),
     ...(Number.isFinite(we) ? { windowEnd: we } : {}),
   });
@@ -13412,8 +13498,6 @@ function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
 function collectTradeGtdDesires(state) {
   const desires = [];
   if (!state || !Array.isArray(userTriggers)) return desires;
-  // One Trade buy at a time: while any card holds, send no new rests (server also enforces).
-  if (isTradeTriggerSlotBusy()) return desires;
   const nextState = nextMarketWindowState(state);
   for (const trigger of userTriggers) {
     const id = String(trigger?.id || "");
@@ -13421,11 +13505,18 @@ function collectTradeGtdDesires(state) {
     if (trigger.paused !== false) continue;
     if (trigger.runMode !== "trade") continue;
     if (!triggerUsesBuyGtd(trigger)) continue;
-    const rt = getOrCreateTriggerRuntime(id);
-    // Already filled — do not re-desire rests until sell / window end.
-    if (rt.phase === "open" || rt.phase === "opening") continue;
+    const both = triggerBuySidesModeOf(trigger) === "both";
+    // Cross-card Trade race: other cards holding block new rests (except this
+    // card's both-sides path, which may still desire the free side).
+    if (!both && isTradeTriggerSlotBusy()) continue;
+    if (both && isTradeTriggerSlotBusy(id)) continue;
+    if (!both) {
+      const rt = getOrCreateTriggerRuntime(id);
+      if (rt.phase === "open" || rt.phase === "opening") continue;
+    } else if (triggerSideRuntimeIsOpen(id, "up") && triggerSideRuntimeIsOpen(id, "down")) {
+      continue;
+    }
     pushTradeGtdDesireIfInPlaceWindow(desires, trigger, state);
-    // Pre-open next window when Offset GTD placment reaches before the next open.
     if (nextState) pushTradeGtdDesireIfInPlaceWindow(desires, trigger, nextState);
   }
   return desires;
@@ -13556,7 +13647,9 @@ async function flushTriggerGtdSync(state, desires) {
       if (!triggerId || !side) continue;
       const trigger = userTriggers.find((t) => String(t?.id) === triggerId);
       if (!trigger) continue;
-      const rt = getOrCreateTriggerRuntime(triggerId);
+      const locked =
+        triggerBuySidesModeOf(trigger) === "both" ? side : null;
+      const rt = getOrCreateTriggerRuntime(triggerId, locked);
       await openTriggerPositionFromFill(
         trigger,
         rt,
@@ -13591,219 +13684,204 @@ function tickUserTriggers(state) {
   for (const trigger of userTriggers) {
     const id = String(trigger?.id || "");
     if (!id) continue;
-    const rt = getOrCreateTriggerRuntime(id);
     const buyGtd = triggerUsesBuyGtd(trigger);
+    const bothSides = triggerBuySidesModeOf(trigger) === "both";
+    const lockedSides = bothSides ? ["up", "down"] : [null];
 
     // Demo evaluation is server-side (executor + feedLatencyMs).
     // BUY/SELL highlight comes from Mongo liveUi via SSE — do not clear it here.
     if (trigger.runMode !== "trade") {
-      if (rt.phase !== "idle") {
-        rt.phase = "idle";
-        rt.side = null;
-        rt.watchStartedAtMs = null;
-        rt.startPriceCents = null;
-        rt.entryPrice = null;
+      for (const lockedSide of lockedSides) {
+        const rt = getOrCreateTriggerRuntime(id, lockedSide);
+        if (rt.phase !== "idle") {
+          rt.phase = "idle";
+          rt.side = null;
+          rt.watchStartedAtMs = null;
+          rt.startPriceCents = null;
+          rt.entryPrice = null;
+        }
       }
       continue;
     }
-
-    if (rt.windowStart != null && state.windowStart !== rt.windowStart) {
-      if (rt.phase === "open") {
-        settleTriggerHeldToWindowEnd(trigger, rt, state);
-      } else if (rt.liveUi) {
-        // Stale BUY highlight after a prior settle abort — always re-arm on roll.
-        setTriggerCardLiveUi(id, null);
-      }
-      rt.phase = "idle";
-      rt.side = null;
-      rt.watchStartedAtMs = null;
-      rt.startPriceCents = null;
-      clearTriggerChartHits();
-    }
-    rt.windowStart = state.windowStart ?? null;
-    syncTriggerChartHitsWindow(state.windowStart);
 
     if (trigger.paused !== false) {
-      if (rt.phase !== "idle") {
-        rt.phase = "idle";
-        rt.side = null;
-        rt.watchStartedAtMs = null;
-        rt.startPriceCents = null;
-      }
-      if (rt.liveUi) setTriggerCardLiveUi(id, null);
-      continue;
-    }
-
-    if (rt.phase === "open") {
-      // Manual (or other) sell already flattened — never score as held $1/$0.
-      if (settleTriggerTradeIfFlat(trigger, rt, state, "sell")) continue;
-      if (windowEnded) {
-        settleTriggerHeldToWindowEnd(trigger, rt, state);
-        continue;
-      }
-      void maybeExitTriggerPosition(trigger, rt, state);
-      continue;
-    }
-
-    if (rt.phase === "opening") continue;
-
-    if (windowEnded) {
-      rt.phase = "idle";
-      rt.watchStartedAtMs = null;
-      if (rt.liveUi) setTriggerCardLiveUi(id, null);
-      continue;
-    }
-
-    // Trade race: another Active Trade card already owns the slot — wait for sell / window end.
-    if (isTradeTriggerSlotBusy(id)) {
-      if (rt.phase === "watching") {
-        rt.phase = "idle";
-        rt.side = null;
-        rt.watchStartedAtMs = null;
-        rt.startPriceCents = null;
-      }
-      if (buyGtd) hasTradeGtd = true;
-      continue;
-    }
-
-    const area = normalizeTriggerWindowArea(
-      trigger.windowArea?.start,
-      trigger.windowArea?.end,
-    );
-    const gtdOffsetMs = normalizeTriggerGtdPlaceOffsetMs(trigger.gtdPlaceOffsetMs, 0);
-    // Buy GTD uses wall clock + Offset GTD placment (may arm before Apply / window open).
-    const inArea = buyGtd
-      ? isInTriggerGtdPlaceWindowNow(state, area.start, area.end, gtdOffsetMs)
-      : isInManipulationArea(state, area.start, area.end);
-    if (!inArea) {
-      if (rt.phase === "watching") {
-        rt.phase = "idle";
-        rt.side = null;
-        rt.watchStartedAtMs = null;
-        rt.startPriceCents = null;
-      }
-      // Trade GTD outside place window → sync without this desire so the server cancels rests.
-      // Still collect next-window pre-open desires when Offset reaches before the next open.
-      if (buyGtd && trigger.runMode === "trade") {
-        hasTradeGtd = true;
-        if (
-          isTriggerTradeArmed() &&
-          rt.phase !== "open" &&
-          rt.phase !== "opening" &&
-          !isTradeTriggerSlotBusy(id)
-        ) {
-          const nextState = nextMarketWindowState(state);
-          if (nextState) pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, nextState);
+      for (const lockedSide of lockedSides) {
+        const rt = getOrCreateTriggerRuntime(id, lockedSide);
+        if (rt.phase !== "idle") {
+          rt.phase = "idle";
+          rt.side = null;
+          rt.watchStartedAtMs = null;
+          rt.startPriceCents = null;
         }
       }
+      setTriggerCardLiveUi(id, null);
       continue;
     }
 
-    if (trigger.runMode === "trade" && !isTriggerTradeArmed()) {
-      if (buyGtd) hasTradeGtd = true;
-      continue;
-    }
-
-    // Buy GTD: rest UP + DOWN at Price from place time (first fill cancels sibling).
+    // Buy GTD desires once per trigger (side runtimes handle exits below).
     if (buyGtd) {
-      const priceCents = clampTriggerCents(trigger.startPriceCents ?? 50);
-      const sides = triggerGtdDesiredSides(trigger, state);
-      if (trigger.runMode === "trade") {
-        hasTradeGtd = true;
-        // Empty desire while open → server cancels sibling rests; no re-place.
-        if (
-          sides.length &&
-          isTriggerTradeArmed() &&
-          rt.phase !== "open" &&
-          rt.phase !== "opening" &&
-          !isTradeTriggerSlotBusy(id)
-        ) {
+      hasTradeGtd = true;
+      const slotBusy = isTradeTriggerSlotBusy(id);
+      if (isTriggerTradeArmed() && !slotBusy) {
+        const area = normalizeTriggerWindowArea(
+          trigger.windowArea?.start,
+          trigger.windowArea?.end,
+        );
+        const gtdOffsetMs = normalizeTriggerGtdPlaceOffsetMs(trigger.gtdPlaceOffsetMs, 0);
+        const inArea = isInTriggerGtdPlaceWindowNow(
+          state,
+          area.start,
+          area.end,
+          gtdOffsetMs,
+        );
+        if (inArea) {
           pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, state);
-          const nextState = nextMarketWindowState(state);
-          if (nextState) pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, nextState);
         }
-      } else {
-        // Demo fallback: Ask ≤ Price; try each side (server Demo is primary on executor).
-        for (const side of sides) {
-          const ask = triggerAskPrice(state, side);
-          if (!Number.isFinite(ask) || ask * 100 > priceCents + 1e-6) continue;
-          rt.side = side;
-          rt.watchStartedAtMs = nowMs;
-          rt.startPriceCents = priceCents;
-          void openTriggerPosition(trigger, rt, state, side);
-          if (rt.phase === "open" || rt.phase === "opening") break;
-        }
+        const nextState = nextMarketWindowState(state);
+        if (nextState) pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, nextState);
       }
-      continue;
     }
 
-    const priceSide = "buy";
-    const durationMs = normalizeTriggerDurationMs(trigger.durationMs, 5000);
-    const gapMode = normalizeTriggerGapMode(trigger.gapMode);
+    for (const lockedSide of lockedSides) {
+      const rt = getOrCreateTriggerRuntime(id, lockedSide);
 
-    if (durationMs > 0 && rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
-      if (nowMs - rt.watchStartedAtMs < durationMs) continue;
-      const endCents = triggerQuoteCents(state, rt.side, priceSide);
-      const endGapOk = triggerGapMatches(
-        state,
-        trigger.ptbGap?.end,
-        trigger.gapSize?.end,
-        gapMode,
-        rt.side,
-      );
-      const trendOk = triggerPriceTrendMatches(
-        trigger,
-        rt.startAssetPrice,
-        state.assetPrice,
-      );
-      if (
-        endGapOk &&
-        trendOk &&
-        triggerEndConditionMet(trigger, rt.startPriceCents, endCents)
-      ) {
-        // Claim slot synchronously so peer Trade cards in this tick see the race.
-        rt.phase = "opening";
-        void openTriggerPosition(trigger, rt, state, rt.side);
-      } else {
+      if (rt.windowStart != null && state.windowStart !== rt.windowStart) {
+        if (rt.phase === "open") {
+          settleTriggerHeldToWindowEnd(trigger, rt, state);
+        } else if (rt.liveUi) {
+          // Stale BUY highlight after a prior settle abort — always re-arm on roll.
+          setTriggerCardLiveUi(id, null);
+        }
         rt.phase = "idle";
         rt.side = null;
         rt.watchStartedAtMs = null;
         rt.startPriceCents = null;
-        rt.startAssetPrice = null;
+        clearTriggerChartHits();
       }
-      continue;
-    }
+      rt.windowStart = state.windowStart ?? null;
+      syncTriggerChartHitsWindow(state.windowStart);
 
-    // Ask/price first, then gap (Relative needs the candidate BUY side).
-    for (const side of ["up", "down"]) {
-      const startCents = triggerQuoteCents(state, side, priceSide);
-      if (!triggerStartConditionMet(trigger, startCents)) continue;
-      if (
-        !triggerGapMatches(
-          state,
-          trigger.ptbGap?.start,
-          trigger.gapSize?.start,
-          gapMode,
-          side,
-        )
-      ) {
+      if (rt.phase === "open") {
+        // Manual (or other) sell already flattened — never score as held $1/$0.
+        if (settleTriggerTradeIfFlat(trigger, rt, state, "sell")) continue;
+        if (windowEnded) {
+          settleTriggerHeldToWindowEnd(trigger, rt, state);
+          continue;
+        }
+        void maybeExitTriggerPosition(trigger, rt, state);
         continue;
       }
-      rt.side = side;
-      rt.watchStartedAtMs = nowMs;
-      rt.startPriceCents = startCents;
-      rt.startAssetPrice = Number.isFinite(Number(state.assetPrice))
-        ? Number(state.assetPrice)
-        : null;
-      if (durationMs === 0) {
-        // No wait / no end condition — fire on start Range or Price (+ start gap).
-        // Claim Trade slot before the async buy so peers skip this tick.
-        rt.phase = "opening";
-        void openTriggerPosition(trigger, rt, state, side);
-      } else {
-        rt.phase = "watching";
+
+      if (rt.phase === "opening") continue;
+
+      if (windowEnded) {
+        rt.phase = "idle";
+        rt.watchStartedAtMs = null;
+        if (rt.liveUi) setTriggerCardLiveUi(id, null);
+        continue;
       }
-      break;
+
+      // Trade race: another Active Trade card already owns the slot — wait for sell / window end.
+      // Both-sides within this card does not count as busy for itself (except id).
+      if (isTradeTriggerSlotBusy(id)) {
+        if (rt.phase === "watching") {
+          rt.phase = "idle";
+          rt.side = null;
+          rt.watchStartedAtMs = null;
+          rt.startPriceCents = null;
+        }
+        continue;
+      }
+
+      // Buy GTD placement is handled once above; side RTs only manage exits.
+      if (buyGtd) continue;
+
+      if (!isTriggerTradeArmed()) continue;
+
+      const area = normalizeTriggerWindowArea(
+        trigger.windowArea?.start,
+        trigger.windowArea?.end,
+      );
+      const inArea = isInManipulationArea(state, area.start, area.end);
+      if (!inArea) {
+        if (rt.phase === "watching") {
+          rt.phase = "idle";
+          rt.side = null;
+          rt.watchStartedAtMs = null;
+          rt.startPriceCents = null;
+        }
+        continue;
+      }
+
+      const priceSide = "buy";
+      const durationMs = normalizeTriggerDurationMs(trigger.durationMs, 5000);
+      const gapMode = normalizeTriggerGapMode(trigger.gapMode);
+
+      if (durationMs > 0 && rt.phase === "watching" && rt.side && Number.isFinite(rt.watchStartedAtMs)) {
+        if (nowMs - rt.watchStartedAtMs < durationMs) continue;
+        const endCents = triggerQuoteCents(state, rt.side, priceSide);
+        const endGapOk = triggerGapMatches(
+          state,
+          trigger.ptbGap?.end,
+          trigger.gapSize?.end,
+          gapMode,
+          rt.side,
+        );
+        const trendOk = triggerPriceTrendMatches(
+          trigger,
+          rt.startAssetPrice,
+          state.assetPrice,
+        );
+        if (
+          endGapOk &&
+          trendOk &&
+          triggerEndConditionMet(trigger, rt.startPriceCents, endCents)
+        ) {
+          // Claim slot synchronously so peer Trade cards in this tick see the race.
+          rt.phase = "opening";
+          void openTriggerPosition(trigger, rt, state, rt.side);
+        } else {
+          rt.phase = "idle";
+          rt.side = null;
+          rt.watchStartedAtMs = null;
+          rt.startPriceCents = null;
+          rt.startAssetPrice = null;
+        }
+        continue;
+      }
+
+      // Ask/price first, then gap (Relative needs the candidate BUY side).
+      for (const side of ["up", "down"]) {
+        if (lockedSide != null && side !== lockedSide) continue;
+        const startCents = triggerQuoteCents(state, side, priceSide);
+        if (!triggerStartConditionMet(trigger, startCents)) continue;
+        if (
+          !triggerGapMatches(
+            state,
+            trigger.ptbGap?.start,
+            trigger.gapSize?.start,
+            gapMode,
+            side,
+          )
+        ) {
+          continue;
+        }
+        rt.side = side;
+        rt.watchStartedAtMs = nowMs;
+        rt.startPriceCents = startCents;
+        rt.startAssetPrice = Number.isFinite(Number(state.assetPrice))
+          ? Number(state.assetPrice)
+          : null;
+        if (durationMs === 0) {
+          // No wait / no end condition — fire on start Range or Price (+ start gap).
+          // Claim Trade slot before the async buy so peers skip this tick.
+          rt.phase = "opening";
+          void openTriggerPosition(trigger, rt, state, side);
+        } else {
+          rt.phase = "watching";
+        }
+        break;
+      }
     }
   }
 

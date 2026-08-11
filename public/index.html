@@ -1851,6 +1851,29 @@
                   <option value="GTD">GTD</option>
                 </select>
               </div>
+              <div
+                class="trigger-run-mode trigger-buy-sides-mode"
+                id="trigger-buy-sides-mode"
+                role="group"
+                aria-label="Buy first side or both sides"
+              >
+                <button
+                  type="button"
+                  class="trigger-run-mode-btn is-active"
+                  data-buy-sides="first"
+                  title="Buy the first UP or DOWN that matches, then sell that position"
+                >
+                  First side
+                </button>
+                <button
+                  type="button"
+                  class="trigger-run-mode-btn"
+                  data-buy-sides="both"
+                  title="UP and DOWN buy independently; each uses the same Sell setup"
+                >
+                  Both sides
+                </button>
+              </div>
             </div>
             <div
               id="trigger-buy-order-note"

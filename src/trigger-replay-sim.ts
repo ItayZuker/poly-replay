@@ -56,6 +56,8 @@ export interface ReplayTriggerDef {
   windowArea: { start: number; end: number };
   /** Ms before Apply start to arm Buy GTD (0 = at Apply start). */
   gtdPlaceOffsetMs: number;
+  /** first = one side; both = UP and DOWN independently. */
+  buySidesMode: "first" | "both";
 }
 
 export interface TriggerReplayStat {
@@ -89,6 +91,8 @@ type Phase = "idle" | "watching" | "open";
 
 type Rt = {
   def: ReplayTriggerDef;
+  /** When set (buySidesMode both), this runtime only buys that side. */
+  lockedSide: WindowOutcome | null;
   phase: Phase;
   side: WindowOutcome | null;
   watchStartedAtMs: number | null;
@@ -291,6 +295,7 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     sellOrderType,
     windowArea: { start: areaStart, end: areaEnd },
     gtdPlaceOffsetMs,
+    buySidesMode: o.buySidesMode === "both" ? "both" : "first",
   };
 }
 
@@ -583,22 +588,37 @@ export class TriggerReplayRaceSession {
     this.fillSuccessPct = input.fillSuccessPct;
     this.windowOutcome = input.windowOutcome;
     this.independentBuys = input.independentBuys === true;
-    this.rts = input.triggers.map((def) => ({
-      def,
-      phase: "idle" as Phase,
-      side: null,
-      watchStartedAtMs: null,
-      startPriceCents: null,
-      startAssetPrice: null,
-      entryPrice: null,
-      entryShares: def.buyShares,
-      positionCost: 0,
-      realizedPl: 0,
-      buyReadyAtMs: null,
-      exitReadyAtMs: null,
-      exitReason: null,
-      stats: emptyStat(def),
-    }));
+    const statsById = new Map<string, TriggerReplayStat>();
+    this.rts = [];
+    for (const def of input.triggers) {
+      let stats = statsById.get(def.id);
+      if (!stats) {
+        stats = emptyStat(def);
+        statsById.set(def.id, stats);
+      }
+      const makeRt = (lockedSide: WindowOutcome | null): Rt => ({
+        def,
+        lockedSide,
+        phase: "idle",
+        side: null,
+        watchStartedAtMs: null,
+        startPriceCents: null,
+        startAssetPrice: null,
+        entryPrice: null,
+        entryShares: def.buyShares,
+        positionCost: 0,
+        realizedPl: 0,
+        buyReadyAtMs: null,
+        exitReadyAtMs: null,
+        exitReason: null,
+        stats,
+      });
+      if (def.buySidesMode === "both") {
+        this.rts.push(makeRt("up"), makeRt("down"));
+      } else {
+        this.rts.push(makeRt(null));
+      }
+    }
   }
 
   /** Feed latency for taker buys; Buy GTD resting limits ignore latency. */
@@ -618,10 +638,16 @@ export class TriggerReplayRaceSession {
   onTickBeforePhase(tick: ReplayTickDocument, phaseOpen: boolean): void {
     if (!(tick.tMs < this.endMs)) return;
     // Independent: only an external phaseOpen (if any) can block; cards never block peers.
-    // Race: snapshot open peers at tick start (same-tick multi-open still possible).
-    const peerOpen =
-      !this.independentBuys && this.rts.some((rt) => rt.phase === "open");
+    // Race: other trigger cards block; same-card both-sides RTs do not block each other.
     for (const rt of this.rts) {
+      const peerOpen =
+        !this.independentBuys &&
+        this.rts.some(
+          (other) =>
+            other !== rt &&
+            other.def.id !== rt.def.id &&
+            other.phase === "open",
+        );
       this.tickOne(rt, tick, phaseOpen || peerOpen);
     }
   }
@@ -634,11 +660,18 @@ export class TriggerReplayRaceSession {
       rt.phase = "idle";
       rt.buyReadyAtMs = null;
     }
+    const seen = new Set<string>();
+    const stats: TriggerReplayStat[] = [];
+    for (const rt of this.rts) {
+      if (seen.has(rt.def.id)) continue;
+      seen.add(rt.def.id);
+      stats.push({ ...rt.stats });
+    }
     return {
       pl: this.pl,
       markers: this.markers,
       traded: this.traded,
-      stats: this.rts.map((rt) => ({ ...rt.stats })),
+      stats,
       hits: this.hits.map((h) => ({ ...h })),
     };
   }
@@ -691,7 +724,9 @@ export class TriggerReplayRaceSession {
 
     // Buy GTD: rest at Price; fill when Ask ≤ Price (no feed latency). Try each side.
     if (buyGtd) {
-      const sides = gtdDesiredSides(def, tick);
+      const sides = gtdDesiredSides(def, tick).filter(
+        (s) => rt.lockedSide == null || s === rt.lockedSide,
+      );
       const priceCents = clampCents(def.startPriceCents, 50);
       for (const side of sides) {
         const ask = quoteCents(tick, side, "buy");
@@ -739,6 +774,7 @@ export class TriggerReplayRaceSession {
 
     // Ask/price first, then gap (Relative needs the candidate BUY side).
     for (const side of ["up", "down"] as const) {
+      if (rt.lockedSide != null && side !== rt.lockedSide) continue;
       const startCents = quoteCents(tick, side, priceSide);
       if (!startConditionMet(def, startCents)) continue;
       if (!gapMatches(tick, def.ptbGap.start, def.gapSize.start, def.gapMode, side)) {

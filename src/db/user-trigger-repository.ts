@@ -77,6 +77,11 @@ export interface UserTriggerRecord {
   /** Buy placement: FOK default; GTD only when durationMs is 0, startMode is price, and no gap. */
   buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: "FAK" | "FOK" | "GTD";
+  /**
+   * first — one side only (GTD: cancel sibling on first fill).
+   * both — UP and DOWN may each open and sell independently.
+   */
+  buySidesMode: "first" | "both";
   windowArea: { start: number; end: number };
   /** Ms before Apply start to place Buy GTD (0 = at Apply start). */
   gtdPlaceOffsetMs: number;
@@ -326,6 +331,11 @@ export function normalizeUserTriggerInput(
           ? "FAK"
           : existing?.sellOrderType || "FAK",
     windowArea: normalizeWindowArea(o.windowArea ?? existing?.windowArea),
+    buySidesMode: ((): "first" | "both" => {
+      if (o.buySidesMode === "both" || o.buySidesMode === "first") return o.buySidesMode;
+      if (existing?.buySidesMode === "both") return "both";
+      return "first";
+    })(),
     gtdPlaceOffsetMs: (() => {
       const n = Math.floor(Number(o.gtdPlaceOffsetMs));
       if (Number.isFinite(n) && n >= 0) return Math.min(n, 1_000_000_000);
