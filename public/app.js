@@ -8256,6 +8256,45 @@ async function fetchTriggerLiveStats(triggerId) {
   }
 }
 
+let triggersStatsRefreshing = false;
+
+/** Manual Triggers header refresh — reload Demo cards + Trade stats from the server. */
+async function refreshTriggersStats() {
+  if (triggersStatsRefreshing) return;
+  const btn = $("triggers-stats-refresh");
+  triggersStatsRefreshing = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+  }
+  try {
+    await loadUserTriggers();
+    renderTriggersList();
+    const tradeIds = (userTriggers || [])
+      .filter((t) => t?.runMode === "trade" && t?.id != null)
+      .map((t) => String(t.id));
+    await Promise.all(tradeIds.map((id) => fetchTriggerLiveStats(id)));
+    for (const t of userTriggers || []) {
+      const id = String(t?.id || "");
+      if (!id) continue;
+      updateTriggerCardStats(id);
+      window.ScheduleLiveTriggers?.updateStats?.(id);
+    }
+    if (triggerCreateEditingId) {
+      const editId = String(triggerCreateEditingId);
+      const edit = findUserTrigger(editId);
+      if (edit?.runMode === "trade") await fetchTriggerLiveStats(editId);
+      syncTriggerStatsPanel();
+    }
+  } finally {
+    triggersStatsRefreshing = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("is-loading");
+    }
+  }
+}
+
 function setTriggerCreateActiveTab(tabId) {
   const id = tabId === "sell" ? "sell" : tabId === "stats" ? "stats" : "buy";
   triggerCreateActiveTab = id;
@@ -8642,6 +8681,9 @@ function bindTriggerCreateModal() {
   void loadUserTriggers().then(() => {
     renderTriggersList();
     scheduleTriggerGtdArming(windowState);
+  });
+  $("triggers-stats-refresh")?.addEventListener("click", () => {
+    void refreshTriggersStats();
   });
   $("triggers-create-btn")?.addEventListener("click", () => {
     openTriggerCreateModal();
@@ -11853,6 +11895,41 @@ function isInTriggerApplyAreaNow(state, areaStart, areaEnd) {
 
 /** Per-trigger runtime: watching start→end pattern, or open TP/SL position. */
 const triggerRuntimeById = new Map();
+
+/**
+ * Trade+Active race: first open/opening card owns the slot until sell or window end.
+ * Demo cards never use this (server Demo scores independently).
+ */
+function isTradeTriggerSlotBusy(exceptTriggerId = null) {
+  const except = exceptTriggerId != null ? String(exceptTriggerId) : "";
+  if (!Array.isArray(userTriggers)) return false;
+  for (const trigger of userTriggers) {
+    if (trigger?.runMode !== "trade") continue;
+    if (trigger.paused !== false) continue;
+    const id = String(trigger.id || "");
+    if (!id || (except && id === except)) continue;
+    const rt = triggerRuntimeById.get(id);
+    if (rt && (rt.phase === "open" || rt.phase === "opening")) return true;
+  }
+  const ws = Number(windowState?.windowStart);
+  const series = String(windowState?.series || selectedSeries || "")
+    .trim()
+    .toLowerCase();
+  const windowKey =
+    Number.isFinite(ws) && ws > 0 && series ? `${series}:${ws}` : "";
+  const cards = Array.isArray(windowState?.trading?.positionCards)
+    ? windowState.trading.positionCards
+    : [];
+  for (const c of cards) {
+    if (!c || c.status !== "open") continue;
+    if (c.demo === true || c.source !== "trigger") continue;
+    const tid = String(c.triggerId || "");
+    if (!tid || (except && tid === except)) continue;
+    if (windowKey && c.windowKey && String(c.windowKey) !== windowKey) continue;
+    return true;
+  }
+  return false;
+}
 /**
  * Held-to-window settlements waiting on official UP/DOWN (`/api/window-resolution`).
  * Live window SSE state has no `outcome`, so we must poll after the window ends.
@@ -12420,6 +12497,16 @@ async function fetchOfficialTriggerWindowOutcome(slug) {
   return null;
 }
 
+/** Hard Gamma poll ~20 min (2s), then light retries (30s) until resolve — never abandon. */
+const HELD_GAMMA_HARD_ATTEMPTS = 600; // 600 × 2s ≈ 20 min
+const HELD_GAMMA_HARD_DELAY_MS = 2000;
+const HELD_GAMMA_LIGHT_DELAY_MS = 30000;
+
+function heldGammaRetryDelayMs(attempts) {
+  const n = Number(attempts) || 0;
+  return n < HELD_GAMMA_HARD_ATTEMPTS ? HELD_GAMMA_HARD_DELAY_MS : HELD_GAMMA_LIGHT_DELAY_MS;
+}
+
 function scheduleTriggerHeldResolve(triggerId, delayMs) {
   const id = String(triggerId || "");
   const pending = triggerPendingHeldById.get(id);
@@ -12438,17 +12525,15 @@ async function resolveTriggerHeldSettlement(triggerId) {
   const outcome = await fetchOfficialTriggerWindowOutcome(pending.slug);
   if (!outcome) {
     pending.attempts += 1;
-    // ~5 min of 5s polls, then stop (do not count fake fails).
-    if (pending.attempts >= 60) {
+    // Keep Open until Gamma — hard poll then light retries (no abandon / no Unset).
+    if (pending.attempts === HELD_GAMMA_HARD_ATTEMPTS) {
       appendLogEntry({
-        level: "warn",
+        level: "info",
         source: "client",
-        message: `Trigger held settle abandoned — no official outcome for ${pending.slug || "window"}`,
+        message: `Trigger held settle still waiting on Gamma for ${pending.slug || "window"} — switching to light retries`,
       });
-      clearTriggerPendingHeld(id);
-      return;
     }
-    scheduleTriggerHeldResolve(id, 5000);
+    scheduleTriggerHeldResolve(id, heldGammaRetryDelayMs(pending.attempts));
     return;
   }
   clearTriggerPendingHeld(id);
@@ -12571,17 +12656,15 @@ async function resolveResumeDemoOpenSettlement(cardId) {
   const outcome = await fetchOfficialTriggerWindowOutcome(slug);
   if (!outcome) {
     pending.attempts += 1;
-    // Pause this session after ~5 min; next load / window roll re-enqueues.
-    if (pending.attempts >= 60) {
+    // Stay Open until Gamma — hard ~20 min then light retries (never abandon).
+    if (pending.attempts === HELD_GAMMA_HARD_ATTEMPTS) {
       appendLogEntry({
-        level: "warn",
+        level: "info",
         source: "client",
-        message: `Demo open resume settle paused — no official outcome yet for ${slug}`,
+        message: `Demo open resume still waiting on Gamma for ${slug} — switching to light retries`,
       });
-      clearTriggerPendingResumeDemo(id);
-      return;
     }
-    scheduleResumeDemoOpenResolve(id, 5000);
+    scheduleResumeDemoOpenResolve(id, heldGammaRetryDelayMs(pending.attempts));
     return;
   }
   clearTriggerPendingResumeDemo(id);
@@ -12713,10 +12796,19 @@ function settleTriggerHeldToWindowEnd(trigger, rt, state) {
 }
 
 async function openTriggerPosition(trigger, rt, state, side) {
-  if (rt.orderInFlight || rt.phase === "open" || rt.phase === "opening") return;
+  // Allow phase === "opening" when the Trade race claimed the slot synchronously
+  // in tickUserTriggers before this async buy runs.
+  if (rt.orderInFlight || rt.phase === "open") return;
   const runMode = trigger.runMode === "trade" ? "trade" : "demo";
   // Demo buys/stats/Positions are scored on the trading host (feed latency) — not here.
   if (runMode !== "trade") {
+    rt.phase = "idle";
+    rt.side = null;
+    rt.watchStartedAtMs = null;
+    rt.startPriceCents = null;
+    return;
+  }
+  if (isTradeTriggerSlotBusy(trigger.id)) {
     rt.phase = "idle";
     rt.side = null;
     rt.watchStartedAtMs = null;
@@ -12993,6 +13085,8 @@ function invalidateTriggerGtdArmKeys(triggerId) {
 function collectTradeGtdDesires(state) {
   const desires = [];
   if (!state || !Array.isArray(userTriggers)) return desires;
+  // One Trade buy at a time: while any card holds, send no new rests (server also enforces).
+  if (isTradeTriggerSlotBusy()) return desires;
   for (const trigger of userTriggers) {
     const id = String(trigger?.id || "");
     if (!id) continue;
@@ -13238,6 +13332,18 @@ function tickUserTriggers(state) {
       continue;
     }
 
+    // Trade race: another Active Trade card already owns the slot — wait for sell / window end.
+    if (isTradeTriggerSlotBusy(id)) {
+      if (rt.phase === "watching") {
+        rt.phase = "idle";
+        rt.side = null;
+        rt.watchStartedAtMs = null;
+        rt.startPriceCents = null;
+      }
+      if (buyGtd) hasTradeGtd = true;
+      continue;
+    }
+
     const area = normalizeTriggerWindowArea(
       trigger.windowArea?.start,
       trigger.windowArea?.end,
@@ -13274,7 +13380,8 @@ function tickUserTriggers(state) {
           sides.length &&
           isTriggerTradeArmed() &&
           rt.phase !== "open" &&
-          rt.phase !== "opening"
+          rt.phase !== "opening" &&
+          !isTradeTriggerSlotBusy(id)
         ) {
           gtdDesires.push({
             triggerId: id,
@@ -13325,6 +13432,8 @@ function tickUserTriggers(state) {
         trendOk &&
         triggerEndConditionMet(trigger, rt.startPriceCents, endCents)
       ) {
+        // Claim slot synchronously so peer Trade cards in this tick see the race.
+        rt.phase = "opening";
         void openTriggerPosition(trigger, rt, state, rt.side);
       } else {
         rt.phase = "idle";
@@ -13359,6 +13468,8 @@ function tickUserTriggers(state) {
         : null;
       if (durationMs === 0) {
         // No wait / no end condition — fire on start Range or Price (+ start gap).
+        // Claim Trade slot before the async buy so peers skip this tick.
+        rt.phase = "opening";
         void openTriggerPosition(trigger, rt, state, side);
       } else {
         rt.phase = "watching";

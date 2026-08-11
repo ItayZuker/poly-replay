@@ -1,7 +1,7 @@
 /**
- * Schedule Replay: evaluate user Trigger cards on recorded ticks (per window).
- * Races with phase Auto Trade the same way Prediction Trade did:
- * first open position blocks the other until flat.
+ * Evaluate Trigger cards on ticks (Schedule Replay + Market Demo).
+ * When independentBuys is false (legacy / Trade-style race): first open blocks
+ * other cards until flat. When true (Demo + Replay): each card buys independently.
  */
 import { takeLevels, walkAsks, walkAsksAvailable, walkBids } from "./book-depth.js";
 import type { ReplayTickDocument, SimMarker, WindowOutcome } from "./types.js";
@@ -535,6 +535,8 @@ export class TriggerReplayRaceSession {
   private readonly latency: number;
   private readonly fillSuccessPct: number;
   private readonly windowOutcome: WindowOutcome | null | undefined;
+  /** When true, cards do not block each other (Demo / Replay testing). */
+  private readonly independentBuys: boolean;
   private pl = 0;
   private markers: SimMarker[] = [];
   private traded = false;
@@ -547,6 +549,8 @@ export class TriggerReplayRaceSession {
     latencyMs: number;
     fillSuccessPct: number;
     windowOutcome?: WindowOutcome | null;
+    /** Default false. True = each trigger may open independently. */
+    independentBuys?: boolean;
   }) {
     this.windowStart = input.windowStart;
     this.windowEnd = input.windowEnd;
@@ -554,6 +558,7 @@ export class TriggerReplayRaceSession {
     this.latency = Math.max(0, Number(input.latencyMs) || 0);
     this.fillSuccessPct = input.fillSuccessPct;
     this.windowOutcome = input.windowOutcome;
+    this.independentBuys = input.independentBuys === true;
     this.rts = input.triggers.map((def) => ({
       def,
       phase: "idle" as Phase,
@@ -588,9 +593,12 @@ export class TriggerReplayRaceSession {
 
   onTickBeforePhase(tick: ReplayTickDocument, phaseOpen: boolean): void {
     if (!(tick.tMs < this.endMs)) return;
-    const anyTriggerOpen = this.rts.some((rt) => rt.phase === "open");
+    // Independent: only an external phaseOpen (if any) can block; cards never block peers.
+    // Race: snapshot open peers at tick start (same-tick multi-open still possible).
+    const peerOpen =
+      !this.independentBuys && this.rts.some((rt) => rt.phase === "open");
     for (const rt of this.rts) {
-      this.tickOne(rt, tick, phaseOpen || anyTriggerOpen);
+      this.tickOne(rt, tick, phaseOpen || peerOpen);
     }
   }
 

@@ -32,14 +32,10 @@ import {
   feeFromTradeUsdc,
   findClosedPosition,
   findPosition,
-  findResolvedPosition,
   findTrade,
-  pollUntil,
-  isClearlyResolvedTokenPrice,
   isValidSharePrice,
   isValidShareSize,
   type PolymarketClosedPosition,
-  type PolymarketPosition,
   type PolymarketTrade,
 } from "./polymarket-portfolio.js";
 import { fetchOfficialWindowResolution } from "./official-window-resolution.js";
@@ -335,60 +331,6 @@ function contributionFromCard(card: TradingPositionCard): SettledStatContributio
   return { green, red, blue, pnl: pl, status };
 }
 
-/**
- * Resolve held-to-settlement win/loss.
- * Polymarket `outcome` on a position is the token held, not the market winner —
- * derive market outcome from our side + whether that token paid out.
- */
-function resolveHeldSettlement(
-  card: TradingPositionCard,
-  opts: { curPrice?: number | null; grossPl?: number | null },
-): { won: boolean; pl: number; outcome: "up" | "down"; status: "win" | "loss" } {
-  const cur =
-    opts.curPrice != null && Number.isFinite(Number(opts.curPrice))
-      ? Number(opts.curPrice)
-      : null;
-  const gross =
-    opts.grossPl != null && Number.isFinite(Number(opts.grossPl)) ? Number(opts.grossPl) : null;
-
-  let won: boolean;
-  if (cur != null) {
-    // Token mark is authoritative once the market has resolved (~0 or ~1).
-    won = cur >= 0.5;
-  } else if (gross != null) {
-    won = gross >= 0;
-  } else {
-    won = false;
-  }
-
-  const clearlyResolved = cur != null && (cur <= 0.02 || cur >= 0.98);
-  let pl: number;
-  if (clearlyResolved) {
-    // Never blend closed-position realizedPnl over a dead/winning token mark —
-    // a mismatched gross previously flipped real losses into false wins.
-    pl = feeAwarePlHeld(card, won);
-  } else if (cur != null) {
-    pl = feeAwarePlHeld(card, won);
-    if (gross != null) {
-      const plFromGross = feeAwarePlFromGross(gross, card);
-      if ((plFromGross >= 0) === won) pl = plFromGross;
-    }
-  } else if (gross != null) {
-    pl = feeAwarePlFromGross(gross, card);
-    if (pl > 1e-9) won = true;
-    else if (pl < -1e-9) won = false;
-  } else {
-    pl = feeAwarePlHeld(card, won);
-  }
-
-  return {
-    won,
-    pl,
-    outcome: won ? card.side : card.side === "up" ? "down" : "up",
-    status: won ? "win" : "loss",
-  };
-}
-
 function eventStatContribution(event: TradingStatEvent): SettledStatContribution | null {
   if (!isConfirmedStatEvent(event)) return null;
   const pl = Number(event.pnl);
@@ -455,6 +397,22 @@ function windowKeyUnixSec(windowKey: string | undefined | null): number {
   const ms = Date.parse(raw);
   return Number.isFinite(ms) ? ms / 1000 : NaN;
 }
+
+/** Series prefix of `series:windowStart` → market window length in seconds. */
+function windowDurationSecFromKey(windowKey: string | undefined | null): number {
+  const series = String(windowKey || "")
+    .split(":")[0]
+    .toLowerCase();
+  if (series.includes("15m")) return 900;
+  if (series.includes("1h") || series.includes("60m")) return 3600;
+  if (series.includes("4h")) return 14_400;
+  return 300; // default 5m up/down
+}
+
+/** Hard Gamma poll for held cards: 20 minutes after window end (matches recorder). */
+const HELD_GAMMA_HARD_POLL_MS = 20 * 60 * 1000;
+const CONFIRM_HARD_INTERVAL_MS = 2_000;
+const CONFIRM_LIGHT_INTERVAL_MS = 30_000;
 
 /** UTC ISO week key (YYYY-Www) — groups one weekly “run” of a schedule card. */
 function utcIsoWeekKey(unixSec: number): string {
@@ -978,7 +936,8 @@ export class LiveTradingService {
   /**
    * After a Trigger GTD buy fill, latch that triggerId → sessionKey until the
    * position is confirmed sold (or the window rolls). Blocks further rests on
-   * either side while holding; sibling rest is cancelled on first fill.
+   * either side while holding; sibling + other-trigger rests cancel on first fill.
+   * Trade race: first fill owns the window until sell / roll (see predictionTradeHoldWindowKey).
    */
   private triggerGtdHoldSessionById = new Map<string, string>();
   /**
@@ -1024,7 +983,7 @@ export class LiveTradingService {
   private activePhaseSetup: TradingPhaseSetup | null = null;
   private readonly autoEngine = new SimulatorEngine();
   private readonly listeners = new Set<UpdateListener>();
-  private confirmLoopTimer: ReturnType<typeof setInterval> | null = null;
+  private confirmLoopTimer: ReturnType<typeof setTimeout> | null = null;
   private confirmInFlight = false;
   /** Confirmed win/loss cards already re-checked against Polymarket this process. */
   private settlementRecheckedIds = new Set<string>();
@@ -2517,68 +2476,20 @@ export class LiveTradingService {
   }
 
   /**
-   * Finalize held settlement only after official Up/Down is known (explicit Gamma payout).
-   * Clearly resolved token marks (~0 / ~1) override a mismatched feed so wallet truth wins.
+   * Finalize held settlement only from official Gamma Up/Down (~1/~0 payout).
+   * No token-mark / portfolio fallback — cards stay Open until Gamma resolves.
    */
   private applyHeldSettlementToCard(
     card: TradingPositionCard,
-    opts: {
-      curPrice?: number | null;
-      grossPl?: number | null;
-      officialOutcome?: "up" | "down" | null;
-    },
+    officialOutcome: "up" | "down",
   ): boolean {
-    const official =
-      opts.officialOutcome === "up" || opts.officialOutcome === "down"
-        ? opts.officialOutcome
-        : null;
-    // Stay Pending until Gamma explicitly resolves (or token mark path supplies truth below).
-    const curClear = isClearlyResolvedTokenPrice(opts.curPrice);
-    if (!official && !curClear) return false;
-
-    let won = official != null ? card.side === official : Number(opts.curPrice) >= 0.5;
-    let outcome: "up" | "down" =
-      official ?? (won ? card.side : card.side === "up" ? "down" : "up");
-
-    if (curClear) {
-      const tokenWon = Number(opts.curPrice) >= 0.5;
-      // Held token payout is wallet truth when clearly resolved (~0 or ~1).
-      if (official == null || tokenWon !== won) {
-        won = tokenWon;
-        outcome = won ? card.side : card.side === "up" ? "down" : "up";
-      }
-    }
-
-    card.outcome = outcome;
-    card.status = won ? "win" : "loss";
-
-    const settled = resolveHeldSettlement(card, {
-      curPrice: curClear ? opts.curPrice : null,
-      grossPl: opts.grossPl,
-    });
-    if (curClear) {
-      card.pl = feeAwarePlHeld(card, won);
-      if (
-        opts.grossPl != null &&
-        Number.isFinite(Number(opts.grossPl)) &&
-        (Number(opts.grossPl) >= 0) === won
-      ) {
-        const fromGross = feeAwarePlFromGross(Number(opts.grossPl), card);
-        if ((fromGross >= 0) === won) card.pl = fromGross;
-      } else if ((settled.pl >= 0) === won) {
-        card.pl = settled.pl;
-      }
-    } else if (
-      opts.grossPl != null &&
-      Number.isFinite(Number(opts.grossPl)) &&
-      (Number(opts.grossPl) >= 0) === won
-    ) {
-      card.pl = feeAwarePlFromGross(Number(opts.grossPl), card);
-    } else {
-      card.pl = feeAwarePlHeld(card, won);
-    }
-
+    if (officialOutcome !== "up" && officialOutcome !== "down") return false;
     if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
+
+    const won = card.side === officialOutcome;
+    card.outcome = officialOutcome;
+    card.status = won ? "win" : "loss";
+    card.pl = feeAwarePlHeld(card, won);
     card.confirmed = true;
     const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
     if (tid && card.source === "trigger") {
@@ -2588,95 +2499,7 @@ export class LiveTradingService {
   }
 
   /**
-   * Apply Polymarket closed-position data onto a held card. Returns true when confirmed.
-   * Losses often never appear here — use redeemable open positions instead.
-   */
-  private async applyClosedHeldSettlement(
-    card: TradingPositionCard,
-    closed: PolymarketClosedPosition,
-  ): Promise<boolean> {
-    const grossPl = Number(closed.realizedPnl);
-    if (!Number.isFinite(grossPl)) return false;
-    if (closed.avgPrice != null && isValidSharePrice(closed.avgPrice)) {
-      card.buyPrice = Number(closed.avgPrice);
-    }
-    if (closed.totalBought != null && isValidShareSize(closed.totalBought)) {
-      card.shares = Number(closed.totalBought);
-      card.buyCost = card.shares * card.buyPrice;
-    }
-    card.asset = card.asset ?? closed.asset;
-    card.conditionId = card.conditionId ?? closed.conditionId;
-    card.slug = card.slug ?? closed.slug;
-    card.buyFees = await estimateLiveTakerFee(this.userId, card.asset, card.shares, card.buyPrice);
-    const officialOutcome = await this.fetchOfficialMarketOutcome(card);
-    return this.applyHeldSettlementToCard(card, {
-      curPrice: closed.curPrice,
-      grossPl,
-      officialOutcome,
-    });
-  }
-
-  /** Apply redeemable / near-settled open position (typical path for held losses). */
-  private async applyRedeemableHeldSettlement(
-    card: TradingPositionCard,
-    openPos: PolymarketPosition,
-  ): Promise<boolean> {
-    const grossPl = Number(openPos.cashPnl ?? openPos.realizedPnl ?? 0);
-    if (openPos.avgPrice != null && isValidSharePrice(openPos.avgPrice)) {
-      card.buyPrice = Number(openPos.avgPrice);
-    }
-    if (openPos.size != null && isValidShareSize(openPos.size)) {
-      card.shares = Number(openPos.size);
-      card.buyCost = Number(openPos.initialValue ?? card.shares * card.buyPrice);
-    }
-    card.asset = card.asset ?? openPos.asset;
-    card.conditionId = card.conditionId ?? openPos.conditionId;
-    card.slug = card.slug ?? openPos.slug;
-    card.buyFees = await estimateLiveTakerFee(this.userId, card.asset, card.shares, card.buyPrice);
-    const officialOutcome = await this.fetchOfficialMarketOutcome(card);
-    return this.applyHeldSettlementToCard(card, {
-      curPrice: openPos.curPrice,
-      grossPl: Number.isFinite(grossPl) ? grossPl : null,
-      officialOutcome,
-    });
-  }
-
-  /** Fetch a resolved open position; broaden beyond market filter when needed. */
-  private async fetchResolvedHeldPosition(
-    card: TradingPositionCard,
-  ): Promise<PolymarketPosition | null> {
-    if (!card.asset && !card.conditionId) return null;
-
-    const rows = await fetchUserPositions(this.userId, {
-      conditionId: card.conditionId,
-      sizeThreshold: 0,
-    });
-    let match = findResolvedPosition(rows, {
-      asset: card.asset,
-      conditionId: card.conditionId,
-      side: card.side,
-    });
-    if (match) return match;
-
-    // Market filter can miss rows; scan recent open positions by asset/conditionId.
-    if (card.asset || card.conditionId) {
-      const broad = await fetchUserPositions(this.userId, {
-        sizeThreshold: 0,
-        limit: 200,
-      });
-      match = findResolvedPosition(broad, {
-        asset: card.asset,
-        conditionId: card.conditionId,
-        side: card.side,
-      });
-      if (match) return match;
-    }
-    return null;
-  }
-
-  /**
-   * Settle a held card from official outcome + known fill — same clock as Prediction.
-   * Portfolio marks may refine P/L later; they do not gate Win/Loss.
+   * Settle a held card from Gamma only (same source as recordings / Open Replay Official).
    */
   private async trySettleHeldCardFromGamma(card: TradingPositionCard): Promise<boolean> {
     if (!isValidSharePrice(card.buyPrice) || !isValidShareSize(card.shares)) return false;
@@ -2693,39 +2516,7 @@ export class LiveTradingService {
     }
     const officialOutcome = await this.fetchOfficialMarketOutcome(card);
     if (!officialOutcome) return false;
-    return this.applyHeldSettlementToCard(card, { officialOutcome });
-  }
-
-  /** Held settlement: official outcome first (with Prediction), then portfolio for fill/P/L. */
-  private async trySettleHeldCardFromPolymarket(card: TradingPositionCard): Promise<boolean> {
-    // Same resolution clock as Prediction — do not wait on portfolio APIs.
-    if (await this.trySettleHeldCardFromGamma(card)) return true;
-
-    if (!card.asset && !card.conditionId) return false;
-
-    try {
-      const closedRows = await fetchClosedPositions(this.userId, {
-        conditionId: card.conditionId,
-        limit: 30,
-      });
-      const closed = findClosedPosition(closedRows, {
-        asset: card.asset,
-        conditionId: card.conditionId,
-        afterTs: card.buyAt - 30,
-        side: card.side,
-      });
-      if (closed) {
-        return await this.applyClosedHeldSettlement(card, closed);
-      }
-
-      const openPos = await this.fetchResolvedHeldPosition(card);
-      if (openPos) {
-        return await this.applyRedeemableHeldSettlement(card, openPos);
-      }
-    } catch {
-      // confirm loop retries
-    }
-    return false;
+    return this.applyHeldSettlementToCard(card, officialOutcome);
   }
 
   private async settleOpenCardsForWindow(windowKey: string): Promise<boolean> {
@@ -2736,47 +2527,11 @@ export class LiveTradingService {
 
     let settledCount = 0;
     for (const card of openCards) {
-      // Same clock as Prediction: settle as soon as official outcome is known.
       if (await this.trySettleHeldCardFromGamma(card)) {
         settledCount += 1;
         continue;
       }
-
-      // Fill incomplete or outcome not ready yet — try portfolio, then keep polling.
-      const closed = await pollUntil(
-        async () => {
-          const rows = await fetchClosedPositions(this.userId, {
-            conditionId: card.conditionId,
-            limit: 20,
-          });
-          return (
-            findClosedPosition(rows, {
-              asset: card.asset,
-              conditionId: card.conditionId,
-              afterTs: card.buyAt - 5,
-              side: card.side,
-            }) ?? null
-          );
-        },
-        { attempts: 4, delayMs: 900 },
-      );
-
-      if (closed && (await this.applyClosedHeldSettlement(card, closed))) {
-        settledCount += 1;
-        continue;
-      }
-
-      const openPos = await pollUntil(
-        async () => this.fetchResolvedHeldPosition(card),
-        { attempts: 5, delayMs: 900 },
-      );
-
-      if (openPos && (await this.applyRedeemableHeldSettlement(card, openPos))) {
-        settledCount += 1;
-        continue;
-      }
-
-      // Still unresolved — leave open + unconfirmed; confirm loop keeps polling.
+      // Still unresolved — leave Open; confirm loop hard-polls 20m then light retries.
       card.confirmed = false;
     }
 
@@ -2784,7 +2539,7 @@ export class LiveTradingService {
       "trading",
       `Settled ${settledCount}/${openCards.length} held position(s) for prior window` +
         (settledCount < openCards.length
-          ? ` (${openCards.length - settledCount} waiting on Gamma/Polymarket)`
+          ? ` (${openCards.length - settledCount} waiting on Gamma)`
           : ""),
     );
     for (const card of openCards) {
@@ -5139,8 +4894,10 @@ export class LiveTradingService {
           resting.triggerId,
         );
       }
-      // First fill wins: cancel the other side (keeps sibling tracked until confirm).
+      // First Trigger Trade fill wins the window slot: cancel every other rest
+      // (sibling side + other Active Trade cards) until sell / window end.
       await this.cancelTriggerSiblingRests(resting.triggerId, resting.side, state);
+      await this.cancelOtherTriggerRestingBuys(resting.triggerId, state);
       resting.cancelPending = true;
       const status = String(snap.status || "").toLowerCase();
       if (
@@ -5177,6 +4934,18 @@ export class LiveTradingService {
       if (this.triggerRestingBuys.has(key)) {
         await this.cancelTriggerRestingBuy(key, "first fill — cancel other", state);
       }
+    }
+  }
+
+  /** Cancel resting GTD buys for every trigger other than the winner. */
+  private async cancelOtherTriggerRestingBuys(
+    winnerTriggerId: string,
+    state?: LiveWindowState,
+  ): Promise<void> {
+    const winner = String(winnerTriggerId || "").trim();
+    for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      if (winner && resting.triggerId === winner) continue;
+      await this.cancelTriggerRestingBuy(rk, "Trade race — other trigger filled", state);
     }
   }
 
@@ -5869,18 +5638,51 @@ export class LiveTradingService {
     }
   }
 
+  /** True while any prior-window Open card is still inside the hard Gamma poll window. */
+  private hasHeldCardsInHardPollWindow(nowMs = Date.now()): boolean {
+    const currentKey = this.sessionKey;
+    for (const card of this.positionCards) {
+      if (card.status !== "open") continue;
+      if (!card.windowKey || (currentKey && card.windowKey === currentKey)) continue;
+      const ws = windowKeyUnixSec(card.windowKey);
+      if (!Number.isFinite(ws)) return true;
+      const windowEndMs = (ws + windowDurationSecFromKey(card.windowKey)) * 1000;
+      if (nowMs < windowEndMs + HELD_GAMMA_HARD_POLL_MS) return true;
+    }
+    return false;
+  }
+
+  private nextConfirmDelayMs(): number {
+    if (this.hasHeldCardsInHardPollWindow()) return CONFIRM_HARD_INTERVAL_MS;
+    const currentKey = this.sessionKey;
+    const hasOpenHeld = this.positionCards.some(
+      (c) =>
+        c.status === "open" &&
+        Boolean(c.windowKey) &&
+        Boolean(currentKey) &&
+        c.windowKey !== currentKey,
+    );
+    // Held past hard window: light Gamma retries. Other pending (sold/fill) stays snappy.
+    if (hasOpenHeld) return CONFIRM_LIGHT_INTERVAL_MS;
+    return 3000;
+  }
+
   private ensureConfirmLoop(): void {
     this.invalidateCorruptConfirmedCards();
     if (this.confirmLoopTimer || !this.hasPendingCards()) return;
-    this.confirmLoopTimer = setInterval(() => {
-      void this.reconfirmPendingCards();
-    }, 3000);
-    void this.reconfirmPendingCards();
+    const tick = (): void => {
+      void this.reconfirmPendingCards().finally(() => {
+        this.confirmLoopTimer = null;
+        if (!this.hasPendingCards()) return;
+        this.confirmLoopTimer = setTimeout(tick, this.nextConfirmDelayMs());
+      });
+    };
+    this.confirmLoopTimer = setTimeout(tick, 0);
   }
 
   private stopConfirmLoopIfIdle(): void {
     if (this.hasPendingCards() || !this.confirmLoopTimer) return;
-    clearInterval(this.confirmLoopTimer);
+    clearTimeout(this.confirmLoopTimer);
     this.confirmLoopTimer = null;
   }
 
@@ -5953,8 +5755,8 @@ export class LiveTradingService {
       const priorWindow =
         Boolean(this.sessionKey) && Boolean(card.windowKey) && card.windowKey !== this.sessionKey;
       if (priorWindow) {
-        // Held past window end — Gamma marks win/loss (same clock as Prediction).
-        const settled = await this.trySettleHeldCardFromPolymarket(card);
+        // Held past window end — Gamma only (no token-mark fallback).
+        const settled = await this.trySettleHeldCardFromGamma(card);
         if (!settled) card.confirmed = false;
         return;
       }
@@ -6161,7 +5963,8 @@ export class LiveTradingService {
   }
 
   private async tryConfirmSettledCard(card: TradingPositionCard): Promise<void> {
-    await this.trySettleHeldCardFromPolymarket(card);
+    // Re-verify Win/Loss against Gamma only (catches stale wrong outcomes).
+    await this.trySettleHeldCardFromGamma(card);
   }
 
   private async enrichCardFromPolymarketBuy(cardId: string): Promise<void> {

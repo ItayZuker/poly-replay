@@ -6236,7 +6236,8 @@ body.is-row-resizing .panel-header-drag-handle {
   opacity: 0.7;
 }
 
-.wallet-header-refresh .settings-panel-title {
+.wallet-header-refresh .settings-panel-title,
+.wallet-header-refresh .triggers-panel-title {
   margin: 0;
 }
 

@@ -68,8 +68,9 @@ const CLOB_SILENCE_MS = 20_000;
 /** Ignore silence right after a window opens (pair/book may still be warming up). */
 const WINDOW_START_GRACE_MS = 20_000;
 /**
- * After windowEnd, keep polling Gamma in the background this long before leaving
- * windowOutcome permanently unset (does not block the next recording window).
+ * After windowEnd, hard-poll Gamma in the background this long before leaving
+ * windowOutcome unset on the recording (does not block the next window).
+ * Later backfill / light retries can still write the outcome when Gamma lands.
  */
 const OFFICIAL_RESOLVE_MAX_WAIT_MS = 20 * 60 * 1000;
 const OFFICIAL_RESOLVE_POLL_MS = 2_000;

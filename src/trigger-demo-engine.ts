@@ -153,6 +153,8 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
           latencyMs: latency,
           fillSuccessPct: 100,
           windowOutcome: null,
+          // Demo: each Active card tests its own setup — no cross-trigger race.
+          independentBuys: true,
         }),
         defs,
         openCardByTrigger: new Map(),
