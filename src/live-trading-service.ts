@@ -181,6 +181,9 @@ export type TriggerGtdDesire = {
   takeProfitCents?: number;
   /** Optional title hint; server also resolves from Mongo by triggerId. */
   triggerName?: string;
+  /** Target market window (unix sec). Enables pre-open placement for Offset GTD. */
+  windowStart?: number;
+  windowEnd?: number;
 };
 
 /** Trigger GTD limit from 0.1¢ steps (0.5¢ → 0.005). Unlike phase centsToPrice (min 1¢). */
@@ -302,6 +305,17 @@ type UpdateListener = () => void;
 
 function sessionKey(state: LiveWindowState): string {
   return `${state.series || ""}:${state.windowStart || ""}`;
+}
+
+function sessionKeyForWindow(series: string, windowStart: number): string {
+  return `${series || ""}:${windowStart || ""}`;
+}
+
+function windowStartFromSessionKey(key: string): number | null {
+  const idx = String(key || "").lastIndexOf(":");
+  if (idx < 0) return null;
+  const n = Number(String(key).slice(idx + 1));
+  return Number.isFinite(n) ? n : null;
 }
 
 function contributionFromCard(card: TradingPositionCard): SettledStatContribution | null {
@@ -4721,8 +4735,12 @@ export class LiveTradingService {
     return Boolean(this.positions[side]);
   }
 
-  private triggerRestKey(triggerId: string, side: "up" | "down"): string {
-    return `${triggerId}:${side}`;
+  private triggerRestKey(
+    triggerId: string,
+    side: "up" | "down",
+    windowStart: number | string,
+  ): string {
+    return `${triggerId}:${side}:${windowStart}`;
   }
 
   private async cancelAllTriggerRestingBuys(
@@ -4905,7 +4923,12 @@ export class LiveTradingService {
       }
       // First Trigger Trade fill wins the window slot: cancel every other rest
       // (sibling side + other Active Trade cards) until sell / window end.
-      await this.cancelTriggerSiblingRests(resting.triggerId, resting.side, state);
+      await this.cancelTriggerSiblingRests(
+        resting.triggerId,
+        resting.side,
+        state,
+        resting.sessionKey,
+      );
       await this.cancelOtherTriggerRestingBuys(resting.triggerId, state);
       resting.cancelPending = true;
       const status = String(snap.status || "").toLowerCase();
@@ -4936,13 +4959,14 @@ export class LiveTradingService {
     triggerId: string,
     filledSide: "up" | "down",
     state?: LiveWindowState,
+    session?: string,
   ): Promise<void> {
-    for (const side of SIDES_ORDER) {
-      if (side === filledSide) continue;
-      const key = this.triggerRestKey(triggerId, side);
-      if (this.triggerRestingBuys.has(key)) {
-        await this.cancelTriggerRestingBuy(key, "first fill — cancel other", state);
-      }
+    const tid = String(triggerId || "").trim();
+    for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
+      if (resting.triggerId !== tid) continue;
+      if (resting.side === filledSide) continue;
+      if (session && resting.sessionKey !== session) continue;
+      await this.cancelTriggerRestingBuy(rk, "first fill — cancel other", state);
     }
   }
 
@@ -4990,16 +5014,31 @@ export class LiveTradingService {
       return { ok: true, fills };
     }
 
-    const key = sessionKey(state);
+    const currentKey = sessionKey(state);
+    const currentWs = Number(state.windowStart);
     const nowSec = Math.floor((state.lastTickMs ?? Date.now()) / 1000);
-    const windowEnd = state.windowEnd ?? nowSec + 300;
 
-    const desireByKey = new Map<string, TriggerGtdDesire & { side: "up" | "down" }>();
+    type Want = TriggerGtdDesire & {
+      side: "up" | "down";
+      targetKey: string;
+      targetWindowStart: number;
+      targetWindowEnd: number;
+    };
+    const desireByKey = new Map<string, Want>();
     for (const d of desires) {
       const triggerId = String(d.triggerId || "").trim();
       if (!triggerId) continue;
-      // Already filled this window and not sold yet — do not rest again.
-      if (this.isTriggerGtdHeld(triggerId, key)) continue;
+      const targetWsRaw = Number(d.windowStart);
+      const targetWeRaw = Number(d.windowEnd);
+      const targetWindowStart =
+        Number.isFinite(targetWsRaw) && targetWsRaw > 0 ? Math.floor(targetWsRaw) : currentWs;
+      const targetWindowEnd =
+        Number.isFinite(targetWeRaw) && targetWeRaw > targetWindowStart
+          ? Math.floor(targetWeRaw)
+          : Number(state.windowEnd) || nowSec + 300;
+      const targetKey = sessionKeyForWindow(String(state.series || ""), targetWindowStart);
+      // Already filled this target window and not sold yet — do not rest again.
+      if (this.isTriggerGtdHeld(triggerId, targetKey)) continue;
       const priceCents = Math.max(0, Math.min(100, Math.round(Number(d.priceCents) * 10) / 10));
       if (!Number.isFinite(priceCents)) continue;
       const shares = Math.max(1, Math.floor(Number(d.shares) || 1));
@@ -5017,7 +5056,7 @@ export class LiveTradingService {
           : undefined;
       for (const side of d.sides) {
         if (side !== "up" && side !== "down") continue;
-        const rk = this.triggerRestKey(triggerId, side);
+        const rk = this.triggerRestKey(triggerId, side, targetWindowStart);
         desireByKey.set(rk, {
           triggerId,
           sides: d.sides,
@@ -5026,15 +5065,17 @@ export class LiveTradingService {
           shares,
           sellOrderType,
           takeProfitCents,
+          targetKey,
+          targetWindowStart,
+          targetWindowEnd,
           ...(triggerName ? { triggerName } : {}),
         });
       }
     }
 
-    // Drop rests for held triggers (client may still send desires while holding).
-    // Cancel keeps tracking until CLOB confirms — blocks re-place of a second rest.
+    // Drop rests for held triggers (same target window only).
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
-      if (this.isTriggerGtdHeld(resting.triggerId, key)) {
+      if (this.isTriggerGtdHeld(resting.triggerId, resting.sessionKey)) {
         await this.cancelTriggerRestingBuy(rk, "trigger holding — no rearm", state);
       }
     }
@@ -5043,10 +5084,10 @@ export class LiveTradingService {
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
       if (!resting.cancelPending) continue;
       const want = desireByKey.get(rk);
-      if (!want || this.isTriggerGtdHeld(resting.triggerId, key)) continue;
+      if (!want || this.isTriggerGtdHeld(resting.triggerId, resting.sessionKey)) continue;
       const limitPrice = triggerGtdLimitPrice(want.priceCents);
       const matches =
-        resting.sessionKey === key &&
+        resting.sessionKey === want.targetKey &&
         Math.abs(resting.limitPrice - limitPrice) <= 1e-9 &&
         resting.shares === want.shares;
       if (matches) {
@@ -5055,34 +5096,30 @@ export class LiveTradingService {
       }
     }
 
-    // Cancel rests that are no longer desired or at a different price/size.
-    // Once a side has placed this window, keep that rest even if its desire
-    // briefly drops — latch forbids a replacement on the same side.
+    // Cancel rests that are no longer desired (left place window, delete/pause/Demo,
+    // or price/size change). Past windows always roll off; future pre-places cancel
+    // when the client stops desiring them.
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
-      if (
-        resting.sessionKey === key &&
-        this.isTriggerGtdPlaced(resting.triggerId, resting.side, key) &&
-        !this.isTriggerGtdHeld(resting.triggerId, key)
-      ) {
-        // Reclaim if a brief cancel race marked cancel — do not drop a live rest.
-        if (resting.cancelPending && desireByKey.has(rk)) {
-          resting.cancelPending = false;
-          resting.cancelAttempts = 0;
-        }
-        if (!resting.cancelPending) continue;
-      }
       const want = desireByKey.get(rk);
       const limitPrice = want ? triggerGtdLimitPrice(want.priceCents) : NaN;
-      const stale =
-        !want ||
-        resting.sessionKey !== key ||
-        Math.abs(resting.limitPrice - limitPrice) > 1e-9 ||
-        resting.shares !== want.shares;
-      if (stale || resting.cancelPending) {
+      const restingWs = windowStartFromSessionKey(resting.sessionKey);
+      const pastWindow =
+        Number.isFinite(currentWs) && restingWs != null && restingWs < currentWs;
+      if (pastWindow) {
+        await this.cancelTriggerRestingBuy(rk, "window roll", state);
+        if (this.triggerRestingBuys.has(rk)) {
+          this.releaseTriggerRestSlot(rk, resting, "window end", "window roll");
+        }
+        continue;
+      }
+      const priceSizeStale =
+        Boolean(want) &&
+        (Math.abs(resting.limitPrice - limitPrice) > 1e-9 || resting.shares !== want!.shares);
+      if (!want || priceSizeStale || resting.cancelPending) {
         await this.cancelTriggerRestingBuy(
           rk,
           !want
-            ? "gap/window — not desired"
+            ? "apply/window — not desired"
             : resting.cancelPending
               ? "cancel retry"
               : "price/size change",
@@ -5093,20 +5130,36 @@ export class LiveTradingService {
 
     // Poll remaining rests for fills.
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
-      // 3) End of window — best-effort cancel, then always free the slot.
-      if (resting.sessionKey !== key) {
+      const restingWs = windowStartFromSessionKey(resting.sessionKey);
+      if (
+        Number.isFinite(currentWs) &&
+        restingWs != null &&
+        restingWs < currentWs
+      ) {
         await this.cancelTriggerRestingBuy(rk, "window roll", state);
         if (this.triggerRestingBuys.has(rk)) {
           this.releaseTriggerRestSlot(rk, resting, "window end", "window roll");
         }
         continue;
       }
+      const fillState: LiveWindowState =
+        resting.sessionKey === currentKey
+          ? state
+          : {
+              ...state,
+              windowStart: restingWs ?? state.windowStart,
+              windowEnd:
+                restingWs != null && Number.isFinite(Number(state.windowEnd)) &&
+                Number.isFinite(Number(state.windowStart))
+                  ? restingWs + (Number(state.windowEnd) - Number(state.windowStart))
+                  : state.windowEnd,
+            };
       const beforeMatched = resting.sizeMatched;
       const beforeSide = resting.side;
       const beforeTriggerId = resting.triggerId;
       const beforeShares = resting.shares;
       const beforePrice = resting.limitPrice;
-      const done = await this.harvestTriggerGtdFill(resting, state);
+      const done = await this.harvestTriggerGtdFill(resting, fillState);
       if (resting.sizeMatched > beforeMatched + 1e-9) {
         fills.push({
           triggerId: beforeTriggerId,
@@ -5119,7 +5172,7 @@ export class LiveTradingService {
             c.source === "trigger" &&
             c.triggerId === beforeTriggerId &&
             c.status === "open" &&
-            c.windowKey === key,
+            c.windowKey === resting.sessionKey,
         );
         if (card) {
           fills[fills.length - 1]!.fillPrice = card.buyPrice;
@@ -5130,7 +5183,6 @@ export class LiveTradingService {
         }
         this.notify();
       }
-      // Drop tracking only on filled / cancel_confirmed (harvest), never on unknown.
       if (done) {
         const why: "filled" | "cancel confirmed" =
           resting.sizeMatched > 1e-9 ? "filled" : "cancel confirmed";
@@ -5146,8 +5198,8 @@ export class LiveTradingService {
       this.positions.down ||
       this.manualBuyPending ||
       this.pendingBuyConfirm ||
-      this.buyBlockedWindowKey === key ||
-      this.predictionTradeHoldWindowKey === key
+      this.buyBlockedWindowKey === currentKey ||
+      this.predictionTradeHoldWindowKey === currentKey
     ) {
       if (this.triggerRestingBuys.size > 0 && (this.positions.up || this.positions.down)) {
         await this.cancelAllTriggerRestingBuys("position open", state);
@@ -5158,38 +5210,38 @@ export class LiveTradingService {
     if (this.orderInFlight) return { ok: true, fills };
 
     for (const [rk, want] of desireByKey.entries()) {
-      // Still tracking a rest (including cancel-pending) → never place a duplicate.
       if (this.triggerRestingBuys.has(rk)) continue;
-      if (this.isTriggerGtdHeld(want.triggerId, key)) continue;
-      // Already accepted a resting GTD on this side this window — never re-place.
-      if (this.isTriggerGtdPlaced(want.triggerId, want.side, key)) continue;
+      if (this.isTriggerGtdHeld(want.triggerId, want.targetKey)) continue;
+      if (this.isTriggerGtdPlaced(want.triggerId, want.side, want.targetKey)) continue;
       if (this.positions.up || this.positions.down) break;
-      if (this.predictionTradeHoldWindowKey === key) break;
-      // Hard cap: never place again if this trigger already bought ≥ Shares this window
-      // (blocks double-place even if a rest was dropped early).
+      if (this.predictionTradeHoldWindowKey === currentKey) break;
       const matchedForTrigger = [...this.triggerRestingBuys.values()]
-        .filter((r) => r.triggerId === want.triggerId)
+        .filter((r) => r.triggerId === want.triggerId && r.sessionKey === want.targetKey)
         .reduce((sum, r) => sum + r.sizeMatched, 0);
       const cardShares = this.positionCards
         .filter(
           (c) =>
             c.source === "trigger" &&
             c.triggerId === want.triggerId &&
-            c.windowKey === key &&
+            c.windowKey === want.targetKey &&
             c.status === "open",
         )
         .reduce((sum, c) => sum + (Number(c.shares) || 0), 0);
       if (matchedForTrigger + cardShares >= want.shares - 1e-9) {
-        this.latchTriggerGtdPlaced(want.triggerId, want.side, key);
+        this.latchTriggerGtdPlaced(want.triggerId, want.side, want.targetKey);
         continue;
       }
 
-      // Trigger GTD takes the slot — drop phase rests first.
       if (this.restingBuys.size > 0) {
         await this.cancelAllRestingBuys("trigger GTD buy");
       }
 
       const limitPrice = triggerGtdLimitPrice(want.priceCents);
+      const placeState: LiveWindowState = {
+        ...state,
+        windowStart: want.targetWindowStart,
+        windowEnd: want.targetWindowEnd,
+      };
       this.orderInFlight = true;
       try {
         this.autoEngine.setExternalBuyPaused(true);
@@ -5198,8 +5250,9 @@ export class LiveTradingService {
           side: want.side,
           size: want.shares,
           price: limitPrice,
-          expirationSec: gtdExpirationUnix(windowEnd, nowSec),
-          state,
+          expirationSec: gtdExpirationUnix(want.targetWindowEnd, nowSec),
+          state: placeState,
+          windowStart: want.targetWindowStart,
           logTag: `trigger ${want.triggerId.slice(0, 8)}`,
         });
         if (!result.success || !result.orderId) {
@@ -5208,17 +5261,15 @@ export class LiveTradingService {
           }
           const err = result.error ?? "";
           if (err) logService.warn("trading", `Trigger GTD place failed (${want.side}): ${err}`);
-          // Do not latch on failure — allow retry until a rest is accepted.
           continue;
         }
-        // Accepted by CLOB — one rest max per side this window (UP + DOWN both allowed).
-        this.latchTriggerGtdPlaced(want.triggerId, want.side, key);
+        this.latchTriggerGtdPlaced(want.triggerId, want.side, want.targetKey);
 
         const immediateFill =
           result.fillShares != null && result.fillPrice != null && result.fillShares > 0;
         if (immediateFill) {
           await this.recordBuyFill(
-            state,
+            placeState,
             want.side,
             result.fillShares!,
             result.fillPrice!,
@@ -5236,7 +5287,7 @@ export class LiveTradingService {
           );
           if (want.sellOrderType === "GTD") {
             await this.ensureTriggerGtdSell(
-              state,
+              placeState,
               want.side,
               want.takeProfitCents ?? 10,
               result.fillShares!,
@@ -5250,12 +5301,11 @@ export class LiveTradingService {
             fillPrice: result.fillPrice!,
             fillShares: result.fillShares!,
           });
-          // Track until CLOB confirms the order is done (blocks duplicate place).
           this.triggerRestingBuys.set(rk, {
             orderId: result.orderId,
             triggerId: want.triggerId,
             side: want.side,
-            sessionKey: key,
+            sessionKey: want.targetKey,
             shares: want.shares,
             limitPrice,
             sizeMatched: result.fillShares!,
@@ -5267,9 +5317,13 @@ export class LiveTradingService {
             cancelPending: true,
             cancelAttempts: 0,
           });
-          await this.cancelTriggerSiblingRests(want.triggerId, want.side, state);
+          await this.cancelTriggerSiblingRests(
+            want.triggerId,
+            want.side,
+            state,
+            want.targetKey,
+          );
           await this.cancelTriggerRestingBuy(rk, "immediate fill — close rest", state);
-          // Stop placing further rests this sync — hold latch is set; rearm only after sell.
           break;
         }
 
@@ -5277,7 +5331,7 @@ export class LiveTradingService {
           orderId: result.orderId,
           triggerId: want.triggerId,
           side: want.side,
-          sessionKey: key,
+          sessionKey: want.targetKey,
           shares: want.shares,
           limitPrice,
           sizeMatched: 0,

@@ -1,6 +1,6 @@
 import { OrderType, Side, type TickSize } from "@polymarket/clob-client-v2";
 import { createPublicClient, getClobHost, getChainId, getMarketInfo } from "./clob-service.js";
-import { fetchCurrentUpDownMarket } from "./market-pair.js";
+import { fetchCurrentUpDownMarket, fetchUpDownMarketAtWindow } from "./market-pair.js";
 import { logService } from "./log-service.js";
 import { getTradingClient, isTradingConfigured } from "./trading-client.js";
 import type { LiveWindowState } from "./types.js";
@@ -36,6 +36,8 @@ export interface PlaceLimitOrderInput {
   /** Unix seconds expiration for GTD. */
   expirationSec: number;
   state?: LiveWindowState;
+  /** When set, place on that market window (may be before it opens). */
+  windowStart?: number;
   /** Optional tag appended to success logs (e.g. "phase 2"). */
   logTag?: string;
 }
@@ -618,7 +620,11 @@ async function placeLimitGtdOrder(
   }
 
   try {
-    const pair = await fetchCurrentUpDownMarket(input.series);
+    const targetWs = Math.floor(Number(input.windowStart));
+    const pair =
+      Number.isFinite(targetWs) && targetWs > 0
+        ? await fetchUpDownMarketAtWindow(input.series, targetWs)
+        : await fetchCurrentUpDownMarket(input.series);
     const tokenID = tokenForSide(pair, input.side);
     const publicClient = await createPublicClient(getClobHost(), getChainId());
     const info = await getMarketInfo(publicClient, tokenID);

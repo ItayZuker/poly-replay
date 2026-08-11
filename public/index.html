@@ -1436,46 +1436,6 @@
           aria-labelledby="trigger-tab-buy"
           data-trigger-tab-panel="buy"
         >
-          <div class="trigger-order-type-block">
-            <div class="modal-field trigger-order-type-field">
-              <button
-                type="button"
-                class="settings-info-toggle trigger-order-type-info-toggle"
-                id="trigger-buy-order-info-btn"
-                aria-expanded="false"
-                aria-controls="trigger-buy-order-note"
-                title="About buy order types"
-              >
-                <span class="settings-info-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
-                </span>
-                <span class="settings-field-label">Buy order type</span>
-              </button>
-              <select id="trigger-buy-order-type" class="modal-select" aria-label="Trigger buy order type">
-                <option value="FAK">FAK</option>
-                <option value="FOK" selected>FOK</option>
-                <option value="GTD">GTD</option>
-              </select>
-            </div>
-            <div
-              id="trigger-buy-order-note"
-              class="trigger-order-type-info-panel"
-              role="region"
-              aria-labelledby="trigger-buy-order-info-btn"
-              aria-hidden="true"
-            >
-              <div class="trigger-order-type-info-panel-body">
-                <ul class="trigger-order-type-note-list">
-                  <li><strong>FAK</strong> — Fill-And-Kill: take what the book allows now; any unfilled size is cancelled.</li>
-                  <li><strong>FOK</strong> — Fill-Or-Kill: full size or nothing (default).</li>
-                  <li>
-                    <strong>GTD</strong> — Good-Til-Date: resting limit buys at the Price ¢ from Apply-window start
-                    (only when Duration is <strong>0</strong>, left bar is <strong>UP/DOWN Price</strong>, and no Gap).
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
         <section class="modal-section trigger-duration-section" aria-label="Duration">
           <div class="trigger-duration-diagram" aria-label="Trigger duration period">
             <div class="trigger-duration-stage">
@@ -1768,21 +1728,6 @@
             <div class="trigger-duration-labels">
               <div class="trigger-duration-start-controls">
                 <span class="trigger-duration-label trigger-duration-label--start">Start</span>
-                <label class="trigger-shares-field" for="trigger-buy-shares">
-                  <span class="trigger-shares-caption">Shares</span>
-                  <input
-                    type="number"
-                    id="trigger-buy-shares"
-                    class="trigger-buy-shares"
-                    min="1"
-                    max="100000"
-                    step="1"
-                    value="10"
-                    inputmode="numeric"
-                    aria-label="Buy shares"
-                    title="Buy size"
-                  />
-                </label>
               </div>
               <div class="trigger-duration-end-controls">
                 <label class="trigger-duration-input-label" for="trigger-duration-value">
@@ -1811,6 +1756,36 @@
         <section class="modal-section trigger-window-area-section" aria-label="Apply window">
           <div class="trigger-window-area-head">
             <span class="trigger-window-area-title" id="trigger-window-area-label">Apply window</span>
+            <div class="trigger-gtd-place-offset" id="trigger-gtd-place-offset">
+              <span class="trigger-gtd-place-offset-label" id="trigger-gtd-place-offset-label"
+                >Offset GTD placment</span
+              >
+              <label class="trigger-duration-input-label" for="trigger-gtd-place-offset-value">
+                <span class="visually-hidden">Offset GTD placment value</span>
+                <input
+                  type="number"
+                  id="trigger-gtd-place-offset-value"
+                  class="trigger-duration-value"
+                  min="0"
+                  step="1"
+                  value="0"
+                  inputmode="numeric"
+                  aria-labelledby="trigger-gtd-place-offset-label"
+                  title="How early to place Buy GTD before Apply start (0 = at Apply start)"
+                  disabled
+                />
+              </label>
+              <select
+                id="trigger-gtd-place-offset-unit"
+                class="trigger-duration-unit"
+                aria-label="Offset GTD placment unit"
+                disabled
+              >
+                <option value="ms">ms</option>
+                <option value="s" selected>sec</option>
+                <option value="min">min</option>
+              </select>
+            </div>
           </div>
           <div
             class="manipulation-area-slider trigger-window-area-slider"
@@ -1839,6 +1814,63 @@
             <span class="manipulation-area-thumb-label" id="trigger-window-area-end-label">5:00</span>
           </div>
         </section>
+          <div class="trigger-order-type-block trigger-buy-order-row-block">
+            <div class="trigger-buy-order-row">
+              <label class="trigger-shares-field" for="trigger-buy-shares">
+                <span class="trigger-shares-caption">Share</span>
+                <input
+                  type="number"
+                  id="trigger-buy-shares"
+                  class="trigger-buy-shares"
+                  min="1"
+                  max="100000"
+                  step="1"
+                  value="10"
+                  inputmode="numeric"
+                  aria-label="Buy shares"
+                  title="Buy size"
+                />
+              </label>
+              <div class="modal-field trigger-order-type-field">
+                <button
+                  type="button"
+                  class="settings-info-toggle trigger-order-type-info-toggle"
+                  id="trigger-buy-order-info-btn"
+                  aria-expanded="false"
+                  aria-controls="trigger-buy-order-note"
+                  title="About buy order types"
+                >
+                  <span class="settings-info-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="5" r="0.85" fill="currentColor"/></svg>
+                  </span>
+                  <span class="settings-field-label">Type</span>
+                </button>
+                <select id="trigger-buy-order-type" class="modal-select" aria-label="Trigger buy order type">
+                  <option value="FAK">FAK</option>
+                  <option value="FOK" selected>FOK</option>
+                  <option value="GTD">GTD</option>
+                </select>
+              </div>
+            </div>
+            <div
+              id="trigger-buy-order-note"
+              class="trigger-order-type-info-panel"
+              role="region"
+              aria-labelledby="trigger-buy-order-info-btn"
+              aria-hidden="true"
+            >
+              <div class="trigger-order-type-info-panel-body">
+                <ul class="trigger-order-type-note-list">
+                  <li><strong>FAK</strong> — Fill-And-Kill: take what the book allows now; any unfilled size is cancelled.</li>
+                  <li><strong>FOK</strong> — Fill-Or-Kill: full size or nothing (default).</li>
+                  <li>
+                    <strong>GTD</strong> — Good-Til-Date: resting limit buys at the Price ¢ from Apply-window start
+                    (only when Duration is <strong>0</strong>, left bar is <strong>UP/DOWN Price</strong>, and no Gap).
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
         <div
           class="settings-tab-panel trigger-create-tab-panel"
