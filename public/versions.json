@@ -1,6 +1,11 @@
 {
-    "current": "1.68.10",
+    "current": "1.68.11",
     "releases": [
+        {
+            "version": "1.68.11",
+            "releasedAt": "2026-08-11T11:51:10.200Z",
+            "notes": "Offset GTD placment: place Buy GTD at Apply start minus offset (Trade/Demo/Replay); cancel on place-window end, delete, pause, or Demo. Docs updated."
+        },
         {
             "version": "1.68.10",
             "releasedAt": "2026-08-11T10:55:02.861Z",
