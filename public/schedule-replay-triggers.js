@@ -220,9 +220,16 @@
       return null;
     }
     const now = new Date().toISOString();
+    const color =
+      typeof window.randomTriggerColorHex === "function"
+        ? window.randomTriggerColorHex()
+        : `#${Math.floor(Math.random() * 0xffffff)
+            .toString(16)
+            .padStart(6, "0")}`;
     const next = normalizeTrigger({
       ...clone,
       id: newTriggerId(),
+      color,
       paused: true,
       replayStats: emptyStats(),
       createdAt: now,

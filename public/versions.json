@@ -1,6 +1,11 @@
 {
-    "current": "1.68.6",
+    "current": "1.68.7",
     "releases": [
+        {
+            "version": "1.68.7",
+            "releasedAt": "2026-08-11T06:41:24.781Z",
+            "notes": "New and duplicated trigger cards get a random handle color (Market + Replay). Docs updated."
+        },
         {
             "version": "1.68.6",
             "releasedAt": "2026-08-11T06:20:00.000Z",

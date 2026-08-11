@@ -5406,6 +5406,24 @@ $("log-scroll-bottom").addEventListener("click", () => {
 let triggerCreateDurationMs = 5000;
 let triggerCreateName = "";
 let triggerCreateColor = "#58a6ff";
+
+/** Random saturated hex for new / duplicated trigger cards (left handle). */
+function randomTriggerColorHex() {
+  const h = Math.floor(Math.random() * 360);
+  const s = 0.55 + Math.random() * 0.25;
+  const l = 0.42 + Math.random() * 0.14;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * Math.min(1, Math.max(0, c)))
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+window.randomTriggerColorHex = randomTriggerColorHex;
+
 /** Quotes always use Buy (Ask); Sell-side quote mode removed from the editor. */
 let triggerCreatePriceSide = "buy";
 /** Start bar mode: "range" | "price" (single Ask ¢ on 0–100 scale). */
@@ -7317,6 +7335,7 @@ function duplicateUserTrigger(trigger) {
   const next = normalizeTriggerRecord({
     ...clone,
     id: newUserTriggerId(),
+    color: randomTriggerColorHex(),
     runMode: "demo",
     paused: true,
     demoStats: emptyTriggerDemoStats(),
@@ -8491,12 +8510,13 @@ function resetTriggerCreateForm() {
   const colorEl = $("trigger-create-color");
   const valueEl = $("trigger-duration-value");
   const unitEl = $("trigger-duration-unit");
+  const color = randomTriggerColorHex();
   if (nameEl) nameEl.value = "";
-  if (colorEl) colorEl.value = "#58a6ff";
+  if (colorEl) colorEl.value = color;
   if (valueEl) valueEl.value = "5";
   if (unitEl) unitEl.value = "s";
   triggerCreateName = "";
-  triggerCreateColor = "#58a6ff";
+  triggerCreateColor = color;
   triggerCreateDurationMs = 5000;
   triggerCreatePriceSide = "buy";
   triggerCreateStartMode = "range";
