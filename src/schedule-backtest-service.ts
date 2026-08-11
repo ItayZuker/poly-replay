@@ -702,6 +702,8 @@ export async function simulateRecordedWindow(
           latencyMs: setup.latencyMs,
           fillSuccessPct,
           windowOutcome: window.windowOutcome ?? null,
+          // Replay Run: every Active card may buy (same as Market Demo testing).
+          independentBuys: true,
         })
       : null;
 

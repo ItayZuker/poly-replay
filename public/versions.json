@@ -1,6 +1,11 @@
 {
-    "current": "1.68.7",
+    "current": "1.68.8",
     "releases": [
+        {
+            "version": "1.68.8",
+            "releasedAt": "2026-08-11T08:28:24.156Z",
+            "notes": "Demo+Replay triggers buy independently; Trade triggers race one open at a time. Triggers header refresh for stats. Held Win/Loss from Gamma only (20m hard poll, then light retries; no token-mark). Docs updated."
+        },
         {
             "version": "1.68.7",
             "releasedAt": "2026-08-11T06:41:24.781Z",
