@@ -7454,6 +7454,33 @@ function newUserTriggerId() {
   return `trg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Open Replay for Demo Positions windows of one Market Trigger. */
+function openTriggerDemoWindowsReplay(trigger) {
+  const id = trigger?.id != null ? String(trigger.id).trim() : "";
+  if (!id) return;
+  const title = String(trigger?.name || "Untitled trigger").trim() || "Untitled trigger";
+  const series =
+    typeof window.getSelectedSeries === "function"
+      ? window.getSelectedSeries()
+      : windowState?.series || "btc-5m";
+  const cards = Array.isArray(windowState?.trading?.positionCards)
+    ? windowState.trading.positionCards
+    : [];
+  const hint = cards.filter(
+    (c) =>
+      c &&
+      c.demo === true &&
+      String(c.triggerId || "") === id &&
+      (c.source == null || c.source === "trigger"),
+  ).length;
+  window.SchedulePlay?.init?.();
+  void window.SchedulePlay?.openDemoTrigger?.(id, {
+    series,
+    triggerTitle: title,
+    windowCountHint: Math.max(1, hint),
+  });
+}
+
 /** Deep-copy a Market Trigger; always starts Paused / Demo with empty Demo stats. */
 function duplicateUserTrigger(trigger) {
   closeTriggerMenus();
@@ -7586,6 +7613,17 @@ function renderTriggersList() {
         duplicateUserTrigger(trigger);
       });
 
+      const replayBtn = document.createElement("button");
+      replayBtn.type = "button";
+      replayBtn.className = "schedule-setup-menu-item";
+      replayBtn.setAttribute("role", "menuitem");
+      replayBtn.textContent = "Replay";
+      replayBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        closeTriggerMenus();
+        openTriggerDemoWindowsReplay(trigger);
+      });
+
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "schedule-setup-menu-item schedule-setup-menu-item-danger";
@@ -7596,7 +7634,7 @@ function renderTriggersList() {
         deleteUserTrigger(trigger);
       });
 
-      menu.append(editBtn, duplicateBtn, deleteBtn);
+      menu.append(editBtn, duplicateBtn, replayBtn, deleteBtn);
       document.body.appendChild(menu);
       positionSetupMenu(menu, menuBtn);
     });

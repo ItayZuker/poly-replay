@@ -1,4 +1,8 @@
 import {
+  createPublicClient,
+  getChainId,
+  getClobHost,
+  getMarketInfo,
   parseBookSide,
   mergeBestLevelsIntoDepth,
   type BookLevel,
@@ -76,8 +80,9 @@ export function hasSocketBook(info: MarketInfo | undefined): boolean {
 }
 
 /**
- * Live CLOB market feed — book state is driven only by the market WebSocket.
- * Token discovery (Gamma/slug) is separate; REST order books are not applied.
+ * Live CLOB market feed — book state is driven by the market WebSocket.
+ * Token discovery (Gamma/slug) is separate. REST order books may seed the
+ * cache at window open / prefetch so recordings capture the first Ask/Bid.
  */
 export class ClobMarketFeed {
   private ws: WebSocket | null = null;
@@ -174,6 +179,63 @@ export class ClobMarketFeed {
     };
   }
 
+  /**
+   * Seed subscribed token books from CLOB REST so window-open recordings do not
+   * wait for the first WebSocket snapshot (often misses early ~1¢ Asks).
+   * @returns number of tokens that received a non-empty book
+   */
+  async seedBooksFromRest(tokenIds: string[]): Promise<number> {
+    const unique = [...new Set(tokenIds.filter(Boolean))];
+    if (unique.length === 0) return 0;
+    this.ensureSubscribed(unique);
+    let seeded = 0;
+    try {
+      const client = await createPublicClient(getClobHost(), getChainId());
+      await Promise.all(
+        unique.map(async (tokenId) => {
+          try {
+            const info = await getMarketInfo(client, tokenId);
+            if (this.applyRestMarketInfo(tokenId, info)) seeded += 1;
+          } catch (err) {
+            logService.warn(
+              "clob",
+              `REST book seed failed (${tokenId.slice(0, 10)}…): ${String(err)}`,
+            );
+          }
+        }),
+      );
+    } catch (err) {
+      logService.warn("clob", `REST book seed client failed: ${String(err)}`);
+    }
+    return seeded;
+  }
+
+  private applyRestMarketInfo(tokenId: string, info: MarketInfo): boolean {
+    const state = this.getOrCreateState(tokenId);
+    if (!state) return false;
+    const hasBook =
+      (info.bids?.length ?? 0) > 0 ||
+      (info.asks?.length ?? 0) > 0 ||
+      info.bestBid != null ||
+      info.bestAsk != null;
+    if (!hasBook) return false;
+
+    state.tickSize = info.tickSize || state.tickSize;
+    state.negRisk = Boolean(info.negRisk);
+    state.bids = Array.isArray(info.bids) ? info.bids : [];
+    state.asks = Array.isArray(info.asks) ? info.asks : [];
+    state.bestBid = info.bestBid;
+    state.bestAsk = info.bestAsk;
+    state.bestBidSize = info.bestBidSize;
+    state.bestAskSize = info.bestAskSize;
+    if (info.lastTradePrice != null) state.lastTradePrice = info.lastTradePrice;
+    if (info.midpoint != null) state.midpoint = info.midpoint;
+    else syncMidpoint(state);
+    state.updatedAtMs = Date.now();
+    this.notifyUpdate([tokenId]);
+    return true;
+  }
+
   getFeedLatencyMs(): number | undefined {
     return this.feedLatencyMs ?? undefined;
   }
@@ -191,7 +253,7 @@ export class ClobMarketFeed {
     });
   }
 
-  /** Subscribe tokens on the market WS without REST book seeding. */
+  /** Subscribe tokens on the market WS (does not fetch REST books). */
   ensureSubscribed(tokenIds: string[]): void {
     const unique = [...new Set(tokenIds.filter(Boolean))];
     if (unique.length === 0) return;
