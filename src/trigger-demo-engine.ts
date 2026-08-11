@@ -86,6 +86,7 @@ function getEngine(userId: string) {
 /** Inspect race session private rts via finalize-safe peek using markers/stats diffs. */
 function peekRts(session: TriggerReplayRaceSession): Array<{
   def: ReplayTriggerDef;
+  lockedSide: "up" | "down" | null;
   phase: string;
   side: "up" | "down" | null;
   entryPrice: number | null;
@@ -94,13 +95,19 @@ function peekRts(session: TriggerReplayRaceSession): Array<{
   const any = session as unknown as {
     rts: Array<{
       def: ReplayTriggerDef;
+      lockedSide?: "up" | "down" | null;
       phase: string;
       side: "up" | "down" | null;
       entryPrice: number | null;
       entryShares: number;
     }>;
   };
-  return Array.isArray(any.rts) ? any.rts : [];
+  return Array.isArray(any.rts)
+    ? any.rts.map((rt) => ({
+        ...rt,
+        lockedSide: rt.lockedSide === "up" || rt.lockedSide === "down" ? rt.lockedSide : null,
+      }))
+    : [];
 }
 
 async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> {
@@ -174,10 +181,16 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
     const rts = peekRts(entry.session);
     for (const rt of rts) {
       const tid = rt.def.id;
-      const prev = entry.lastPhase.get(tid) || "idle";
+      // Stable per-runtime key: lockedSide for both-sides; bare id for first-side.
+      const rtKey =
+        rt.lockedSide === "up" || rt.lockedSide === "down"
+          ? `${tid}:${rt.lockedSide}`
+          : tid;
+      const prev = entry.lastPhase.get(rtKey) || "idle";
       const phase = rt.phase;
 
       if (phase === "open" && rt.side && rt.entryPrice != null) {
+        const openKey = `${tid}:${rt.side}`;
         const cardId = engine.upsertDemoTriggerOpen({
           triggerId: tid,
           triggerName: rt.def.name,
@@ -188,8 +201,8 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
           windowStart,
           slug: state.slug,
         });
-        if (cardId) entry.openCardByTrigger.set(tid, cardId);
-        entry.lastEntry.set(tid, {
+        if (cardId) entry.openCardByTrigger.set(openKey, cardId);
+        entry.lastEntry.set(rtKey, {
           side: rt.side,
           price: rt.entryPrice,
           shares: rt.entryShares,
@@ -198,8 +211,9 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
 
       // Transition open → idle without window-end: TP/SL sell inside the session.
       if (prev === "open" && phase === "idle" && !windowEnded) {
-        const cardId = entry.openCardByTrigger.get(tid);
-        const last = entry.lastEntry.get(tid);
+        const last = entry.lastEntry.get(rtKey);
+        const openKey = last ? `${tid}:${last.side}` : null;
+        const cardId = openKey ? entry.openCardByTrigger.get(openKey) : undefined;
         if (cardId && last) {
           // Prefer sell from last known bid on this tick.
           const bid =
@@ -210,11 +224,12 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
           // Infer TP vs SL from P/L vs entry.
           const exitReason = sellPrice + 1e-9 >= last.price ? "tp" : "sl";
           engine.settleDemoTriggerSold({ cardId, sellPrice, exitReason });
-          entry.openCardByTrigger.delete(tid);
+          entry.openCardByTrigger.delete(openKey!);
+          entry.lastEntry.delete(rtKey);
         }
       }
 
-      entry.lastPhase.set(tid, phase);
+      entry.lastPhase.set(rtKey, phase);
     }
 
     // Window ended while open: keep Open cards; server Gamma confirm loop settles them.

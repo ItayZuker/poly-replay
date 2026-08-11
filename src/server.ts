@@ -1004,11 +1004,13 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
             : undefined;
         const windowStart = Math.floor(Number(d?.windowStart));
         const windowEnd = Math.floor(Number(d?.windowEnd));
+        const buySidesMode = d?.buySidesMode === "both" ? "both" : "first";
         return {
           triggerId,
           sides: sides as Array<"up" | "down">,
           priceCents,
           shares,
+          buySidesMode,
           ...(sellOrderType ? { sellOrderType } : {}),
           ...(Number.isFinite(takeProfitCents) ? { takeProfitCents } : {}),
           ...(triggerName ? { triggerName } : {}),
