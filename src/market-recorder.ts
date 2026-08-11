@@ -117,6 +117,8 @@ export class MarketRecorder {
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
   private prefetchedNextWindowStart: number | null = null;
   private nextWindowPrefetchInFlight = false;
+  /** Fingerprint of last written CLOB book tick (skip identical consecutive samples). */
+  private lastBookFingerprint: string | null = null;
   /** Wall-clock time of the last book/chainlink tick appended for the active window. */
   private lastUsefulTickAtMs = 0;
   /** Wall-clock time of the last CLOB book tick appended for the active window. */
@@ -329,6 +331,7 @@ export class MarketRecorder {
     this.assetPrices = {};
     this.prefetchedNextWindowStart = null;
     this.nextWindowPrefetchInFlight = false;
+    this.lastBookFingerprint = null;
     this.lastUsefulTickAtMs = 0;
     this.lastClobTickAtMs = 0;
     this.windowBeganAtMs = 0;
@@ -388,13 +391,49 @@ export class MarketRecorder {
     return tick;
   }
 
-  private appendClobBookTick(tMs: number): void {
+  private bookTickFingerprint(tick: ClobBookTickDocument): string {
+    const side = (levels: { price: number; size: number }[] | undefined) =>
+      (levels || []).map((l) => `${l.price}:${l.size}`).join(",");
+    return [
+      side(tick.yesBids),
+      side(tick.yesAsks),
+      side(tick.noBids),
+      side(tick.noAsks),
+    ].join("|");
+  }
+
+  private bookTickHasLevels(tick: ClobBookTickDocument): boolean {
+    return (
+      (tick.yesBids?.length ?? 0) > 0 ||
+      (tick.yesAsks?.length ?? 0) > 0 ||
+      (tick.noBids?.length ?? 0) > 0 ||
+      (tick.noAsks?.length ?? 0) > 0
+    );
+  }
+
+  /**
+   * Append a CLOB book snapshot. Skips empty books and identical consecutive
+   * books unless `force` (window open / close).
+   */
+  private appendClobBookTick(tMs: number, opts: { force?: boolean } = {}): void {
     const tick = this.buildClobBookTick(tMs);
     if (!tick) return;
+    const hasLevels = this.bookTickHasLevels(tick);
+    if (!hasLevels && !opts.force) return;
+    const fp = this.bookTickFingerprint(tick);
+    if (!opts.force && fp === this.lastBookFingerprint) return;
+    this.lastBookFingerprint = fp;
     this.clobBookBuffer.push(tick);
     this.clobBookCount += 1;
     this.noteClobTick(tMs);
     this.onStateChange?.(this.market._id);
+  }
+
+  /** Poll-path book sample so quiet WS periods still advance the recording. */
+  private recordPolledBookTick(tMs: number = Date.now()): void {
+    if (!this.activeWindow || !this.activeYesTokenId || !this.activeNoTokenId) return;
+    if (!this.isInWindow(tMs)) return;
+    this.appendClobBookTick(tMs);
   }
 
   private recordClobRawMessage(event: {
@@ -540,6 +579,7 @@ export class MarketRecorder {
     this.clobRawBuffer = [];
     this.clobBookBuffer = [];
     this.chainlinkTickBuffer = [];
+    this.lastBookFingerprint = null;
     this.lastTraderStats = null;
     const now = Date.now();
     this.windowBeganAtMs = now;
@@ -847,10 +887,15 @@ export class MarketRecorder {
     try {
       const pair = await fetchUpDownMarketAtWindow(this.market._id, nextStart);
       clobMarketFeed.ensureSubscribed([pair.yesTokenId, pair.noTokenId]);
+      const seeded = await clobMarketFeed.seedBooksFromRest([
+        pair.yesTokenId,
+        pair.noTokenId,
+      ]);
       this.prefetchedNextWindowStart = nextStart;
       logService.info(
         "recorder",
-        `Prefetched next window ${new Date(nextStart * 1000).toLocaleTimeString()} tokens for ${this.market._id}`,
+        `Prefetched next window ${new Date(nextStart * 1000).toLocaleTimeString()} tokens for ${this.market._id}` +
+          (seeded > 0 ? ` (REST book×${seeded})` : ""),
       );
     } catch (err) {
       logService.warn(
@@ -862,14 +907,38 @@ export class MarketRecorder {
     }
   }
 
-  private writeOpeningSocketTicks(windowStart: number, yesTokenId: string, noTokenId: string): void {
+  /**
+   * Seed REST books then write the opening CLOB + Chainlink ticks at windowStart
+   * so Replay sees Ask/Bid from the first sample (same early book Live Demo uses).
+   */
+  private async writeOpeningSocketTicks(
+    windowStart: number,
+    yesTokenId: string,
+    noTokenId: string,
+  ): Promise<void> {
     this.activeYesTokenId = yesTokenId;
     this.activeNoTokenId = noTokenId;
     const openMs = windowStart * 1000;
+    clobMarketFeed.ensureSubscribed([yesTokenId, noTokenId]);
+    try {
+      const seeded = await clobMarketFeed.seedBooksFromRest([yesTokenId, noTokenId]);
+      if (seeded > 0) {
+        logService.info(
+          "recorder",
+          `REST-seeded opening book for ${this.market._id} (${seeded} side(s))`,
+        );
+      }
+    } catch (err) {
+      logService.warn(
+        "recorder",
+        `Opening REST book seed failed (${this.market._id}): ${String(err)}`,
+      );
+    }
     const yesInfo = clobMarketFeed.getCachedMarketInfo(yesTokenId);
     const noInfo = clobMarketFeed.getCachedMarketInfo(noTokenId);
+    // Always force an opening book row when any side has levels (timestamp = window open).
     if (hasSocketBook(yesInfo) || hasSocketBook(noInfo)) {
-      this.appendClobBookTick(openMs);
+      this.appendClobBookTick(openMs, { force: true });
     }
     this.pushChainlinkTick(openMs);
   }
@@ -892,6 +961,12 @@ export class MarketRecorder {
 
     this.finalizing = true;
     try {
+      // Last in-window book sample (t < windowEnd) so Replay has a closing Ask/Bid.
+      const lastBookMs = Math.min(Date.now(), this.activeWindow.windowEnd * 1000 - 1);
+      if (lastBookMs >= windowStart * 1000) {
+        this.appendClobBookTick(lastBookMs, { force: true });
+      }
+
       // Must stay inside try — a throw here used to leave finalizing=true forever
       // and block health recovery / new windows.
       finalizeWindowDynamics(this.activeWindow);
@@ -1152,7 +1227,7 @@ export class MarketRecorder {
             conditionId: pair.conditionId,
           });
           this.applyAssetPrices(assetPrice, prevCloseAsset);
-          this.writeOpeningSocketTicks(windowStart, pair.yesTokenId, pair.noTokenId);
+          await this.writeOpeningSocketTicks(windowStart, pair.yesTokenId, pair.noTokenId);
         }
       } else if (this.activeWindow.windowStart === windowStart && pair.conditionId) {
         this.activeWindow.conditionId = pair.conditionId;
@@ -1161,6 +1236,8 @@ export class MarketRecorder {
       if (this.activeWindow && this.activeWindow.windowStart === windowStart) {
         this.activeYesTokenId = pair.yesTokenId;
         this.activeNoTokenId = pair.noTokenId;
+        // Poll-sample books so quiet WS gaps still record Ask/Bid changes (first→last).
+        this.recordPolledBookTick(Date.now());
       }
     }
 

@@ -504,3 +504,202 @@ export async function buildLiveHourPlayPayload(
     windows,
   };
 }
+
+function isDemoTriggerCard(card: TradingPositionCard, triggerId: string, series: string): boolean {
+  if (!card || card.demo !== true) return false;
+  if (String(card.triggerId || "").trim() !== triggerId) return false;
+  if (card.source != null && card.source !== "trigger") return false;
+  const cardSeries = String(card.series || "").trim();
+  if (cardSeries && cardSeries !== series) return false;
+  return true;
+}
+
+function demoCardToSnap(card: TradingPositionCard): NonNullable<TradingStatEvent["card"]> | null {
+  if (card.status !== "open" && card.status !== "sold" && card.status !== "win" && card.status !== "loss") {
+    return null;
+  }
+  return {
+    windowKey: card.windowKey,
+    series: card.series,
+    side: card.side,
+    shares: card.shares,
+    buyPrice: card.buyPrice,
+    buyCost: card.buyCost,
+    buyAt: card.buyAt,
+    status: card.status,
+    confirmed: card.confirmed === true,
+    ...(card.pl != null ? { pl: card.pl } : {}),
+    ...(card.outcome ? { outcome: card.outcome } : {}),
+    ...(card.asset ? { asset: card.asset } : {}),
+    ...(card.conditionId ? { conditionId: card.conditionId } : {}),
+    ...(card.slug ? { slug: card.slug } : {}),
+    source: "trigger",
+    ...(card.triggerId ? { triggerId: card.triggerId } : {}),
+    ...(card.triggerExitReason === "tp" || card.triggerExitReason === "sl"
+      ? { triggerExitReason: card.triggerExitReason }
+      : {}),
+    ...(card.triggerMiss === true ? { triggerMiss: true } : {}),
+    ...(card.sellPrice != null ? { sellPrice: card.sellPrice } : {}),
+    ...(card.sellProceeds != null ? { sellProceeds: card.sellProceeds } : {}),
+    ...(card.sellFees != null ? { sellFees: card.sellFees } : {}),
+    ...(card.soldAt != null ? { soldAt: card.soldAt } : {}),
+    ...(card.buyFees != null ? { buyFees: card.buyFees } : {}),
+  };
+}
+
+/**
+ * Open Replay for Market Trigger Demo Positions: one window row per Demo fill
+ * window for that trigger (Open + last-24h settled UI cards).
+ */
+export async function buildDemoTriggerPlayPayload(
+  userId: string,
+  market: MarketDocument,
+  triggerId: string,
+  options: {
+    triggerTitle?: string;
+    cards?: TradingPositionCard[];
+    resolveWindowsWithTicks?: (windowStarts: number[]) => Promise<number[]>;
+  } = {},
+): Promise<PlacementPlayPayload> {
+  const series = market._id;
+  const tid = String(triggerId || "").trim();
+  const title =
+    typeof options.triggerTitle === "string" && options.triggerTitle.trim()
+      ? options.triggerTitle.trim()
+      : "Trigger";
+
+  const empty: PlacementPlayPayload = {
+    placementId: `demo-trigger:${tid}`,
+    setupId: tid,
+    title,
+    day: "mon",
+    startHour: 0,
+    durationHours: 1,
+    setup: triggerOnlyPhaseSetup(),
+    latencyMs: 0,
+    fillSuccessPct: 100,
+    triggerOnly: true,
+    windows: [],
+  };
+
+  if (!tid) return empty;
+
+  const cards = (Array.isArray(options.cards) ? options.cards : []).filter((c) =>
+    isDemoTriggerCard(c, tid, series),
+  );
+  if (cards.length === 0) return empty;
+
+  const rowsByWindow = new Map<
+    number,
+    Array<{
+      status: TradingPositionCard["status"];
+      pnl: number;
+      card: NonNullable<TradingStatEvent["card"]>;
+    }>
+  >();
+
+  for (const card of cards) {
+    const snap = demoCardToSnap(card);
+    if (!snap) continue;
+    const atMs = triggerTradeWindowMs({ buyAt: card.buyAt, windowKey: card.windowKey });
+    if (!Number.isFinite(atMs)) continue;
+    const winStart = resolveWinStart(card.windowKey, atMs);
+    if (!Number.isFinite(winStart)) continue;
+    const pl = Number(card.pl);
+    const list = rowsByWindow.get(winStart) ?? [];
+    list.push({
+      status: card.status,
+      pnl: Number.isFinite(pl) ? pl : 0,
+      card: snap,
+    });
+    rowsByWindow.set(winStart, list);
+  }
+
+  const tradeStarts = [...rowsByWindow.keys()].sort((a, b) => a - b);
+  if (tradeStarts.length === 0) return empty;
+
+  const cutoffUtc = Math.min(...tradeStarts) - DEFAULT_WINDOW_SEC;
+  const listed = await listRecordedWindowsSince(Math.max(0, cutoffUtc), series);
+  const recordedByStart = new Map(listed.map((w) => [w.windowStart, w] as const));
+
+  const presentStarts = options.resolveWindowsWithTicks
+    ? await options.resolveWindowsWithTicks(tradeStarts)
+    : await windowsHavingChainlinkTicks(market, tradeStarts);
+  const tickSet = new Set(presentStarts);
+
+  const windows: PlacementPlayWindowItem[] = [];
+  for (const windowStart of tradeStarts) {
+    const winRows = rowsByWindow.get(windowStart) ?? [];
+    if (!winRows.length) continue;
+
+    const meta = recordedByStart.get(windowStart);
+    const windowEnd = meta?.windowEnd ?? windowStart + DEFAULT_WINDOW_SEC;
+    const markers: SimMarker[] = [];
+    let pnl = 0;
+    let sold = false;
+    let anyOpen = false;
+    const tradeDots: TradeDot[] = [];
+    let bucket: PlayOutcomeBucket = "none";
+
+    for (const row of winRows) {
+      if (row.status === "open") {
+        anyOpen = true;
+        markers.push(...markersFromCard(row.card, "open", row.pnl));
+        continue;
+      }
+      markers.push(...markersFromCard(row.card, row.status, row.pnl));
+      pnl += row.pnl;
+      if (row.status === "sold") sold = true;
+      const b = bucketFromStatus(row.status, row.pnl);
+      tradeDots.push(...tradeDotsFromCard(row.card, b));
+      if (bucket === "none" && b !== "none") bucket = b;
+    }
+
+    if (!markers.length) continue;
+
+    const windowOutcome: WindowOutcome | undefined =
+      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
+        ? meta.windowOutcome
+        : undefined;
+
+    const hasTicks = tickSet.has(windowStart);
+    const prevCloseAsset =
+      meta?.prevCloseAsset != null && Number.isFinite(meta.prevCloseAsset)
+        ? Number(meta.prevCloseAsset)
+        : undefined;
+    const finalPrice =
+      meta?.assetPrice != null && Number.isFinite(meta.assetPrice)
+        ? Number(meta.assetPrice)
+        : undefined;
+
+    windows.push({
+      windowStart,
+      windowEnd,
+      windowOutcome,
+      prevCloseAsset,
+      finalPrice,
+      bucket,
+      tradeDots,
+      pnl,
+      plLabel: anyOpen && !sold && bucket === "none" ? "Open" : sold ? "Trade" : "Settlement",
+      sold,
+      markers: markers.sort((a, b) => a.t - b.t),
+      recordingMissing: !hasTicks,
+      predictionSide: null,
+      predictionScore: null,
+      predictionScores: [],
+      predictionTriggers: [],
+      predictionTriggeredAtMs: null,
+      predictionSensitivitySec: null,
+    });
+  }
+
+  windows.sort((a, b) => a.windowStart - b.windowStart);
+  void userId;
+
+  return {
+    ...empty,
+    title,
+    windows,
+  };
+}

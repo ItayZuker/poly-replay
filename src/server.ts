@@ -63,7 +63,10 @@ import {
   sumTradingSessionMemory,
   sumTradingStatEventsForSeries,
 } from "./db/trading-session-memory-repository.js";
-import { deleteAllPositionCardsForUser } from "./db/position-card-repository.js";
+import {
+  deleteAllPositionCardsForUser,
+  listPositionCards,
+} from "./db/position-card-repository.js";
 import {
   deleteAllTriggerDemoStatsCreditsForUser,
   deleteTriggerDemoStatsCredits,
@@ -123,7 +126,7 @@ import {
   parseSyntheticHourPlacement,
   type PlacementBacktestStats,
 } from "./schedule-backtest-service.js";
-import { buildLiveHourPlayPayload } from "./schedule-live-play.js";
+import { buildDemoTriggerPlayPayload, buildLiveHourPlayPayload } from "./schedule-live-play.js";
 import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
 import { ensureWalletRegistryReady, listWalletsForSeries, countWalletsForSeries } from "./wallet-registry.js";
 import { computeWalletWinLossForUser } from "./db/wallet-win-loss.js";
@@ -1578,6 +1581,70 @@ app.get("/api/triggers/:id/stats", async (req, res) => {
     res.json({ ...stats, activeMs, demoActiveMs });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
+/** Open Replay for Demo Positions windows of one Market Trigger. */
+app.post("/api/triggers/:id/demo-play", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const triggerId = String(req.params.id || "").trim();
+    if (!triggerId) {
+      res.status(400).json({ error: "trigger id required" });
+      return;
+    }
+    const trigger = await getUserTrigger(userId, triggerId);
+    if (!trigger) {
+      res.status(404).json({ error: "Trigger not found" });
+      return;
+    }
+    const seriesHint =
+      typeof req.body?.series === "string" && req.body.series.trim()
+        ? req.body.series.trim()
+        : typeof trigger.series === "string" && trigger.series.trim()
+          ? trigger.series.trim()
+          : "";
+    if (!seriesHint) {
+      res.status(400).json({ error: "series is required" });
+      return;
+    }
+    const market = await getMarket(seriesHint);
+    if (!market) {
+      res.status(404).json({ error: "Market not found" });
+      return;
+    }
+
+    const workerBase = replayWorkerBaseUrl();
+    const engine = await liveTradingRegistry.ensureLoaded(userId);
+    const mongoCards = await listPositionCards(userId, { series: market._id });
+    const liveCards = engine.getPublicState().positionCards || [];
+    const byId = new Map<string, (typeof liveCards)[number]>();
+    for (const card of mongoCards) {
+      if (card?.id) byId.set(String(card.id), card);
+    }
+    for (const card of liveCards) {
+      if (card?.id) byId.set(String(card.id), card);
+    }
+
+    const payload = await buildDemoTriggerPlayPayload(userId, market, triggerId, {
+      triggerTitle: String(trigger.name || "Trigger"),
+      cards: [...byId.values()],
+      resolveWindowsWithTicks: workerBase
+        ? async (windowStarts) => {
+            const remote = await fetchRemoteChainlinkPresence(workerBase, market._id, windowStarts);
+            if (remote != null) return remote;
+            return windowsHavingChainlinkTicks(market, windowStarts);
+          }
+        : undefined,
+    });
+    res.json(payload);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("MONGODB_URI")) {
+      res.status(503).json({ error: message });
+      return;
+    }
     res.status(500).json({ error: message });
   }
 });

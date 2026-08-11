@@ -80,6 +80,8 @@
   let payload = null;
   /** True when this Open session is Live Schedule hour review (trade windows + ledger). */
   let liveMode = false;
+  /** True when this Open session is Market Trigger Demo windows. */
+  let demoTriggerMode = false;
   /** Series used for this Open session (markers / ticks). */
   let playSeries = "btc-5m";
   /** Fallback Prediction Duration (sec) from Open request when window payload lacks it. */
@@ -1094,9 +1096,9 @@
         markerCount += 1;
         if (m?.t == null || !Number.isFinite(m.t)) continue;
         const yMissing = m.y == null || !Number.isFinite(m.y);
-        // Live Open: keep ledger hits without Chainlink Y (drawn on mid band).
+        // Live / Demo Trigger: keep ledger hits without Chainlink Y (drawn on mid band).
         // Replay: prefer asset Y only (server should enrich — don't fake with PTB).
-        if (yMissing && !liveMode) continue;
+        if (yMissing && !liveMode && !demoTriggerMode) continue;
         const elapsed = m.t - win.windowStart;
         // Allow tiny end-of-window float overflow from fill timing.
         if (elapsed < -0.5 || elapsed > duration + 1) continue;
@@ -2402,9 +2404,9 @@
       return;
     }
 
-    // Live Open: always try ticks (ledger rows may lack official open/close).
+    // Live / Demo Trigger: always try ticks (ledger rows may lack official open/close).
     // Replay: require official settlement before loading a price path.
-    if (!liveMode && !hasOfficialSettlement(win)) {
+    if (!liveMode && !demoTriggerMode && !hasOfficialSettlement(win)) {
       setTicksLoading(false);
       setStatus("No official settlement data for this window");
       drawFrame();
@@ -2429,13 +2431,13 @@
       ]);
       if (token !== loadToken) return;
       // No mid-window Chainlink.
-      // Live Open: keep the trade window (markers on blank timeline).
+      // Live / Demo Trigger: keep the trade window (markers on blank timeline).
       // Replay: drop empty-path windows (false review without a price path).
       if (midWindowChainlinkCount(history, win) === 0) {
         priceHistory = [];
         setTicksLoading(false);
         updateTransportEnabled();
-        if (liveMode || windowHasAnyHit(win)) {
+        if (liveMode || demoTriggerMode || windowHasAnyHit(win)) {
           setStatus(
             windowHasAnyHit(win)
               ? "No Chainlink ticks — showing ledger trade markers"
@@ -2650,6 +2652,7 @@
     hoverTargets = [];
     playChartLayout = null;
     liveMode = false;
+    demoTriggerMode = false;
     playPredictionSensitivitySec = null;
     hidePhaseHover();
     clearHitsHighlight();
@@ -2673,13 +2676,27 @@
     }
   }
 
-  async function open(placementId, options = {}) {
+  function setPlayTitle({ label = "", text = "Open Replay" } = {}) {
+    const labelEl = $("schedule-play-title-label");
+    const textEl = $("schedule-play-title-text");
+    const titleEl = $("schedule-play-title");
+    if (labelEl) {
+      const hasLabel = Boolean(label && String(label).trim());
+      labelEl.hidden = !hasLabel;
+      labelEl.textContent = hasLabel ? String(label).trim() : "";
+    }
+    if (textEl) textEl.textContent = text || "Open Replay";
+    else if (titleEl) titleEl.textContent = label ? `${label} · ${text}` : text;
+  }
+
+  function beginOpenSession(options = {}) {
     ensureEls();
-    if (!modal || !placementId) return;
+    if (!modal) return null;
     const openToken = ++loadToken;
     stopPlayback();
     payload = null;
     liveMode = options.live === true;
+    demoTriggerMode = options.demoTrigger === true;
     selectedIndex = -1;
     priceHistory = [];
     tickCache.clear();
@@ -2734,9 +2751,68 @@
       if (listEl) resizeObserver.observe(listEl);
     }
 
-    // Slot-machine scroll while the play payload loads.
     renderLoadingPlaceholders(placeholderCount(options.windowCountHint));
     drawFrame();
+    return openToken;
+  }
+
+  async function finishOpenSession(openToken, body, options = {}) {
+    if (openToken !== loadToken) return;
+    payload = body;
+    liveMode = options.live === true;
+    demoTriggerMode = options.demoTrigger === true;
+    // Replay: drop ledger-only / missing-tick rows. Live / Demo Trigger keep them.
+    if (!liveMode && !demoTriggerMode && Array.isArray(payload.windows)) {
+      payload.windows = payload.windows.filter((w) => w && w.recordingMissing !== true);
+    }
+    if (demoTriggerMode) {
+      setPlayTitle({
+        label: "DEMO WINDOWS",
+        text: body.title || options.triggerTitle || "Trigger",
+      });
+    } else {
+      const prefix = liveMode ? "Live Open" : "Open Replay";
+      setPlayTitle({ text: `${prefix} · ${body.title || "Placement"}` });
+    }
+    if (!payload.windows?.length) {
+      stopSlotSpin();
+      selectedIndex = -1;
+      if (listTrackEl) listTrackEl.replaceChildren();
+      syncListNavButtons();
+      setWindowsLoading(false);
+      setStatus(
+        demoTriggerMode
+          ? "No Demo windows for this trigger"
+          : liveMode
+            ? "No traded windows in this hour"
+            : "No recorded windows with Chainlink ticks in this card",
+      );
+      drawFrame();
+      return;
+    }
+    stopSlotSpin();
+    setWindowsLoading(false);
+    setStatus(`${payload.windows.length} window${payload.windows.length === 1 ? "" : "s"}`);
+    if (listTrackEl) listTrackEl.replaceChildren();
+    const startIndex = firstHitOrZeroIndex(payload.windows);
+    await selectWindow(startIndex, { instant: false });
+  }
+
+  function failOpenSession(openToken, err) {
+    if (openToken !== loadToken) return;
+    stopSlotSpin();
+    selectedIndex = -1;
+    if (listTrackEl) listTrackEl.replaceChildren();
+    syncListNavButtons();
+    setWindowsLoading(false);
+    setStatus(err?.message || "Failed to open play");
+    drawFrame();
+  }
+
+  async function open(placementId, options = {}) {
+    if (!placementId) return;
+    const openToken = beginOpenSession(options);
+    if (openToken == null) return;
 
     try {
       const latencyMs =
@@ -2771,47 +2847,47 @@
       const body = await res.json().catch(() => ({}));
       if (openToken !== loadToken) return;
       if (!res.ok) throw new Error(body.error || `Open Replay failed (${res.status})`);
-      payload = body;
-      liveMode = options.live === true;
-      // Replay: drop ledger-only / missing-tick rows. Live Open keeps them (trade windows).
-      if (!liveMode && Array.isArray(payload.windows)) {
-        payload.windows = payload.windows.filter((w) => w && w.recordingMissing !== true);
-      }
-      const titleEl = $("schedule-play-title");
-      if (titleEl) {
-        const prefix = liveMode ? "Live Open" : "Open Replay";
-        titleEl.textContent = `${prefix} · ${body.title || "Placement"}`;
-      }
-      if (!payload.windows?.length) {
-        stopSlotSpin();
-        selectedIndex = -1;
-        if (listTrackEl) listTrackEl.replaceChildren();
-        syncListNavButtons();
-        setWindowsLoading(false);
-        setStatus(
-          liveMode
-            ? "No traded windows in this hour"
-            : "No recorded windows with Chainlink ticks in this card",
-        );
-        drawFrame();
-        return;
-      }
-      stopSlotSpin();
-      setWindowsLoading(false);
-      setStatus(`${body.windows.length} window${body.windows.length === 1 ? "" : "s"}`);
-      if (listTrackEl) listTrackEl.replaceChildren();
-      const startIndex = firstHitOrZeroIndex(body.windows);
-      // Settle onto the target window with a slide (slot-machine stop).
-      await selectWindow(startIndex, { instant: false });
+      await finishOpenSession(openToken, body, options);
     } catch (err) {
+      failOpenSession(openToken, err);
+    }
+  }
+
+  /** Market Trigger ⋮ Replay — Demo Positions windows only. */
+  async function openDemoTrigger(triggerId, options = {}) {
+    const id = String(triggerId || "").trim();
+    if (!id) return;
+    const openToken = beginOpenSession({
+      ...options,
+      demoTrigger: true,
+      live: false,
+      windowCountHint: options.windowCountHint ?? 4,
+    });
+    if (openToken == null) return;
+    setPlayTitle({
+      label: "DEMO WINDOWS",
+      text: options.triggerTitle || "Trigger",
+    });
+
+    try {
+      const series =
+        typeof options.series === "string" && options.series.trim()
+          ? options.series.trim()
+          : currentSeries();
+      const res = await fetch(`/api/triggers/${encodeURIComponent(id)}/demo-play`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ series }),
+      });
+      const body = await res.json().catch(() => ({}));
       if (openToken !== loadToken) return;
-      stopSlotSpin();
-      selectedIndex = -1;
-      if (listTrackEl) listTrackEl.replaceChildren();
-      syncListNavButtons();
-      setWindowsLoading(false);
-      setStatus(err?.message || "Failed to open play");
-      drawFrame();
+      if (!res.ok) throw new Error(body.error || `Demo windows failed (${res.status})`);
+      await finishOpenSession(openToken, body, {
+        demoTrigger: true,
+        triggerTitle: options.triggerTitle,
+      });
+    } catch (err) {
+      failOpenSession(openToken, err);
     }
   }
 
@@ -2825,6 +2901,7 @@
   window.SchedulePlay = {
     init,
     open,
+    openDemoTrigger,
     close,
   };
 })();
