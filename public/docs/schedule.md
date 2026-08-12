@@ -88,4 +88,6 @@ Replay uses the same simulation engine as demo Trigger trading. Window times/out
 
 Day × hour intensity from recorded windows (e.g. crossings, range). Uses the same **latest weekday×hour** rule as Replay. Flat-price bad recordings are excluded. Slots with **no** recorded data show **No Recordings** (same label as idle Replay Schedule cells) instead of empty metric columns. Use it to see where activity was — it does not trade by itself. Schedule vs Heatmap (header tabs) and Live/Replay are independent.
 
+The browser **caches** the heatmap grid in `localStorage` (per market). Opening Heatmap uses the cache when fresh; the server reads Mongo on demand (no dyno RAM copy of all windows). When a Live market window rolls, the client fetches **that finished window only** via `GET /api/heatmap/window` and merges it into the cache (with short retries if Mongo is still catching up).
+
 The left **color index** cards (Crossings, Range, Wallets, New wallets) can be dragged up/down by their handle — that order is the left→right order of the colored columns in each heatmap hour cell. The order is saved in the browser.

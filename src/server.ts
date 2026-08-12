@@ -95,11 +95,10 @@ import {
 import { closeMongoClient } from "./db/mongo-client.js";
 import {
   getHeatmapState,
+  getHeatmapWindowPatch,
   getReplaySlotWindowCounts,
   listActiveReplaySlotWindows,
-  loadAllHeatmapWindows,
   replayUsableWindowKey,
-  setHeatmapUpdateListener,
 } from "./heatmap-service.js";
 import type {
   EnrichedLiveWindowState,
@@ -161,8 +160,6 @@ import { ObjectId } from "mongodb";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3848;
-/** Sparse Mongo → RAM heatmap refresh (sim upserts windows elsewhere). */
-const HEATMAP_REFRESH_MS = 10 * 60 * 1000;
 const publicDir = path.join(__dirname, "../public");
 
 const app = express();
@@ -1749,10 +1746,30 @@ app.delete("/api/trading-setups/:id", async (req, res) => {
   }
 });
 
-app.get("/api/heatmap", (req, res) => {
+app.get("/api/heatmap", async (req, res) => {
   try {
     const series = parseSeriesParam(req);
-    res.json(getHeatmapState(series));
+    res.json(await getHeatmapState(series));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/** One finished window — client merges into its heatmap cache (no full reload). */
+app.get("/api/heatmap/window", async (req, res) => {
+  try {
+    const series = parseSeriesParam(req);
+    const windowStart = Math.floor(Number(req.query.windowStart));
+    if (!Number.isFinite(windowStart) || windowStart <= 0) {
+      res.status(400).json({ error: "windowStart required" });
+      return;
+    }
+    const patch = await getHeatmapWindowPatch(series, windowStart);
+    if (!patch) {
+      res.status(404).json({ error: "Window not found" });
+      return;
+    }
+    res.json(patch);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -1762,7 +1779,7 @@ app.get("/api/heatmap", (req, res) => {
 app.get("/api/schedule-replay-slot-counts", async (req, res) => {
   try {
     const series = parseSeriesParam(req);
-    const active = listActiveReplaySlotWindows(series);
+    const active = await listActiveReplaySlotWindows(series);
     const bySeries = new Map<string, number[]>();
     for (const w of active) {
       const list = bySeries.get(w.series) ?? [];
@@ -1787,7 +1804,7 @@ app.get("/api/schedule-replay-slot-counts", async (req, res) => {
       }
       for (const ws of present) usable.add(replayUsableWindowKey(ser, ws));
     }
-    res.json(getReplaySlotWindowCounts(series, usable));
+    res.json(await getReplaySlotWindowCounts(series, usable));
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2850,7 +2867,7 @@ app.get("/api/stream", (req, res) => {
       );
       res.write(`event: log-history\ndata: ${JSON.stringify(logService.getRecent())}\n\n`);
       const series = displayService.getState().series || "btc-5m";
-      res.write(`event: heatmap\ndata: ${JSON.stringify(getHeatmapState(series))}\n\n`);
+      // Heatmap is client-cached + fetched via REST (no SSE full dump / dyno RAM cache).
       if (userId) {
         const placements = await listSchedulePlacements(userId, series, "live");
         res.write(`event: schedule-placements\ndata: ${JSON.stringify({ mode: "live", placements })}\n\n`);
@@ -2925,20 +2942,10 @@ async function main(): Promise<void> {
     broadcast("account", status, userId);
   });
 
-  setHeatmapUpdateListener((state) => {
-    broadcast("heatmap", state);
-  });
-  // Drop stuck/flat Chainlink windows before the heatmap/Replay indexes load.
+  // Drop stuck/flat Chainlink windows (Mongo + files); heatmap is on-demand from Mongo.
   await purgeFlatPriceRecordings().catch((err) => {
     logService.warn("recorder", `Flat-price purge failed: ${String(err)}`);
   });
-  await loadAllHeatmapWindows();
-  const heatmapRefreshTimer = setInterval(() => {
-    void loadAllHeatmapWindows().catch((err) => {
-      logService.warn("heatmap", `Periodic recorded_windows refresh failed: ${String(err)}`);
-    });
-  }, HEATMAP_REFRESH_MS);
-  heatmapRefreshTimer.unref?.();
 
   chainlinkPriceFeed.start();
   clobMarketFeed.start();
@@ -2980,7 +2987,6 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async () => {
-    clearInterval(heatmapRefreshTimer);
     if (recordingSyncTimer) clearInterval(recordingSyncTimer);
     stopArchiveScheduler();
     recordingManager.stopAll();

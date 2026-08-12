@@ -1722,6 +1722,132 @@ function persistHeatmapMetricOrder(order) {
 
 let heatmapCellEls = new Map();
 let lastHeatmapState = null;
+/** Soft full-refresh age for browser heatmap cache (ms). */
+const HEATMAP_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+/** Retry delays when ended-window Mongo row is not ready yet. */
+const HEATMAP_WINDOW_PATCH_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
+let heatmapWindowPatchToken = 0;
+
+function heatmapCacheKey(series = selectedSeries) {
+  return `poly-real:heatmap-cache:${String(series || "").trim() || "btc-5m"}`;
+}
+
+function readHeatmapCache(series = selectedSeries) {
+  try {
+    const raw = localStorage.getItem(heatmapCacheKey(series));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !parsed.state?.cells) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeHeatmapCache(state, series = selectedSeries) {
+  if (!state?.cells) return;
+  try {
+    localStorage.setItem(
+      heatmapCacheKey(series),
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        series: String(series || "").trim() || "btc-5m",
+        state,
+      }),
+    );
+  } catch {
+    // quota / private mode
+  }
+}
+
+function recomputeHeatmapMax(state) {
+  const max = { crossings: 0, range: 0, wallets: 0, newWallets: 0 };
+  for (const cell of Object.values(state.cells || {})) {
+    if (!cell) continue;
+    max.crossings = Math.max(max.crossings, Number(cell.crossings) || 0);
+    max.range = Math.max(max.range, Number(cell.range) || 0);
+    max.wallets = Math.max(max.wallets, Number(cell.wallets) || 0);
+    max.newWallets = Math.max(max.newWallets, Number(cell.newWallets) || 0);
+  }
+  state.max = max;
+  return state;
+}
+
+/** Merge one finished window into the client heatmap grid. */
+function applyHeatmapWindowPatch(state, patch) {
+  if (!state || !patch) return state;
+  const day = patch.day;
+  const hour = Number(patch.hour);
+  if (!day || !Number.isFinite(hour)) return state;
+  const key = `${day}:${hour}`;
+  const meta = (state.slotMeta && state.slotMeta[key]) || null;
+  const ws = Number(patch.windowStart);
+  const savedAt = String(patch.savedAt || "");
+  if (meta) {
+    if (Number(meta.windowStart) > ws) return state;
+    if (Number(meta.windowStart) === ws && String(meta.savedAt || "") >= savedAt) return state;
+  }
+  if (!state.cells) state.cells = {};
+  if (!state.slotMeta) state.slotMeta = {};
+  if (!state.seriesDataVersions) state.seriesDataVersions = {};
+  state.cells[key] = {
+    crossings: Number(patch.metrics?.crossings) || 0,
+    range: Number(patch.metrics?.range) || 0,
+    wallets: Number(patch.metrics?.wallets) || 0,
+    newWallets: Number(patch.metrics?.newWallets) || 0,
+  };
+  state.slotMeta[key] = { windowStart: ws, savedAt };
+  const series = String(patch.series || selectedSeries || "").trim();
+  if (series) {
+    const ver = `${ws}:${savedAt}`;
+    const prev = String(state.seriesDataVersions[series] || "");
+    const prevWs = Number(String(prev).split(":")[0]) || 0;
+    if (ws >= prevWs) state.seriesDataVersions[series] = ver;
+  }
+  return recomputeHeatmapMax(state);
+}
+
+function onHeatmapMarketWindowRolled(prevWindowStart) {
+  const ws = Math.floor(Number(prevWindowStart));
+  if (!Number.isFinite(ws) || ws <= 0) return;
+  const series = selectedSeries;
+  const token = ++heatmapWindowPatchToken;
+  const attempt = async (retryIdx) => {
+    if (token !== heatmapWindowPatchToken) return;
+    try {
+      const res = await fetch(
+        `/api/heatmap/window?series=${encodeURIComponent(series)}&windowStart=${ws}`,
+      );
+      if (res.status === 404) {
+        const delay = HEATMAP_WINDOW_PATCH_RETRY_MS[retryIdx];
+        if (delay != null) {
+          setTimeout(() => void attempt(retryIdx + 1), delay);
+        }
+        return;
+      }
+      if (!res.ok) return;
+      const patch = await res.json();
+      if (token !== heatmapWindowPatchToken) return;
+      const base = lastHeatmapState || readHeatmapCache(series)?.state || {
+        cutoffUtc: 0,
+        cells: {},
+        max: { crossings: 0, range: 0, wallets: 0, newWallets: 0 },
+        seriesDataVersions: {},
+        slotMeta: {},
+      };
+      const next = applyHeatmapWindowPatch({ ...base, cells: { ...base.cells }, slotMeta: { ...(base.slotMeta || {}) }, seriesDataVersions: { ...(base.seriesDataVersions || {}) } }, patch);
+      renderHeatmap(next);
+      writeHeatmapCache(next, series);
+      window.SchedulePlacements?.onHeatmapUpdated?.(next);
+    } catch {
+      const delay = HEATMAP_WINDOW_PATCH_RETRY_MS[retryIdx];
+      if (delay != null) {
+        setTimeout(() => void attempt(retryIdx + 1), delay);
+      }
+    }
+  };
+  void attempt(0);
+}
 let walletsListOpen = false;
 let walletsListLoadToken = 0;
 /** @type {any[]} */
@@ -5134,6 +5260,10 @@ function updateWindowUI(state) {
     onLogWindowChanged(state.windowStart);
     // Past-window open Demo cards: keep trying Gamma settle across rolls / sessions.
     scanAndResumeStuckDemoOpenCards();
+    // Patch heatmap for the window that just ended (Mongo may lag a few seconds).
+    if (prevWindowStart != null && Number.isFinite(prevWindowStart)) {
+      onHeatmapMarketWindowRolled(prevWindowStart);
+    }
   }
 
   if (pendingChainlinkTicks.length > 0) {
@@ -5454,8 +5584,8 @@ function connectSSE() {
   });
 
   es.addEventListener("heatmap", () => {
-    // Always re-fetch for the selected market (broadcast may be multi-series aggregate).
-    void loadHeatmap();
+    // Legacy SSE — prefer client cache + per-window patch; soft refresh only.
+    void loadHeatmap({ force: false });
   });
 
   es.addEventListener("schedule-placements", (e) => {
@@ -5510,7 +5640,7 @@ async function onMarketSeriesChanged(nextSeries) {
   loadPredictionPositionCards(selectedSeries);
   if (isPredictionTriggerHost()) restorePredictionRuntime();
   else syncPredictionCardsFromRuntime();
-  void loadHeatmap();
+  void loadHeatmap({ force: true });
   if (walletsListOpen) void loadTraderWalletsList();
   if (window.SchedulePlacements?.loadPlacements) {
     await window.SchedulePlacements.loadPlacements({ reloadStats: true });
@@ -9802,12 +9932,34 @@ function renderHeatmap(state) {
   }
 }
 
-async function loadHeatmap() {
+/**
+ * Load heatmap: browser cache first, Mongo via server when missing/stale/forced.
+ * @param {{ force?: boolean }} [opts]
+ */
+async function loadHeatmap(opts = {}) {
+  const force = opts.force === true;
+  const series = selectedSeries;
+  const cached = readHeatmapCache(series);
+  const cacheAge = cached?.fetchedAt != null ? Date.now() - Number(cached.fetchedAt) : Infinity;
+  const cacheFresh =
+    cached?.state &&
+    Number.isFinite(cacheAge) &&
+    cacheAge >= 0 &&
+    cacheAge < HEATMAP_CACHE_MAX_AGE_MS;
+
+  if (!force && cached?.state) {
+    renderHeatmap(cached.state);
+    window.SchedulePlacements?.onHeatmapUpdated?.(cached.state);
+    if (cacheFresh) return;
+  }
+
   try {
-    const res = await fetch(`/api/heatmap?series=${encodeURIComponent(selectedSeries)}`);
+    const res = await fetch(`/api/heatmap?series=${encodeURIComponent(series)}`);
     if (!res.ok) return;
     const state = await res.json();
+    if (!state.slotMeta) state.slotMeta = {};
     renderHeatmap(state);
+    writeHeatmapCache(state, series);
     window.SchedulePlacements?.onHeatmapUpdated?.(state);
   } catch {
     // ignore
@@ -10399,9 +10551,9 @@ function bindScheduleViewToggle() {
     heatmapPanel.hidden = isSchedule;
     if (options.persist !== false) saveScheduleViewPref(next);
     if (isSchedule) setWalletsListOpen(false);
-    // Keep both UIs mounted. Only load heatmap the first time if not yet available.
-    if (!isSchedule && !lastHeatmapState) {
-      void loadHeatmap();
+    // Keep both UIs mounted. Heatmap uses browser cache; soft-refresh from Mongo if stale.
+    if (!isSchedule) {
+      void loadHeatmap({ force: false });
     }
     if (window.SchedulePlacements) window.SchedulePlacements.onViewChange();
     else window.ScheduleHourSlots?.syncView?.();

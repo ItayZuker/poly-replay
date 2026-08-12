@@ -1,6 +1,11 @@
 {
-    "current": "1.68.14",
+    "current": "1.68.15",
     "releases": [
+        {
+            "version": "1.68.15",
+            "releasedAt": "2026-08-12T10:39:06.737Z",
+            "notes": "Heatmap: no dyno RAM cache; browser localStorage + per-window Mongo patch via API. Docs updated."
+        },
         {
             "version": "1.68.14",
             "releasedAt": "2026-08-12T09:49:19.886Z",

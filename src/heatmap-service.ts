@@ -1,5 +1,6 @@
 import { getWindowDataVersion } from "./db/recorded-window-repository.js";
 import {
+  getRecordedWindowSummary,
   listRecordedWindowsSince,
   type HeatmapRecordedWindow,
 } from "./db/recorded-window-mongo-repository.js";
@@ -24,12 +25,30 @@ export interface HeatmapCellValues {
   newWallets: number;
 }
 
+export interface HeatmapSlotMeta {
+  windowStart: number;
+  savedAt: string;
+}
+
 export interface HeatmapPublicState {
   cutoffUtc: number;
   cells: Record<string, HeatmapCellValues>;
   max: HeatmapCellValues;
   /** Latest recorded window per series — used to invalidate schedule placement stats. */
   seriesDataVersions: Record<string, string>;
+  /** Per day:hour slot — which window owns the cell (client patch / cache). */
+  slotMeta: Record<string, HeatmapSlotMeta>;
+}
+
+/** Single finished window for client-side heatmap merge. */
+export interface HeatmapWindowPatch {
+  series: string;
+  windowStart: number;
+  savedAt: string;
+  day: HeatmapDayId;
+  hour: number;
+  metrics: HeatmapCellValues;
+  hasOfficialOutcome: boolean;
 }
 
 interface StoredHeatmapWindow {
@@ -50,21 +69,8 @@ interface BucketAccumulator {
   walletsSum: number;
   newWalletsSum: number;
   count: number;
-}
-
-let updateListener: ((state: HeatmapPublicState) => void) | null = null;
-const windowStore = new Map<string, StoredHeatmapWindow>();
-
-function emptyCell(): HeatmapCellValues {
-  return { crossings: 0, range: 0, wallets: 0, newWallets: 0 };
-}
-
-function emptyMax(): HeatmapCellValues {
-  return { crossings: 0, range: 0, wallets: 0, newWallets: 0 };
-}
-
-export function setHeatmapUpdateListener(listener: ((state: HeatmapPublicState) => void) | null): void {
-  updateListener = listener;
+  latestWindowStart: number;
+  latestSavedAt: string;
 }
 
 /**
@@ -76,10 +82,6 @@ export function getRollingCutoffUtcSec(now = new Date()): number {
   const m = now.getUTCMonth();
   const d = now.getUTCDate();
   return Math.floor(Date.UTC(y, m, d - 6) / 1000);
-}
-
-function windowKey(series: string, windowStart: number): string {
-  return `${series}:${windowStart}`;
 }
 
 function bucketKey(day: HeatmapDayId, hour: number): string {
@@ -104,6 +106,24 @@ function isInHistoryWindow(windowStart: number, cutoffUtc: number): boolean {
   return windowStart >= cutoffUtc;
 }
 
+function emptyCell(): HeatmapCellValues {
+  return { crossings: 0, range: 0, wallets: 0, newWallets: 0 };
+}
+
+function emptyMax(): HeatmapCellValues {
+  return { crossings: 0, range: 0, wallets: 0, newWallets: 0 };
+}
+
+function emptyHeatmapState(cutoffUtc = getWeekHistoryCutoffUtcSec()): HeatmapPublicState {
+  return {
+    cutoffUtc,
+    cells: {},
+    max: emptyMax(),
+    seriesDataVersions: {},
+    slotMeta: {},
+  };
+}
+
 function toStoredWindow(
   series: string,
   window: HeatmapMetricSource & {
@@ -125,63 +145,70 @@ function toStoredWindow(
   };
 }
 
-/** Windows used for display: latest calendar day per weekday×hour only. */
-function activeStoredWindows(seriesFilter?: string): StoredHeatmapWindow[] {
+/** Ephemeral list from Mongo — not retained on the dyno after the request. */
+async function loadStoredWindows(seriesFilter?: string): Promise<StoredHeatmapWindow[]> {
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  const filter = seriesFilter ? String(seriesFilter).trim() : "";
+  const windows = await listRecordedWindowsSince(cutoffUtc, filter || undefined);
+  const out: StoredHeatmapWindow[] = [];
+  for (const window of windows) {
+    if (!isInHistoryWindow(window.windowStart, cutoffUtc)) continue;
+    if (isFlatPriceWindow(window)) continue;
+    if (filter && window.series !== filter) continue;
+    out.push(toStoredWindow(window.series, window));
+  }
+  return out;
+}
+
+function activeFromStored(stored: StoredHeatmapWindow[], seriesFilter?: string): StoredHeatmapWindow[] {
   const cutoffUtc = getWeekHistoryCutoffUtcSec();
   const filter = seriesFilter ? String(seriesFilter).trim() : "";
   const candidates: StoredHeatmapWindow[] = [];
-  for (const stored of windowStore.values()) {
-    if (filter && stored.series !== filter) continue;
-    if (!isInHistoryWindow(stored.windowStart, cutoffUtc)) continue;
-    candidates.push(stored);
+  for (const w of stored) {
+    if (filter && w.series !== filter) continue;
+    if (!isInHistoryWindow(w.windowStart, cutoffUtc)) continue;
+    candidates.push(w);
   }
   return selectLatestDayHourWindows(candidates);
 }
 
-function seriesDataVersionsFromStore(): Record<string, string> {
-  const latestBySeries = new Map<string, StoredHeatmapWindow>();
-
-  for (const stored of activeStoredWindows()) {
-    const prev = latestBySeries.get(stored.series);
-    if (!prev || stored.windowStart > prev.windowStart) {
-      latestBySeries.set(stored.series, stored);
-      continue;
-    }
-    if (stored.windowStart === prev.windowStart && stored.savedAt > prev.savedAt) {
-      latestBySeries.set(stored.series, stored);
-    }
-  }
-
-  const versions: Record<string, string> = {};
-  for (const [series, window] of latestBySeries) {
-    versions[series] = `${window.windowStart}:${window.savedAt}`;
-  }
-  return versions;
-}
-
-function rebuildState(seriesFilter?: string | null): HeatmapPublicState {
+function buildStateFromStored(
+  stored: StoredHeatmapWindow[],
+  seriesFilter?: string | null,
+): HeatmapPublicState {
   const cutoffUtc = getWeekHistoryCutoffUtcSec();
-  const buckets = new Map<string, BucketAccumulator>();
   const filter = seriesFilter ? String(seriesFilter).trim() : "";
+  const active = activeFromStored(stored, filter || undefined);
+  const buckets = new Map<string, BucketAccumulator>();
 
-  for (const stored of activeStoredWindows(filter || undefined)) {
-    const key = bucketKey(stored.day, stored.hour);
+  for (const w of active) {
+    const key = bucketKey(w.day, w.hour);
     const bucket = buckets.get(key) ?? {
       crossingsSum: 0,
       rangeSum: 0,
       walletsSum: 0,
       newWalletsSum: 0,
       count: 0,
+      latestWindowStart: 0,
+      latestSavedAt: "",
     };
-    bucket.crossingsSum += stored.metrics.crossings;
-    bucket.rangeSum += stored.metrics.range;
-    bucket.walletsSum += stored.metrics.wallets;
-    bucket.newWalletsSum += stored.metrics.newWallets;
+    bucket.crossingsSum += w.metrics.crossings;
+    bucket.rangeSum += w.metrics.range;
+    bucket.walletsSum += w.metrics.wallets;
+    bucket.newWalletsSum += w.metrics.newWallets;
     bucket.count += 1;
+    if (
+      w.windowStart > bucket.latestWindowStart ||
+      (w.windowStart === bucket.latestWindowStart && w.savedAt > bucket.latestSavedAt)
+    ) {
+      bucket.latestWindowStart = w.windowStart;
+      bucket.latestSavedAt = w.savedAt;
+    }
     buckets.set(key, bucket);
   }
 
   const cells: Record<string, HeatmapCellValues> = {};
+  const slotMeta: Record<string, HeatmapSlotMeta> = {};
   const max = emptyMax();
 
   for (const [key, bucket] of buckets) {
@@ -193,27 +220,45 @@ function rebuildState(seriesFilter?: string | null): HeatmapPublicState {
       newWallets: bucket.newWalletsSum / bucket.count,
     };
     cells[key] = cell;
+    slotMeta[key] = {
+      windowStart: bucket.latestWindowStart,
+      savedAt: bucket.latestSavedAt,
+    };
     max.crossings = Math.max(max.crossings, cell.crossings);
     max.range = Math.max(max.range, cell.range);
     max.wallets = Math.max(max.wallets, cell.wallets);
     max.newWallets = Math.max(max.newWallets, cell.newWallets);
   }
 
-  return { cutoffUtc, cells, max, seriesDataVersions: seriesDataVersionsFromStore() };
-}
-
-function pruneExpiredWindows(): void {
-  const cutoffUtc = getWeekHistoryCutoffUtcSec();
-  for (const [key, stored] of windowStore) {
-    if (!isInHistoryWindow(stored.windowStart, cutoffUtc)) {
-      windowStore.delete(key);
+  const latestBySeries = new Map<string, StoredHeatmapWindow>();
+  for (const w of active) {
+    const prev = latestBySeries.get(w.series);
+    if (!prev || w.windowStart > prev.windowStart) {
+      latestBySeries.set(w.series, w);
+      continue;
+    }
+    if (w.windowStart === prev.windowStart && w.savedAt > prev.savedAt) {
+      latestBySeries.set(w.series, w);
     }
   }
+  const seriesDataVersions: Record<string, string> = {};
+  for (const [series, window] of latestBySeries) {
+    seriesDataVersions[series] = `${window.windowStart}:${window.savedAt}`;
+  }
+
+  return { cutoffUtc, cells, max, seriesDataVersions, slotMeta };
 }
 
-export function getHeatmapState(series?: string | null): HeatmapPublicState {
-  pruneExpiredWindows();
-  return rebuildState(series);
+/** Build heatmap from Mongo for this request only (no dyno RAM cache). */
+export async function getHeatmapState(series?: string | null): Promise<HeatmapPublicState> {
+  const filter = series ? String(series).trim() : "";
+  try {
+    const stored = await loadStoredWindows(filter || undefined);
+    return buildStateFromStored(stored, filter || undefined);
+  } catch (err) {
+    logService.warn("heatmap", `Mongo heatmap load failed: ${String(err)}`);
+    return emptyHeatmapState();
+  }
 }
 
 export interface ReplaySlotWindowCount {
@@ -224,19 +269,21 @@ export interface ReplaySlotWindowCount {
 }
 
 /** Active heatmap windows for a series (latest day per weekday×hour). */
-export function listActiveReplaySlotWindows(series?: string | null): Array<{
-  series: string;
-  windowStart: number;
-  day: HeatmapDayId;
-  hour: number;
-}> {
-  pruneExpiredWindows();
+export async function listActiveReplaySlotWindows(series?: string | null): Promise<
+  Array<{
+    series: string;
+    windowStart: number;
+    day: HeatmapDayId;
+    hour: number;
+  }>
+> {
   const filter = series ? String(series).trim() : "";
-  return activeStoredWindows(filter || undefined).map((stored) => ({
-    series: stored.series,
-    windowStart: stored.windowStart,
-    day: stored.day,
-    hour: stored.hour,
+  const stored = await loadStoredWindows(filter || undefined);
+  return activeFromStored(stored, filter || undefined).map((w) => ({
+    series: w.series,
+    windowStart: w.windowStart,
+    day: w.day,
+    hour: w.hour,
   }));
 }
 
@@ -247,30 +294,28 @@ export function replayUsableWindowKey(series: string, windowStart: number): stri
 
 /**
  * Per UTC weekday×hour counts for Replay Schedule baseline (gray before Run).
- * Uses the same latest-day-per-slot window set as Heatmap / Replay Run.
- * When `usableWindowKeys` is set, only those `series:windowStart` keys count.
- * Windows without an official Gamma outcome never count (even with tick files).
+ * Loads Mongo for this request only.
  */
-export function getReplaySlotWindowCounts(
+export async function getReplaySlotWindowCounts(
   series?: string | null,
   usableWindowKeys?: ReadonlySet<string> | null,
-): {
+): Promise<{
   cutoffUtc: number;
   slots: ReplaySlotWindowCount[];
-} {
-  pruneExpiredWindows();
+}> {
   const cutoffUtc = getWeekHistoryCutoffUtcSec();
   const filter = series ? String(series).trim() : "";
+  const stored = await loadStoredWindows(filter || undefined);
   const counts = new Map<string, number>();
-  for (const stored of activeStoredWindows(filter || undefined)) {
-    if (!stored.hasOfficialOutcome) continue;
+  for (const w of activeFromStored(stored, filter || undefined)) {
+    if (!w.hasOfficialOutcome) continue;
     if (
       usableWindowKeys &&
-      !usableWindowKeys.has(replayUsableWindowKey(stored.series, stored.windowStart))
+      !usableWindowKeys.has(replayUsableWindowKey(w.series, w.windowStart))
     ) {
       continue;
     }
-    const key = bucketKey(stored.day, stored.hour);
+    const key = bucketKey(w.day, w.hour);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const days: HeatmapDayId[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -287,72 +332,62 @@ export function getReplaySlotWindowCounts(
   return { cutoffUtc, slots };
 }
 
-export function forgetRecordedWindow(series: string, windowStart: number): void {
-  windowStore.delete(windowKey(series, windowStart));
+/** One finished window for client merge (null if missing / flat / out of range). */
+export async function getHeatmapWindowPatch(
+  series: string,
+  windowStart: number,
+): Promise<HeatmapWindowPatch | null> {
+  const ser = String(series || "").trim();
+  const ws = Math.floor(Number(windowStart));
+  if (!ser || !Number.isFinite(ws) || ws <= 0) return null;
+  const cutoffUtc = getWeekHistoryCutoffUtcSec();
+  if (!isInHistoryWindow(ws, cutoffUtc)) return null;
+
+  const window = await getRecordedWindowSummary(ser, ws);
+  if (!window) return null;
+  if (isFlatPriceWindow(window)) return null;
+
+  const stored = toStoredWindow(ser, window);
+  return {
+    series: ser,
+    windowStart: stored.windowStart,
+    savedAt: stored.savedAt,
+    day: stored.day,
+    hour: stored.hour,
+    metrics: stored.metrics,
+    hasOfficialOutcome: stored.hasOfficialOutcome,
+  };
 }
 
+/** No server RAM cache — clients own heatmap state. */
+export function forgetRecordedWindow(_series: string, _windowStart: number): void {
+  // intentionally empty
+}
+
+/**
+ * Recorder hook — Mongo is already upserted by the caller.
+ * No dyno heatmap cache; clients fetch / patch from Mongo via API.
+ */
 export function ingestRecordedWindow(
-  series: string,
-  window: RecordedWindowDocument,
+  _series: string,
+  _window: RecordedWindowDocument,
 ): HeatmapPublicState {
-  const cutoffUtc = getWeekHistoryCutoffUtcSec();
-  if (!isInHistoryWindow(window.windowStart, cutoffUtc)) {
-    pruneExpiredWindows();
-    return rebuildState();
-  }
-
-  // Flat-price windows are bad recordings — never keep them in heatmap memory.
-  if (isFlatPriceWindow(window)) {
-    forgetRecordedWindow(series, window.windowStart);
-    pruneExpiredWindows();
-    const state = rebuildState();
-    updateListener?.(state);
-    return state;
-  }
-
-  windowStore.set(windowKey(series, window.windowStart), toStoredWindow(series, window));
-  pruneExpiredWindows();
-  const state = rebuildState();
-  updateListener?.(state);
-  return state;
+  return emptyHeatmapState();
 }
 
 /** @deprecated Use ingestRecordedWindow */
 export const ingestHeatmapWindow = ingestRecordedWindow;
 
+/** No-op: heatmap is loaded on demand from Mongo (no boot RAM cache). */
 export async function loadAllHeatmapWindows(): Promise<HeatmapPublicState> {
-  const cutoffUtc = getWeekHistoryCutoffUtcSec();
-  try {
-    const windows = await listRecordedWindowsSince(cutoffUtc);
-    windowStore.clear();
-    let skippedFlat = 0;
-    for (const window of windows) {
-      if (!isInHistoryWindow(window.windowStart, cutoffUtc)) continue;
-      if (isFlatPriceWindow(window)) {
-        skippedFlat += 1;
-        continue;
-      }
-      windowStore.set(
-        windowKey(window.series, window.windowStart),
-        toStoredWindow(window.series, window),
-      );
-    }
-    logService.info(
-      "heatmap",
-      `Loaded ${windowStore.size} recorded windows from Mongo (since ${cutoffUtc})${
-        skippedFlat ? `; skipped ${skippedFlat} flat-price` : ""
-      }`,
-    );
-  } catch (err) {
-    logService.warn(
-      "heatmap",
-      `Failed to load recorded_windows from Mongo — keeping previous cache (${windowStore.size} windows): ${String(err)}`,
-    );
-  }
+  return emptyHeatmapState();
+}
 
-  const state = rebuildState();
-  updateListener?.(state);
-  return state;
+/** @deprecated No server-side heatmap push; kept so older call sites compile. */
+export function setHeatmapUpdateListener(
+  _listener: ((state: HeatmapPublicState) => void) | null,
+): void {
+  // intentionally empty
 }
 
 export { getWindowDataVersion, getWeekHistoryCutoffUtcSec };

@@ -7,7 +7,7 @@
 | Channel | Direction | For |
 |---------|-----------|-----|
 | **REST** `/api/...` | Browser → server | Login, settings, toggles, triggers, schedule hour stats, Trigger/Prediction orders |
-| **SSE** `/api/stream` | Server → browser | Quotes, window, trading state, log, heatmap, schedule |
+| **SSE** `/api/stream` | Server → browser | Quotes, window, trading state, log, schedule (heatmap is REST + browser cache) |
 | **WebSocket** | Server ↔ exchanges | CLOB book + Chainlink (server only) |
 
 ```flow
@@ -73,7 +73,7 @@ Live server -> GET /api/internal/ticks -> Recorder DATA_DIR
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
 | `DATA_DIR` | Local tick/window files (default `./data`) |
 
-Heatmap and Replay load recent `recorded_windows` (default ~**14 days**, overridable per series via Admin CRM retention), then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Tick/window files older than that retention are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
+Heatmap and Replay use recent `recorded_windows` in Mongo (default ~**14 days**, overridable per series via Admin CRM retention), then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). The Live/web dyno does **not** keep a full heatmap copy in RAM: `GET /api/heatmap` builds the grid from Mongo per request, and the browser caches it; `GET /api/heatmap/window` patches one finished window after each market roll. Tick/window files older than that retention are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
 
 **Trader wallets** (Mongo `trader_wallets`, used for heatmap Wallets / New wallets): each completed window refreshes `lastSeenAt`. The hourly retention job deletes any wallet not seen again within **30 days** (must be active at least once a month to stay in the registry). Per-window trader address lists are stored in Mongo `window_traders` (pruned with ~14-day recording retention) so Heatmap’s wallet list can show per-user **I WON** / **I LOST**. Trader **P/L** is that wallet’s Polymarket all-time profit from `lb-api.polymarket.com/profit` (cached ~6h on the wallet doc). `GET /api/trader-wallets?series=…&sort=sightings|pnl|iWin|iLost&dir=desc|asc&limit=100` returns the ranked top page (default: top 100 by sightings).
 

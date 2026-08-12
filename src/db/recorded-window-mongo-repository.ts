@@ -278,3 +278,22 @@ export async function listRecordedWindowsSince(
   }
   return out;
 }
+
+/** One window summary for client heatmap patch (Mongo only). */
+export async function getRecordedWindowSummary(
+  series: string,
+  windowStart: number,
+): Promise<HeatmapRecordedWindow | null> {
+  const ser = String(series || "").trim();
+  const ws = Math.floor(Number(windowStart));
+  if (!ser || !Number.isFinite(ws) || ws <= 0) return null;
+  const mongo = await getMongoClient();
+  const doc = await mongo
+    .db(getMongoDbName())
+    .collection<MongoRecordedWindowDoc>(COLLECTION)
+    .findOne({ _id: `${ser}:${ws}` }, { projection: HEATMAP_PROJECTION });
+  if (!doc) return null;
+  const normalized = normalizeDoc(doc);
+  if (!normalized || normalized.series !== ser) return null;
+  return normalized;
+}
