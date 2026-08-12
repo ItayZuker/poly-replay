@@ -7,7 +7,7 @@
 | Channel | Direction | For |
 |---------|-----------|-----|
 | **REST** `/api/...` | Browser → server | Login, settings, toggles, triggers, schedule hour stats, Trigger/Prediction orders |
-| **SSE** `/api/stream` | Server → browser | Quotes, window, trading state, log, schedule (heatmap is REST + browser cache) |
+| **SSE** `/api/stream` | Server → browser | Quotes, chainlink ticks, trading, window (sparse), log, schedule (heatmap is REST + browser cache) |
 | **WebSocket** | Server ↔ exchanges | CLOB book + Chainlink (server only) |
 
 ```flow
@@ -28,8 +28,10 @@ Server -> SSE -> Browser
 
 | Data | Source |
 |------|--------|
-| Quotes / book (top + 10-level depth) | Polymarket CLOB (server WS); SSE `quotes` + `window` |
-| Window / tokens | Polymarket REST |
+| Quotes / book (top + 10-level depth) | Polymarket CLOB (server WS); SSE `quotes` every book change |
+| Chart points | Chainlink WS → SSE `chainlink-tick` (client appends); full `priceHistory` only on SSE connect / window roll / series change |
+| Window / tokens | Polymarket REST; full SSE `window` (history + trading) on connect, market-window roll, and rare REST-driven pushes — not every tick |
+| Positions / markers / phases | SSE `trading` (~250ms coalesce) — no chart history in this event |
 | PTB | Polymarket crypto-price `openPrice` only (unset until it arrives; never prior-window / invented). At Gamma settle, recording PTB may be refined from `eventMetadata.priceToBeat` |
 | Asset price | Chainlink (prefer), else REST |
 | Gap / crossings | Server: asset vs PTB — **no gap** (and gap-based triggers do not fire) until official open is locked |

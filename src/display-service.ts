@@ -119,6 +119,11 @@ export class DisplayService {
     };
   }
 
+  /** Hot-path view — no priceHistory clone (SSE quotes / roll detection). */
+  peekState(): LiveWindowState {
+    return this.state;
+  }
+
   onUpdate(listener: UpdateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
