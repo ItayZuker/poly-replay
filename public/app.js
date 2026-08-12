@@ -5370,6 +5370,35 @@ function applyQuotesUpdate(quotes) {
   tickManipulationDetector(windowState);
 }
 
+/** Positions / markers / phases — no chart history (history comes from chainlink-tick + window rolls). */
+function applyTradingUpdate(trading) {
+  if (trading == null) return;
+
+  if (!windowState) {
+    windowState = { priceHistory: [], trading };
+  } else {
+    windowState.trading = trading;
+  }
+  window.windowState = windowState;
+
+  syncFillSuccessDisplay(trading);
+  syncGraphSaveBtn(windowState);
+  updatePositionsPanel(windowState);
+  syncTriggerLiveUiFromServer(windowState);
+  updateGraphPanel(windowState);
+  if (window.Simulator) window.Simulator.syncFromState(windowState);
+  scheduleTriggerGtdArming(windowState);
+
+  if (!isReplayWorkspace() && window.SchedulePlacements?.applyLivePlacementStats) {
+    window.SchedulePlacements.applyLivePlacementStats(
+      trading.placementStats,
+      trading.sessionTotals,
+      trading.demoLastWindow,
+      trading,
+    );
+  }
+}
+
 function syncLatencyDisplay(state) {
   const ms = state?.feedLatencyMs;
   const settingsEl = $("feed-latency-ms");
@@ -5551,6 +5580,10 @@ function connectSSE() {
         state.trading,
       );
     }
+  });
+
+  es.addEventListener("trading", (e) => {
+    applyTradingUpdate(JSON.parse(e.data));
   });
 
   es.addEventListener("quotes", (e) => {

@@ -364,11 +364,16 @@ function windowDurationSec(state: { windowStart?: number; windowEnd?: number }):
   return 300;
 }
 
-/** Full window snapshots (history + trading) — paced so book ticks don't re-stringify huge payloads. */
-const FULL_WINDOW_SSE_MS = 200;
-let fullWindowTimer: ReturnType<typeof setTimeout> | null = null;
-let fullWindowDirty = false;
+/**
+ * Full `window` snapshots (priceHistory + trading) are expensive.
+ * Live ticks use `quotes` + `chainlink-tick`; trading uses coalesced `trading`.
+ * Full `window` only on connect, series/window roll, and explicit HTTP pushes.
+ */
+const TRADING_SSE_MS = 250;
+let tradingTimer: ReturnType<typeof setTimeout> | null = null;
+let tradingDirty = false;
 let lastQuotesPayload = "";
+let lastSseWindowStart: number | null = null;
 
 function enrichWindowStateForUser(
   userId: string | undefined,
@@ -384,7 +389,7 @@ function enrichWindowStateForUser(
   };
 }
 
-function quotesPayloadFromState(state: ReturnType<typeof displayService.getState>) {
+function quotesPayloadFromState(state: ReturnType<typeof displayService.peekState>) {
   return {
     series: state.series,
     windowStart: state.windowStart,
@@ -414,7 +419,7 @@ function quotesPayloadFromState(state: ReturnType<typeof displayService.getState
 
 /** Tick-live quotes for clickable up/down buttons — small payload, every price change. */
 function pushQuotesLive(): void {
-  const state = displayService.getState();
+  const state = displayService.peekState();
   const quotes = quotesPayloadFromState(state);
   const payload = JSON.stringify(quotes);
   if (payload === lastQuotesPayload) return;
@@ -427,32 +432,42 @@ function pushQuotesLive(): void {
 
 function pushWindowState(): void {
   const state = displayService.getState();
+  lastSseWindowStart = state.windowStart ?? null;
   for (const client of sseClients) {
     const payload = `event: window\ndata: ${JSON.stringify(enrichWindowStateForUser(client.userId, state))}\n\n`;
     client.res.write(payload);
   }
 }
 
-/** Immediate full snapshot (config/trading changes, HTTP handlers). */
+/** Immediate full snapshot (series change, window roll, HTTP handlers). */
 function pushWindowStateImmediate(): void {
-  fullWindowDirty = false;
-  if (fullWindowTimer) {
-    clearTimeout(fullWindowTimer);
-    fullWindowTimer = null;
+  tradingDirty = false;
+  if (tradingTimer) {
+    clearTimeout(tradingTimer);
+    tradingTimer = null;
   }
   pushWindowState();
 }
 
-/** Coalesce chart/history/trading blob after display ticks. */
-function scheduleFullWindowPush(): void {
-  fullWindowDirty = true;
-  if (fullWindowTimer) return;
-  fullWindowTimer = setTimeout(() => {
-    fullWindowTimer = null;
-    if (!fullWindowDirty) return;
-    fullWindowDirty = false;
-    pushWindowState();
-  }, FULL_WINDOW_SSE_MS);
+/** Positions / markers / phases — no priceHistory; coalesced for busy ticks. */
+function pushTradingState(): void {
+  for (const client of sseClients) {
+    const trading = client.userId
+      ? liveTradingRegistry.get(client.userId).getPublicState()
+      : null;
+    client.res.write(`event: trading\ndata: ${JSON.stringify(trading)}\n\n`);
+  }
+}
+
+function scheduleTradingPush(): void {
+  tradingDirty = true;
+  if (tradingTimer) return;
+  tradingTimer = setTimeout(() => {
+    tradingTimer = null;
+    if (!tradingDirty) return;
+    tradingDirty = false;
+    pushTradingState();
+  }, TRADING_SSE_MS);
 }
 
 async function broadcastSchedulePlacements(
@@ -2904,8 +2919,8 @@ async function main(): Promise<void> {
 
   liveTradingRegistry.startPolling(60_000);
   liveTradingRegistry.onUpdate(() => {
-    // Positions/markers changed — send full snapshot now (not only throttled).
-    pushWindowStateImmediate();
+    // Trading blob only (no priceHistory) — coalesced so GTD sync can't flood SSE.
+    scheduleTradingPush();
   });
   traderRegistryService.start();
 
@@ -2976,10 +2991,13 @@ async function main(): Promise<void> {
     });
   });
 
-  // Quotes: every tick (small). Full window (history + trading): coalesced ~200ms.
+  // Quotes every tick (small). Full window only when the market window rolls.
   displayService.onUpdate(() => {
     pushQuotesLive();
-    scheduleFullWindowPush();
+    const ws = displayService.peekState().windowStart ?? null;
+    if (ws != null && ws !== lastSseWindowStart) {
+      pushWindowStateImmediate();
+    }
   });
 
   app.listen(PORT, () => {
