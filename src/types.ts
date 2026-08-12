@@ -547,6 +547,9 @@ export type TriggerLiveUiPublic = {
 export interface TradingPublicState {
   config: TradingConfig;
   positions: { up: LiveSidePosition | null; down: LiveSidePosition | null };
+  /**
+   * Open / pending-confirm cards only (SSE). Settled gallery: GET /api/trading/positions.
+   */
   positionCards: TradingPositionCard[];
   /**
    * True after Mongo live-stat / position-card hydration finished (success or fail).

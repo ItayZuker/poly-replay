@@ -1,6 +1,11 @@
 {
-    "current": "1.68.17",
+    "current": "1.68.18",
     "releases": [
+        {
+            "version": "1.68.18",
+            "releasedAt": "2026-08-12T13:23:21.263Z",
+            "notes": "Positions: server RAM/SSE open/pending only; settled gallery via REST + browser cache. Docs updated."
+        },
         {
             "version": "1.68.17",
             "releasedAt": "2026-08-12T12:55:01.919Z",

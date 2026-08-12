@@ -725,9 +725,36 @@ function isDemoPositionCard(card: Pick<TradingPositionCard, "demo" | "id">): boo
   return card.demo === true || String(card.id || "").startsWith("demo:");
 }
 
-/** Positions UI: keep Open + settled from the last 24h. */
+/** Positions UI Mongo set: Open + settled from the last 24h. */
 function trimPositionCardsForUi(cards: TradingPositionCard[]): TradingPositionCard[] {
   return filterPositionCardsForUi(cards).sort((a, b) => (b.buyAt ?? 0) - (a.buyAt ?? 0));
+}
+
+/**
+ * Cards the trading engine must keep in RAM (SSE open/pending).
+ * Confirmed settled gallery lives in Mongo + client cache only.
+ * `allowPendingSettlementRecheck`: keep just-settled win/loss until one recheck this process.
+ */
+function isEngineHotPositionCard(
+  card: TradingPositionCard,
+  opts: {
+    settlementRecheckedIds?: Set<string>;
+    allowPendingSettlementRecheck?: boolean;
+  } = {},
+): boolean {
+  if (!card) return false;
+  if (String(card.status || "").toLowerCase() === "open") return true;
+  if (card.confirmed !== true) return true;
+  const status = String(card.status || "").toLowerCase();
+  if (
+    opts.allowPendingSettlementRecheck &&
+    (status === "win" || status === "loss") &&
+    opts.settlementRecheckedIds &&
+    !opts.settlementRecheckedIds.has(card.id)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function isRoutineGtdCancelReason(reason: string): boolean {
@@ -1324,8 +1351,10 @@ export class LiveTradingService {
         }
       }
 
-      this.positionCards = trimPositionCardsForUi(uiCards);
-      for (const card of this.positionCards) {
+      const uiCardsTrimmed = trimPositionCardsForUi(uiCards);
+      // Open + unconfirmed only — confirmed settled stay in Mongo for client REST.
+      this.positionCards = uiCardsTrimmed.filter((c) => isEngineHotPositionCard(c));
+      for (const card of uiCardsTrimmed) {
         if (card.placementId && !isManualTradeCard(card)) {
           this.knownPlacementIds.add(card.placementId);
         }
@@ -1337,9 +1366,9 @@ export class LiveTradingService {
       );
       logService.info(
         "trading",
-        `Hydrated ${this.positionCards.length} position card(s) + ${this.knownPlacementIds.size} placement(s) (recent events queried, not kept in RAM${
+        `Hydrated ${this.positionCards.length} hot position card(s) (open/pending; settled via REST) + ${this.knownPlacementIds.size} placement(s)${
           backfilled > 0 ? `; backfilled ${backfilled} placementId(s)` : ""
-        })`,
+        }`,
       );
       await this.withRecentStatEvents(async () => {
         await this.syncActivatedSchedulePlacements();
@@ -1506,11 +1535,25 @@ export class LiveTradingService {
       .then(async () => {
         await upsertPositionCard(this.userId, snap);
         await pruneExpiredSettledPositionCards(this.userId, this.boundSeries);
-        this.positionCards = trimPositionCardsForUi(this.positionCards);
+        this.pruneColdPositionCardsFromRam();
       })
       .catch((err) => {
         logService.warn("trading", `Failed to persist position card ${snap.id}: ${String(err)}`);
       });
+  }
+
+  /** Drop confirmed settled gallery from RAM (Mongo + client cache keep them). */
+  private pruneColdPositionCardsFromRam(): void {
+    const before = this.positionCards.length;
+    this.positionCards = trimPositionCardsForUi(this.positionCards).filter((c) =>
+      isEngineHotPositionCard(c, {
+        settlementRecheckedIds: this.settlementRecheckedIds,
+        allowPendingSettlementRecheck: true,
+      }),
+    );
+    if (this.positionCards.length !== before) {
+      this.statsRevision += 1;
+    }
   }
 
   /** Drop Demo Positions for a deleted Market Trigger (Mongo + RAM). */
@@ -2175,8 +2218,15 @@ export class LiveTradingService {
         up: this.positions.up ? { ...this.positions.up } : null,
         down: this.positions.down ? { ...this.positions.down } : null,
       },
+      // Open / pending only — settled gallery via GET /api/trading/positions + client cache.
       positionCards: this.positionCards
         .filter((card) => this.cardMatchesBoundSeries(card))
+        .filter((card) =>
+          isEngineHotPositionCard(card, {
+            settlementRecheckedIds: this.settlementRecheckedIds,
+            allowPendingSettlementRecheck: true,
+          }),
+        )
         .map((card) => ({ ...card })),
       positionCardsReady: this.statsHydrated,
       triggerLiveUi: Object.fromEntries(
@@ -3218,12 +3268,12 @@ export class LiveTradingService {
     this.notify();
   }
 
-  /** Swap Positions UI RAM to the bound market's Mongo cards (Open + last 24h). */
+  /** Swap engine RAM to this market's open/pending cards (settled stay in Mongo). */
   private async reloadPositionCardsForBoundSeries(): Promise<void> {
     try {
       await pruneExpiredSettledPositionCards(this.userId, this.boundSeries).catch(() => 0);
       const uiCards = await listPositionCards(this.userId, { series: this.boundSeries });
-      this.positionCards = trimPositionCardsForUi(uiCards);
+      this.positionCards = trimPositionCardsForUi(uiCards).filter((c) => isEngineHotPositionCard(c));
     } catch (err) {
       logService.warn("trading", `Failed to reload position cards for ${this.boundSeries}: ${String(err)}`);
     }
@@ -4969,7 +5019,7 @@ export class LiveTradingService {
       if (source !== "manual" && resolvedPlacementId) {
         this.rememberActivatedPlacement(resolvedPlacementId);
       }
-      this.positionCards = trimPositionCardsForUi(this.positionCards);
+      this.pruneColdPositionCardsFromRam();
       this.scheduleUpsertPositionCard(opened);
       if (source === "trigger" && resolvedTriggerId) {
         this.publishTriggerLiveBuy(resolvedTriggerId, side, fillPrice, fillShares);
@@ -6153,6 +6203,7 @@ export class LiveTradingService {
           this.persistCardStat(card);
         }
       }
+      this.pruneColdPositionCardsFromRam();
       if (changed) this.notify();
     } finally {
       this.confirmInFlight = false;
@@ -6665,7 +6716,7 @@ export class LiveTradingService {
     if (input.slug) card.slug = input.slug;
     if (input.triggerMiss) card.triggerMiss = true;
     this.positionCards.unshift(card);
-    this.positionCards = trimPositionCardsForUi(this.positionCards);
+    this.pruneColdPositionCardsFromRam();
     this.scheduleUpsertPositionCard(card);
     this.publishTriggerLiveBuy(triggerId, side, buyPrice, shares);
     this.notify();

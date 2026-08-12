@@ -66,6 +66,7 @@ import {
 import {
   deleteAllPositionCardsForUser,
   listPositionCards,
+  pruneExpiredSettledPositionCards,
 } from "./db/position-card-repository.js";
 import {
   deleteAllTriggerDemoStatsCreditsForUser,
@@ -1041,6 +1042,22 @@ app.post("/api/trading/trigger-gtd-sync", async (req, res) => {
       return;
     }
     res.status(500).json({ error: message });
+  }
+});
+
+/** Positions gallery: Open + last 24h settled from Mongo (client cache; SSE carries open/pending only). */
+app.get("/api/trading/positions", async (req, res) => {
+  try {
+    const userId = requireUserId(req);
+    const { DEFAULT_MARKET_SERIES } = await import("./collections.js");
+    const series =
+      String(req.query.series ?? displayService.getState().series ?? DEFAULT_MARKET_SERIES).trim() ||
+      DEFAULT_MARKET_SERIES;
+    await pruneExpiredSettledPositionCards(userId, series).catch(() => 0);
+    const cards = await listPositionCards(userId, { series });
+    res.json({ series, cards });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
