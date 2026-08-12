@@ -28,6 +28,8 @@ class SeriesFeed {
   private noTokenId: string | null = null;
   private sampleInFlight = false;
   private lastPtbSide: PtbSide | null = null;
+  /** True once this window’s Polymarket crypto-price openPrice was applied. */
+  private officialOpenLocked = false;
   private state: LiveWindowState;
 
   constructor(private readonly series: string) {
@@ -105,6 +107,9 @@ class SeriesFeed {
           }
           this.lastPtbSide = ptbSide;
         }
+      } else {
+        this.state.assetGap = undefined;
+        this.lastPtbSide = null;
       }
       const tickSec = Date.now() / 1000;
       if (tickSec >= this.state.windowStart && tickSec < this.state.windowEnd) {
@@ -133,6 +138,10 @@ class SeriesFeed {
         this.state.ptbCrossings = 0;
         this.state.bookTickSequence = 0;
         this.lastPtbSide = null;
+        this.state.prevCloseAsset = undefined;
+        this.state.assetGap = undefined;
+        this.state.priceToBeatSource = undefined;
+        this.officialOpenLocked = false;
       }
 
       this.state.series = this.series;
@@ -152,9 +161,14 @@ class SeriesFeed {
       try {
         const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
         const live = applyRtdsLivePrice(asset, prices);
-        if (live.prevCloseAsset != null) {
+        if (
+          !this.officialOpenLocked &&
+          live.prevCloseAsset != null &&
+          Number.isFinite(live.prevCloseAsset)
+        ) {
           this.state.prevCloseAsset = live.prevCloseAsset;
           this.state.priceToBeatSource = live.priceToBeatSource;
+          this.officialOpenLocked = true;
         }
         if (live.assetPrice != null) {
           this.state.assetPrice = live.assetPrice;
@@ -162,15 +176,17 @@ class SeriesFeed {
         if (this.state.assetPrice != null && this.state.prevCloseAsset != null) {
           this.state.assetGap = this.state.assetPrice - this.state.prevCloseAsset;
         } else {
-          this.state.assetGap = live.assetGap;
+          this.state.assetGap = undefined;
         }
       } catch {
         const live = chainlinkPriceFeed.getLivePrice(asset);
         if (live) {
           this.state.assetPrice = live.value;
-          if (this.state.prevCloseAsset != null) {
-            this.state.assetGap = live.value - this.state.prevCloseAsset;
-          }
+        }
+        if (this.state.prevCloseAsset != null && this.state.assetPrice != null) {
+          this.state.assetGap = this.state.assetPrice - this.state.prevCloseAsset;
+        } else {
+          this.state.assetGap = undefined;
         }
       }
 
