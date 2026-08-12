@@ -2,21 +2,12 @@ import type { WalletRegistry } from "./types.js";
 import { walletsFilePath } from "./db/data-dir.js";
 import { readJsonFile } from "./db/file-store.js";
 import {
-  countTraderWallets,
   ensureTraderWalletIndexes,
   findTraderWalletsByAddresses,
   importTraderWalletsFromRegistry,
-  listAllTraderWallets,
-  listTraderWalletsForSeries,
-  countTraderWalletsForSeries,
   upsertTraderWalletsForWindow,
   deleteInactiveTraderWallets,
 } from "./db/trader-wallet-repository.js";
-import {
-  ensureWindowTraderIndexes,
-  replaceWindowTraders,
-} from "./db/window-trader-repository.js";
-
 let migratePromise: Promise<void> | null = null;
 
 async function migrateFromDiskIfNeeded(): Promise<void> {
@@ -37,9 +28,9 @@ async function migrateFromDiskIfNeeded(): Promise<void> {
   await migratePromise;
 }
 
+/** Address presence only — for heatmap New wallets counts (no list / window_traders). */
 export async function ensureWalletRegistryReady(): Promise<void> {
   await ensureTraderWalletIndexes();
-  await ensureWindowTraderIndexes();
   await migrateFromDiskIfNeeded();
 }
 
@@ -77,46 +68,17 @@ export async function classifyWindowTraders(
   return { newWallets, knownWallets };
 }
 
-/** Register each wallet once for this window; bump per-market counts once per window per wallet. */
+/**
+ * Classify + remember address presence for New wallets counts.
+ * Does not store per-window address lists (window_traders retired).
+ */
 export async function registerWindowTraders(
   marketSeries: string,
   addresses: string[],
-  windowStart?: number,
+  _windowStart?: number,
 ): Promise<RegisterWindowTradersResult> {
   await migrateFromDiskIfNeeded();
-  const result = await upsertTraderWalletsForWindow(marketSeries, addresses);
-  if (windowStart != null) {
-    await replaceWindowTraders(marketSeries, windowStart, addresses).catch(() => undefined);
-  }
-  return result;
-}
-
-export async function getWalletRegistry(): Promise<WalletRegistry> {
-  await migrateFromDiskIfNeeded();
-  return listAllTraderWallets();
-}
-
-/** Wallets seen in the given market series. */
-export async function listWalletsForSeries(
-  marketSeries: string,
-  options?: {
-    sortBy?: "sightings" | "lastSeenAt";
-    dir?: "asc" | "desc";
-    limit?: number;
-  },
-) {
-  await migrateFromDiskIfNeeded();
-  return listTraderWalletsForSeries(marketSeries, options);
-}
-
-export async function countWalletsForSeries(marketSeries: string): Promise<number> {
-  await migrateFromDiskIfNeeded();
-  return countTraderWalletsForSeries(marketSeries);
-}
-
-export async function getWalletCount(): Promise<number> {
-  await migrateFromDiskIfNeeded();
-  return countTraderWallets();
+  return upsertTraderWalletsForWindow(marketSeries, addresses);
 }
 
 /** Drop wallets whose last sighting is older than `maxAgeDays` (default 30). */
