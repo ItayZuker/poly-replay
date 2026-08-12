@@ -10,10 +10,6 @@ export interface TraderWalletDocument {
   lastSeenAt: number;
   markets: Record<string, number>;
   totalSightings: number;
-  /** Cached Polymarket all-time leaderboard PnL (USD). */
-  polymarketPnl?: number;
-  /** Unix seconds when polymarketPnl was last refreshed. */
-  polymarketPnlUpdatedAt?: number;
 }
 
 async function collection() {
@@ -40,6 +36,7 @@ function toEntry(doc: TraderWalletDocument): WalletRegistryEntry {
   };
 }
 
+/** Address presence lookup for New wallets classification. */
 export async function findTraderWalletsByAddresses(
   addresses: string[],
 ): Promise<Map<string, WalletRegistryEntry>> {
@@ -48,48 +45,14 @@ export async function findTraderWalletsByAddresses(
   if (unique.length === 0) return out;
 
   const col = await collection();
-  const docs = await col.find({ _id: { $in: unique } }).toArray();
-  for (const doc of docs) {
-    out.set(doc._id, toEntry(doc));
-  }
-  return out;
-}
-
-export async function getTraderWalletPnlCache(
-  addresses: string[],
-): Promise<Map<string, { pnl: number; updatedAt: number }>> {
-  const unique = [...new Set(addresses.map(normalizeAddress).filter(Boolean))];
-  const out = new Map<string, { pnl: number; updatedAt: number }>();
-  if (unique.length === 0) return out;
-  const col = await collection();
   const docs = await col
     .find({ _id: { $in: unique } })
-    .project({ _id: 1, polymarketPnl: 1, polymarketPnlUpdatedAt: 1 })
+    .project({ _id: 1, address: 1, firstSeenAt: 1, lastSeenAt: 1, markets: 1, totalSightings: 1 })
     .toArray();
   for (const doc of docs) {
-    const pnl = Number(doc.polymarketPnl);
-    const updatedAt = Number(doc.polymarketPnlUpdatedAt);
-    if (!Number.isFinite(pnl) || !Number.isFinite(updatedAt)) continue;
-    out.set(String(doc._id), { pnl, updatedAt });
+    out.set(doc._id, toEntry(doc as TraderWalletDocument));
   }
   return out;
-}
-
-export async function setTraderWalletPnl(address: string, pnl: number): Promise<void> {
-  const addr = normalizeAddress(address);
-  if (!addr) return;
-  const value = Number(pnl);
-  if (!Number.isFinite(value)) return;
-  const col = await collection();
-  await col.updateOne(
-    { _id: addr },
-    {
-      $set: {
-        polymarketPnl: value,
-        polymarketPnlUpdatedAt: Math.floor(Date.now() / 1000),
-      },
-    },
-  );
 }
 
 export async function upsertTraderWalletsForWindow(
@@ -148,55 +111,6 @@ export async function upsertTraderWalletsForWindow(
   }
 
   return { newWallets, knownWallets };
-}
-
-export async function listAllTraderWallets(): Promise<WalletRegistry> {
-  const col = await collection();
-  const docs = await col.find({}).toArray();
-  const registry: WalletRegistry = {};
-  for (const doc of docs) {
-    registry[doc._id] = toEntry(doc);
-  }
-  return registry;
-}
-
-/** Wallets with at least one sighting in `marketSeries` (e.g. btc-5m). */
-export async function listTraderWalletsForSeries(
-  marketSeries: string,
-  options?: {
-    sortBy?: "sightings" | "lastSeenAt";
-    dir?: "asc" | "desc";
-    limit?: number;
-  },
-): Promise<WalletRegistryEntry[]> {
-  const series = String(marketSeries ?? "").trim();
-  if (!series) return [];
-  const col = await collection();
-  const dir = options?.dir === "asc" ? 1 : -1;
-  const sortBy = options?.sortBy === "sightings" ? "sightings" : "lastSeenAt";
-  const sort =
-    sortBy === "sightings"
-      ? ({ [`markets.${series}`]: dir, address: 1 } as Record<string, 1 | -1>)
-      : ({ lastSeenAt: dir, address: 1 } as Record<string, 1 | -1>);
-  let cursor = col.find({ [`markets.${series}`]: { $gt: 0 } }).sort(sort);
-  const limit = Math.floor(Number(options?.limit));
-  if (Number.isFinite(limit) && limit > 0) {
-    cursor = cursor.limit(limit);
-  }
-  const docs = await cursor.toArray();
-  return docs.map(toEntry);
-}
-
-export async function countTraderWalletsForSeries(marketSeries: string): Promise<number> {
-  const series = String(marketSeries ?? "").trim();
-  if (!series) return 0;
-  const col = await collection();
-  return col.countDocuments({ [`markets.${series}`]: { $gt: 0 } });
-}
-
-export async function countTraderWallets(): Promise<number> {
-  const col = await collection();
-  return col.countDocuments();
 }
 
 /**

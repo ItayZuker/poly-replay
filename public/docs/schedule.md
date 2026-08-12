@@ -90,4 +90,4 @@ Day × hour intensity from recorded windows (e.g. crossings, range). Uses the sa
 
 The browser **caches** the heatmap grid in `localStorage` (per market). Opening Heatmap uses the cache when fresh; the server reads Mongo on demand (no dyno RAM copy of all windows). When a Live market window rolls, the client fetches **that finished window only** via `GET /api/heatmap/window` and merges it into the cache (with short retries if Mongo is still catching up).
 
-The left **color index** cards (Crossings, Range, Wallets, New wallets) can be dragged up/down by their handle — that order is the left→right order of the colored columns in each heatmap hour cell. The order is saved in the browser.
+The left **color index** cards (Crossings, Range, Wallets, New wallets) can be dragged up/down by their handle — that order is the left→right order of the colored columns in each heatmap hour cell. The order is saved in the browser. **Wallets** / **New wallets** are per-window counts only (no drill-down wallet list).
