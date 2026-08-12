@@ -1,6 +1,11 @@
 {
-    "current": "1.68.13",
+    "current": "1.68.14",
     "releases": [
+        {
+            "version": "1.68.14",
+            "releasedAt": "2026-08-12T09:49:19.886Z",
+            "notes": "Fix Trigger GTD fill windowKey/slug mismatch on cancel/roll (held settle vs Live Open Official); repair script for mis-filed cards."
+        },
         {
             "version": "1.68.13",
             "releasedAt": "2026-08-12T08:44:25.513Z",

@@ -1,6 +1,6 @@
 {
   "name": "poly-simulator",
-  "version": "1.68.13",
+  "version": "1.68.14",
   "description": "Schedule-driven Polymarket up/down trading with optional recording and Replay",
   "type": "module",
   "engines": {
@@ -19,6 +19,7 @@
     "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",
     "repair:false-wins": "tsx src/scripts/repair-false-wins.ts",
     "repair:held-gamma": "tsx src/scripts/repair-held-settlements-from-gamma.ts",
+    "repair:slug-window": "tsx src/scripts/repair-slug-window-mismatch.ts",
     "rebuild:trigger-live-stats": "tsx src/scripts/rebuild-trigger-live-stats.ts"
   },
   "dependencies": {
