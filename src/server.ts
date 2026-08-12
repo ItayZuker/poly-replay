@@ -1069,16 +1069,18 @@ app.post("/api/trading/positions/clear", async (req, res) => {
 /** Reload schedule-card / Live stats from Mongo into RAM (e.g. after restore script). */
 app.post("/api/trading/stats/rehydrate", async (req, res) => {
   try {
-    await tradingFor(req).hydrateLiveStatsFromMongo();
+    const engine = tradingFor(req);
+    await engine.hydrateLiveStatsFromMongo();
     pushWindowStateImmediate();
-    const live = tradingFor(req).getLiveSessionTotals();
+    const live = await engine.getLiveSessionTotalsFromMongo();
+    const placementStats = await engine.getAllPlacementStatsAsync();
     res.json({
       ok: true,
       green: live.green,
       red: live.red,
       blue: live.blue,
       pnl: live.pnl,
-      placementStats: live.placementStats,
+      placementStats,
     });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -1089,7 +1091,13 @@ app.get("/api/trading/session-memory", async (req, res) => {
   try {
     const userId = requireUserId(req);
     const mode = String(req.query.mode ?? "live").toLowerCase();
-    const live = tradingFor(req).getLiveSessionTotals();
+    const engine = tradingFor(req);
+    const { DEFAULT_MARKET_SERIES } = await import("./collections.js");
+    const seriesHint =
+      String(req.query.series ?? engine.getBoundSeries() ?? DEFAULT_MARKET_SERIES).trim() ||
+      DEFAULT_MARKET_SERIES;
+    await engine.ensureBoundToSeries(seriesHint);
+    const live = await engine.getLiveSessionTotalsFromMongo();
     const liveTotals = {
       green: live.green,
       red: live.red,
@@ -1100,13 +1108,12 @@ app.get("/api/trading/session-memory", async (req, res) => {
     };
 
     if (mode === "live") {
-      res.json({ mode, ...liveTotals, live: liveTotals });
+      res.json({ mode, series: seriesHint, ...liveTotals, live: liveTotals });
       return;
     }
 
     if (mode === "market") {
-      const { DEFAULT_MARKET_SERIES } = await import("./collections.js");
-      const series = String(req.query.series ?? DEFAULT_MARKET_SERIES).trim() || DEFAULT_MARKET_SERIES;
+      const series = seriesHint;
       const archived = await sumTradingStatEventsForSeries(userId, series);
       res.json({
         mode: "market",
@@ -2298,9 +2305,10 @@ async function runPlacementPlay(
     }
     const workerBase = replayWorkerBaseUrl();
     const engine = await liveTradingRegistry.ensureLoaded(userId);
+    await engine.ensureBoundToSeries(series);
     const payload = await buildLiveHourPlayPayload(userId, market, placementId, {
       cards: engine.getPublicState().positionCards,
-      events: engine.getLiveStatEvents(),
+      events: await engine.listStatEventsForPlay(),
       resolveWindowsWithTicks: workerBase
         ? async (windowStarts) => {
             const remote = await fetchRemoteChainlinkPresence(workerBase, series, windowStarts);
@@ -2671,7 +2679,7 @@ app.get("/api/schedule-placement-stats", async (req, res) => {
     const allPlacements = await listSchedulePlacements(userId, series, "live");
     const placementIds = parsePlacementIdsQuery(req);
     const placements = filterSchedulePlacements(allPlacements, placementIds);
-    const stats = engine.getPlacementStats(placements.map((p) => p._id));
+    const stats = await engine.getPlacementStatsAsync(placements.map((p) => p._id));
     res.json(stats);
   } catch (err) {
     const message = String(err);
@@ -2734,7 +2742,7 @@ app.get("/api/schedule-placement-stats/stream", async (req, res) => {
     const allPlacements = await listSchedulePlacements(userId, series, "live");
     const placementIds = parsePlacementIdsQuery(req);
     const placements = filterSchedulePlacements(allPlacements, placementIds);
-    const stats = engine.getPlacementStats(placements.map((p) => p._id));
+    const stats = await engine.getPlacementStatsAsync(placements.map((p) => p._id));
     if (!closed) {
       writeEvent("done", stats);
       res.end();

@@ -50,9 +50,11 @@ import {
   getLiveCollectionStartedAt,
   getLiveResetAt,
   listActivatedPlacementIds,
+  listRecentTradingStatEvents,
   listTradingStatEvents,
   markLiveReset,
   setActivatedPlacementIds,
+  sumLiveTradingStatEventsForSeries,
   upsertTradingStatEvent,
   type TradingStatEvent,
 } from "./db/trading-session-memory-repository.js";
@@ -966,14 +968,18 @@ export class LiveTradingService {
   /** Placement ids that have had schedule auto-trades this session (for live card stats). */
   private knownPlacementIds = new Set<string>();
   /**
-   * Settled contributions for schedule card stats + Live header (filtered by liveResetAtMs).
-   * Keyed by cardId — survives restart and header Live reset; cleared per placement on remove.
+   * In-process settled writes only (not full Mongo history).
+   * Schedule/Live aggregates load recent events from Mongo per REST request.
    */
   private liveStatLedger = new Map<string, TradingStatEvent>();
+  /** Temporary Mongo+RAM merge while computing placement/hour stats. */
+  private statsEventSource: TradingStatEvent[] | null = null;
   /** Last written fingerprints — skip identical Mongo upserts. */
   private lastPersistedStatFingerprint = new Map<string, string>();
-  /** True after the first successful Mongo ledger hydrate for this process. */
+  /** True after Positions + activation hydrate finished (success or fail). */
   private statsHydrated = false;
+  /** Bumped on each settled-stat write — clients refetch REST aggregates. */
+  private statsRevision = 0;
   /** Header "Live" range cut — events at/before this ms are excluded from session totals only. */
   private liveResetAtMs: number | null = null;
   /** Schedule live collection arm time — slots before this stay pre-run (dashes). */
@@ -1228,7 +1234,7 @@ export class LiveTradingService {
     return this.getConfig();
   }
 
-  /** Reload stats ledger + Positions UI cards from Mongo (after boot). */
+  /** Reload Positions UI + activation; recent events used for backfill then discarded from RAM. */
   async hydrateLiveStatsFromMongo(): Promise<void> {
     try {
       const resetAt = await getLiveResetAt(this.userId);
@@ -1245,7 +1251,10 @@ export class LiveTradingService {
         logService.warn("trading", `Failed to load fill success stats: ${String(err)}`);
       }
 
-      const events = await listTradingStatEvents(this.userId, {});
+      // Recent only — full history stays in Mongo for REST aggregates / Market P/L.
+      const events = await listRecentTradingStatEvents(this.userId, {
+        series: this.boundSeries,
+      });
       if (this.liveCollectionStartedAtMs == null && events.length > 0) {
         let earliest = Infinity;
         for (const event of events) {
@@ -1267,12 +1276,9 @@ export class LiveTradingService {
         this.knownPlacementIds.add(id);
       }
 
-      // Stats ledger (Market / Schedule) — durable Real history; not cleared by Positions Clear.
+      // Normalize + collect placement locks; do not retain the full recent set in RAM.
       for (const event of events) {
-        if (event.card?.demo === true || String(event.cardId).startsWith("demo:")) {
-          // Demo belongs on Positions + trigger.demoStats only.
-          continue;
-        }
+        if (event.card?.demo === true || String(event.cardId).startsWith("demo:")) continue;
         if (isManualStatEvent(event)) {
           delete event.placementId;
           if (event.card?.placementId) {
@@ -1285,18 +1291,15 @@ export class LiveTradingService {
           if (pid && event.card && !event.card.placementId) {
             event.card = { ...event.card, placementId: pid };
           }
+          if (pid) this.knownPlacementIds.add(pid);
         }
-        this.liveStatLedger.set(event.cardId, event);
         this.lastPersistedStatFingerprint.set(event.cardId, eventFingerprint(event));
-        const pid = eventPlacementId(event);
-        if (pid && !isManualStatEvent(event)) this.knownPlacementIds.add(pid);
       }
 
       // Positions UI — Mongo position_cards (Open + last 24h settled).
       await pruneExpiredSettledPositionCards(this.userId).catch(() => 0);
       let uiCards = await listPositionCards(this.userId, { series: this.boundSeries });
       if (uiCards.length === 0) {
-        // One-time seed from legacy event snapshots + any RAM open cards (this series).
         const seeded: TradingPositionCard[] = [];
         const seen = new Set<string>();
         for (const c of this.positionCards) {
@@ -1328,14 +1331,19 @@ export class LiveTradingService {
         }
       }
 
-      const backfilled = await this.backfillOrphanPlacementIds();
+      // Backfill uses a temporary Mongo merge; ledger stays empty afterward.
+      const backfilled = await this.withRecentStatEvents(async () =>
+        this.backfillOrphanPlacementIds(),
+      );
       logService.info(
         "trading",
-        `Hydrated ${this.liveStatLedger.size} live stat event(s) + ${this.positionCards.length} position card(s) (${this.knownPlacementIds.size} placement(s)${
-          backfilled > 0 ? `, backfilled ${backfilled} placementId(s)` : ""
+        `Hydrated ${this.positionCards.length} position card(s) + ${this.knownPlacementIds.size} placement(s) (recent events queried, not kept in RAM${
+          backfilled > 0 ? `; backfilled ${backfilled} placementId(s)` : ""
         })`,
       );
-      await this.syncActivatedSchedulePlacements();
+      await this.withRecentStatEvents(async () => {
+        await this.syncActivatedSchedulePlacements();
+      });
       await this.reconcileDemoStatsFromPositionCards();
       await this.reloadTriggerLiveUiFromMongo();
       this.ensureConfirmLoop();
@@ -1345,6 +1353,37 @@ export class LiveTradingService {
       // Always unblock clients (Positions spinner) even if Mongo hydrate failed.
       this.statsHydrated = true;
     }
+  }
+
+  /** Merge Mongo recent events with in-process settles for one compute pass. */
+  private async loadMergedRecentStatEvents(): Promise<TradingStatEvent[]> {
+    const mongo = await listRecentTradingStatEvents(this.userId, {
+      series: this.boundSeries,
+    });
+    const byId = new Map<string, TradingStatEvent>();
+    for (const event of mongo) {
+      if (event.card?.demo === true || String(event.cardId).startsWith("demo:")) continue;
+      byId.set(event.cardId, event);
+    }
+    for (const event of this.iterStatEvents()) {
+      byId.set(event.cardId, event);
+    }
+    return [...byId.values()];
+  }
+
+  private async withRecentStatEvents<T>(fn: () => T | Promise<T>): Promise<T> {
+    const prev = this.statsEventSource;
+    this.statsEventSource = await this.loadMergedRecentStatEvents();
+    try {
+      return await fn();
+    } finally {
+      this.statsEventSource = prev;
+    }
+  }
+
+  private iterStatEvents(): IterableIterator<TradingStatEvent> {
+    if (this.statsEventSource) return this.statsEventSource.values();
+    return this.liveStatLedger.values();
   }
 
   private async reloadTriggerLiveUiFromMongo(): Promise<void> {
@@ -1525,7 +1564,7 @@ export class LiveTradingService {
     };
 
     let fixed = 0;
-    for (const event of this.liveStatLedger.values()) {
+    for (const event of this.iterStatEvents()) {
       // Strip any prior mistaken schedule link on manual trades.
       if (isManualStatEvent(event)) {
         if (event.placementId || event.card?.placementId) {
@@ -1727,7 +1766,7 @@ export class LiveTradingService {
 
     // Fill gaps between slots that actually have fills (still not before floor).
     const eventPlacementIds = new Set<string>();
-    for (const event of this.liveStatLedger.values()) {
+    for (const event of this.iterStatEvents()) {
       const pid = eventPlacementId(event);
       if (pid) eventPlacementIds.add(pid);
     }
@@ -1921,6 +1960,7 @@ export class LiveTradingService {
 
     this.liveStatLedger.set(card.id, event);
     this.lastPersistedStatFingerprint.set(card.id, fingerprint);
+    this.statsRevision += 1;
     if (card.source !== "manual" && card.placementId) {
       this.knownPlacementIds.add(card.placementId);
     }
@@ -2103,15 +2143,32 @@ export class LiveTradingService {
     return [...this.markers];
   }
 
-  /** Settled ledger events (RAM) for Live Open Replay / hour stats freshness. */
-  getLiveStatEvents(): TradingStatEvent[] {
-    return [...this.liveStatLedger.values()].map((e) => ({ ...e, card: e.card ? { ...e.card } : e.card }));
+  /**
+   * Settled events for Live Open Replay markers — Mongo recent window (+ in-process).
+   * Not held permanently in engine RAM.
+   */
+  async listStatEventsForPlay(options: { fromMs?: number; toMs?: number } = {}): Promise<TradingStatEvent[]> {
+    const fromMs = options.fromMs ?? Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const mongo = await listTradingStatEvents(this.userId, {
+      fromMs,
+      toMs: options.toMs,
+      series: this.boundSeries,
+    });
+    const byId = new Map<string, TradingStatEvent>();
+    for (const event of mongo) {
+      if (event.card?.demo === true || String(event.cardId).startsWith("demo:")) continue;
+      byId.set(event.cardId, event);
+    }
+    for (const event of this.liveStatLedger.values()) {
+      byId.set(event.cardId, event);
+    }
+    return [...byId.values()].map((e) => ({ ...e, card: e.card ? { ...e.card } : e.card }));
   }
 
   getPublicState(): TradingPublicState {
     const phasesVisible = this.shouldShowPhases();
     const previewMode = this.isPreviewMode();
-    const live = this.getLiveSessionTotals();
+    // Heavy placement/session aggregates are REST + client cache (not every SSE).
     return {
       config: this.getConfig(),
       positions: {
@@ -2125,13 +2182,14 @@ export class LiveTradingService {
       triggerLiveUi: Object.fromEntries(
         [...this.triggerLiveUiById.entries()].map(([id, live]) => [id, live ? { ...live } : null]),
       ),
-      placementStats: this.getPlacementStatsFromCards(),
+      placementStats: [],
+      statsRevision: this.statsRevision,
       sessionTotals: {
-        green: live.green,
-        red: live.red,
-        blue: live.blue,
-        pnl: live.pnl,
-        hasData: live.hasBalance,
+        green: 0,
+        red: 0,
+        blue: 0,
+        pnl: 0,
+        hasData: false,
       },
       demoLastWindow:
         this.config.autoTrade && !this.isLiveArmed()
@@ -2173,35 +2231,65 @@ export class LiveTradingService {
     return placementIds.map((id) => this.statsForPlacement(id));
   }
 
+  /** Mongo recent + in-process — used by REST (not SSE). */
+  async getPlacementStatsAsync(placementIds: string[]): Promise<PlacementLiveStats[]> {
+    return this.withRecentStatEvents(() => this.getPlacementStats(placementIds));
+  }
+
+  async getAllPlacementStatsAsync(): Promise<PlacementLiveStats[]> {
+    return this.withRecentStatEvents(() => this.getPlacementStatsFromCards());
+  }
+
   /**
    * UTC weekday×hour slot stats for the current ISO week:
    * Trigger Trade (timeline-gated) plus legacy phase/auto placement trades still in this week.
    * Prior week clears automatically when the UTC ISO week rolls.
    */
   async getHourSlotStats(): Promise<ScheduleHourSlotStats[]> {
-    const triggerIds = new Set<string>();
-    for (const card of this.positionCards) {
-      const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
-      if (tid && card.source !== "manual" && card.source !== "auto") triggerIds.add(tid);
-    }
-    for (const event of this.liveStatLedger.values()) {
-      const tid = typeof event.card?.triggerId === "string" ? event.card.triggerId.trim() : "";
-      if (
-        tid &&
-        event.card?.source !== "manual" &&
-        event.card?.source !== "auto"
-      ) {
-        triggerIds.add(tid);
+    return this.withRecentStatEvents(async () => {
+      const events = [...this.iterStatEvents()];
+      const triggerIds = new Set<string>();
+      for (const card of this.positionCards) {
+        const tid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+        if (tid && card.source !== "manual" && card.source !== "auto") triggerIds.add(tid);
       }
-    }
-    const timelineEvents = triggerIds.size
-      ? await listTriggerModeEvents(this.userId, [...triggerIds])
-      : [];
-    return computeScheduleHourSlotStats({
-      events: [...this.liveStatLedger.values()],
-      cards: this.positionCards,
-      timelineEvents,
+      for (const event of events) {
+        const tid = typeof event.card?.triggerId === "string" ? event.card.triggerId.trim() : "";
+        if (
+          tid &&
+          event.card?.source !== "manual" &&
+          event.card?.source !== "auto"
+        ) {
+          triggerIds.add(tid);
+        }
+      }
+      const timelineEvents = triggerIds.size
+        ? await listTriggerModeEvents(this.userId, [...triggerIds])
+        : [];
+      return computeScheduleHourSlotStats({
+        events,
+        cards: this.positionCards,
+        timelineEvents,
+      });
     });
+  }
+
+  /** Live header totals from Mongo (after reset) for the bound series. */
+  async getLiveSessionTotalsFromMongo(): Promise<{
+    green: number;
+    red: number;
+    blue: number;
+    pnl: number;
+    hasBalance: boolean;
+  }> {
+    const sum = await sumLiveTradingStatEventsForSeries(this.userId, this.boundSeries);
+    return {
+      green: sum.green,
+      red: sum.red,
+      blue: sum.blue,
+      pnl: sum.pnl,
+      hasBalance: sum.hasData,
+    };
   }
 
   /** True once the card has started at least one window — stays locked until removed. */
@@ -2215,7 +2303,7 @@ export class LiveTradingService {
   }
 
   private placementHasRecordedStats(placementId: string): boolean {
-    for (const event of this.liveStatLedger.values()) {
+    for (const event of this.iterStatEvents()) {
       if (eventPlacementId(event) !== placementId) continue;
       if (isManualStatEvent(event)) continue;
       if (!this.eventMatchesBoundSeries(event)) continue;
@@ -2233,7 +2321,7 @@ export class LiveTradingService {
 
   private getPlacementStatsFromCards(): PlacementLiveStats[] {
     const ids = new Set(this.knownPlacementIds);
-    for (const event of this.liveStatLedger.values()) {
+    for (const event of this.iterStatEvents()) {
       if (isManualStatEvent(event)) continue;
       const pid = eventPlacementId(event);
       if (pid) ids.add(pid);
@@ -2319,7 +2407,7 @@ export class LiveTradingService {
       pushHit(card.windowKey, cardStatIdentity(card), contrib, card.soldAt ?? card.buyAt);
     }
 
-    for (const event of this.liveStatLedger.values()) {
+    for (const event of this.iterStatEvents()) {
       if (eventPlacementId(event) !== placementId) continue;
       if (isManualStatEvent(event)) continue;
       if (!this.eventMatchesBoundSeries(event)) continue;
@@ -2426,7 +2514,7 @@ export class LiveTradingService {
       }
     }
 
-    for (const event of this.liveStatLedger.values()) {
+    for (const event of this.iterStatEvents()) {
       if (seen.has(event.cardId)) continue;
       if (event.card?.demo === true) continue;
       if (!this.eventMatchesBoundSeries(event)) continue;

@@ -1366,19 +1366,96 @@
     return true;
   }
 
-  function applyLivePlacementStats(statsList, sessionTotals, demoLastWindow, trading) {
-    // Always refresh the Live hour-cell buffer (even while Replay is open) so
-    // toggling back to Live is instant and up to date.
-    void window.ScheduleHourSlots?.refreshLive?.();
-    if (sessionTotals) {
-      liveSessionTotals = normalizeSessionTotals(sessionTotals);
+  let lastAppliedStatsRevision = null;
+  let liveStatsRestTimer = null;
+
+  /**
+   * SSE no longer carries full placement/session aggregates — refetch REST (throttled).
+   * @param {{ force?: boolean, statsRevision?: number }} [options]
+   */
+  function scheduleLiveStatsRestRefresh(options = {}) {
+    const rev = Number(options.statsRevision);
+    if (
+      !options.force &&
+      Number.isFinite(rev) &&
+      lastAppliedStatsRevision != null &&
+      rev === lastAppliedStatsRevision
+    ) {
+      return;
     }
+    if (Number.isFinite(rev)) lastAppliedStatsRevision = rev;
+    if (liveStatsRestTimer != null) return;
+    liveStatsRestTimer = window.setTimeout(() => {
+      liveStatsRestTimer = null;
+      void window.ScheduleHourSlots?.refreshLive?.();
+      void scheduleStatsRefresh({ all: true, force: true, quiet: true });
+      void fetchLiveSessionMemoryTotals();
+      if (headerSummaryRange === "market") scheduleHeaderSummaryRefresh();
+    }, 450);
+  }
+
+  async function fetchLiveSessionMemoryTotals() {
+    const series = selectedSeries();
+    try {
+      const params = new URLSearchParams({ mode: "live", series });
+      const res = await fetch(`/api/trading/session-memory?${params}`, {
+        credentials: "same-origin",
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const totals = normalizeSessionTotals({
+        hasData: data.hasData === true,
+        green: data.green ?? 0,
+        red: data.red ?? 0,
+        blue: data.blue ?? 0,
+        pnl: data.pnl ?? 0,
+      });
+      applyLiveSessionTotals(totals);
+      try {
+        localStorage.setItem(
+          `poly-real:live-session-totals:${series}`,
+          JSON.stringify({ ...totals, savedAt: Date.now() }),
+        );
+      } catch {
+        /* ignore */
+      }
+      return totals;
+    } catch {
+      return null;
+    }
+  }
+
+  function applyLivePlacementStats(statsList, sessionTotals, demoLastWindow, trading) {
     if (demoLastWindow !== undefined) {
       ingestDemoLastWindow(demoLastWindow, trading);
     }
+    // Authoritative aggregates come from REST; SSE may send empty placeholders.
+    const hasSessionPayload =
+      sessionTotals &&
+      (sessionTotals.hasData === true ||
+        (sessionTotals.green ?? 0) + (sessionTotals.red ?? 0) + (sessionTotals.blue ?? 0) > 0 ||
+        Math.abs(sessionTotals.pnl ?? 0) > 1e-9);
+    if (hasSessionPayload) {
+      applyLiveSessionTotals(sessionTotals);
+    }
+    if (Array.isArray(statsList) && statsList.length > 0 && !isReplayWorkspace()) {
+      for (const stat of statsList) {
+        if (!stat?.placementId) continue;
+        const prev = placementStats.get(stat.placementId);
+        if (!shouldApplyPlacementStats(prev, stat)) continue;
+        placementStats.set(stat.placementId, {
+          ...stat,
+          locked: stat.locked === true || stat.hasData === true,
+        });
+      }
+      applyCardStatsStates();
+    }
+    scheduleLiveStatsRestRefresh({
+      statsRevision: trading?.statsRevision,
+      force: !Number.isFinite(Number(trading?.statsRevision)),
+    });
     if (isReplayWorkspace()) return;
-    if (sessionTotals) applyLiveSessionTotals(sessionTotals);
-    else if (headerSummaryRange === "live") {
+    if (headerSummaryRange === "live") {
       renderHeaderSummaryTotals(liveRangeTotals());
     } else if (headerSummaryRange === "schedule") {
       renderHeaderSummaryTotals(weekTotals());
@@ -1456,9 +1533,9 @@
     const mode = headerSummaryRange;
 
     if (mode === "live") {
-      const totals = liveRangeTotals();
-      renderHeaderSummaryTotals(totals);
-      return totals;
+      if (paintImmediate) renderHeaderSummaryTotals(liveRangeTotals());
+      const fetched = await fetchLiveSessionMemoryTotals();
+      return fetched ? liveRangeTotals() : liveRangeTotals();
     }
     if (mode === "schedule") {
       const totals = scheduleTotals();
@@ -1615,6 +1692,8 @@
   function onSelectedSeriesChanged() {
     if (headerSummaryRange === "market") {
       void refreshHeaderSummaryWithLoader();
+    } else if (headerSummaryRange === "live") {
+      void fetchLiveSessionMemoryTotals();
     }
     if (replayRunning) return;
     loadPersistedReplayHourStats(selectedSeries());
@@ -4674,6 +4753,8 @@
     isReplayRunning: () => replayRunning,
     onHeatmapUpdated,
     applyLivePlacementStats,
+    scheduleLiveStatsRestRefresh,
+    fetchLiveSessionMemoryTotals,
     applyLiveSessionTotals,
     applyDemoLastWindow,
     syncHeaderSummaryControls,

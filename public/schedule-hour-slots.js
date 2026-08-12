@@ -468,6 +468,39 @@
    * Fetch Live hour stats into the Live buffer.
    * Always updates the buffer (even in Replay) so toggling back is instant / fresh.
    */
+  function liveHourStatsCacheKey() {
+    const series = selectedSeries() || "btc-5m";
+    return `poly-real:schedule-hour-stats:${series}`;
+  }
+
+  function readLiveHourStatsCache() {
+    try {
+      const raw = localStorage.getItem(liveHourStatsCacheKey());
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed?.slots) ? parsed.slots : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLiveHourStatsCache(slots) {
+    try {
+      localStorage.setItem(
+        liveHourStatsCacheKey(),
+        JSON.stringify({ slots, savedAt: Date.now() }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Paint cached Live hour cells immediately (REST refresh follows). */
+  function hydrateLiveFromCache() {
+    const slots = readLiveHourStatsCache();
+    if (slots) applySlots(slots);
+  }
+
   async function refreshLive() {
     if (fetchInFlight) {
       if (fetchTimer) clearTimeout(fetchTimer);
@@ -482,7 +515,10 @@
       const res = await fetch("/api/schedule-hour-stats", { credentials: "same-origin" });
       if (!res.ok) return;
       const body = await res.json().catch(() => null);
-      if (Array.isArray(body?.slots)) applySlots(body.slots);
+      if (Array.isArray(body?.slots)) {
+        applySlots(body.slots);
+        writeLiveHourStatsCache(body.slots);
+      }
     } catch {
       /* ignore */
     } finally {
@@ -648,6 +684,7 @@
   function init() {
     ensureMapFilled(liveSlotStats);
     ensureMapFilled(replaySlotStats);
+    hydrateLiveFromCache();
     syncView();
     // Warm both buffers so the first Live ↔ Replay toggle has data ready.
     void refreshLive();
@@ -665,6 +702,7 @@
     applyReplayPlacementStat,
     setReplayRunning,
     refreshLive,
+    hydrateLiveFromCache,
     refreshReplayBaseline,
     totals,
     dayTotals,

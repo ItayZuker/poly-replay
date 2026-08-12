@@ -1,6 +1,11 @@
 {
-    "current": "1.68.16",
+    "current": "1.68.17",
     "releases": [
+        {
+            "version": "1.68.17",
+            "releasedAt": "2026-08-12T12:55:01.919Z",
+            "notes": "Live stats off dyno RAM: Mongo-on-demand hour/placement/session aggregates; browser cache + statsRevision refresh. Docs updated."
+        },
         {
             "version": "1.68.16",
             "releasedAt": "2026-08-12T11:04:21.364Z",
