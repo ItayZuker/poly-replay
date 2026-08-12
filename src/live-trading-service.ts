@@ -321,6 +321,60 @@ function windowStartFromSessionKey(key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** `btc-updown-5m-1786485600` → unix window start. */
+function windowStartFromUpDownSlug(slug: string | undefined | null): number | null {
+  const m = String(slug || "")
+    .trim()
+    .toLowerCase()
+    .match(/^[a-z]+-updown-(?:5m|15m)-(\d{9,})$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** `btc-updown-5m-1786485600` → `btc-5m`. */
+function seriesFromUpDownSlug(slug: string | undefined | null): string | null {
+  const m = String(slug || "")
+    .trim()
+    .toLowerCase()
+    .match(/^([a-z]+)-updown-(5m|15m)-\d{9,}$/);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+
+/**
+ * Attribute a Trigger GTD fill to the resting order's target window — never the
+ * live display window (cancel / roll used to mis-file cards onto the new window).
+ */
+function fillStateForTriggerRest(
+  resting: Pick<TriggerRestingBuyOrder, "sessionKey" | "slug">,
+  fallback: LiveWindowState,
+): LiveWindowState {
+  // Tokens / Gamma settle by slug — prefer that window when it disagrees with sessionKey.
+  const slugWs = windowStartFromUpDownSlug(resting.slug);
+  const sessionWs = windowStartFromSessionKey(resting.sessionKey);
+  const windowStart = slugWs ?? sessionWs;
+  if (windowStart == null || !Number.isFinite(windowStart)) return fallback;
+
+  const series =
+    seriesFromUpDownSlug(resting.slug) ||
+    String(fallback.series || resting.sessionKey.split(":")[0] || "").trim() ||
+    fallback.series;
+  const fallbackDur =
+    Number.isFinite(Number(fallback.windowEnd)) && Number.isFinite(Number(fallback.windowStart))
+      ? Number(fallback.windowEnd) - Number(fallback.windowStart)
+      : NaN;
+  const dur =
+    Number.isFinite(fallbackDur) && fallbackDur > 0
+      ? fallbackDur
+      : windowDurationSecFromKey(sessionKeyForWindow(series, windowStart));
+  return {
+    ...fallback,
+    series,
+    windowStart,
+    windowEnd: windowStart + dur,
+  };
+}
+
 function contributionFromCard(card: TradingPositionCard): SettledStatContribution | null {
   if (card.status === "open") return null;
   const pl = Number(card.pl);
@@ -4675,11 +4729,37 @@ export class LiveTradingService {
     const nowSec = Math.floor(Date.now() / 1000);
     const cost = usdcAmount ?? fillShares * fillPrice;
     const buyFees = await estimateLiveTakerFee(this.userId, tokenId, fillShares, fillPrice);
-    const windowKey = sessionKey(state);
-    const setup = this.resolveAutoSimSetup(state);
+    // Prefer slug market window when it disagrees with live state (Trigger GTD roll bug).
+    let attrState = state;
+    const slugWs = windowStartFromUpDownSlug(slug);
+    const stateWs = Number(state.windowStart);
+    if (
+      slugWs != null &&
+      Number.isFinite(stateWs) &&
+      slugWs !== Math.floor(stateWs)
+    ) {
+      const series =
+        seriesFromUpDownSlug(slug) || String(state.series || "").trim() || "btc-5m";
+      const dur =
+        Number.isFinite(Number(state.windowEnd)) && Number.isFinite(stateWs)
+          ? Number(state.windowEnd) - stateWs
+          : windowDurationSecFromKey(sessionKeyForWindow(series, slugWs));
+      attrState = {
+        ...state,
+        series,
+        windowStart: slugWs,
+        windowEnd: slugWs + (Number.isFinite(dur) && dur > 0 ? dur : 300),
+      };
+      logService.warn(
+        "trading",
+        `Buy fill windowKey aligned to slug (${sessionKey(attrState)}, was ${sessionKey(state)})`,
+      );
+    }
+    const windowKey = sessionKey(attrState);
+    const setup = this.resolveAutoSimSetup(attrState);
     const phaseIdx =
       buyPhaseIdx ??
-      (setup ? phaseIndexForState(state, setup.phaseSplit, nowSec) : 0);
+      (setup ? phaseIndexForState(attrState, setup.phaseSplit, nowSec) : 0);
 
     const existing =
       (existingCardId ? this.findCard(existingCardId) : undefined) ??
@@ -4778,7 +4858,7 @@ export class LiveTradingService {
       const opened: TradingPositionCard = {
         id: cardId,
         windowKey,
-        series: state.series,
+        series: attrState.series,
         side,
         shares: fillShares,
         buyPrice: fillPrice,
@@ -4809,11 +4889,11 @@ export class LiveTradingService {
       void this.enrichCardFromPolymarketBuy(cardId);
     }
 
-    this.addMarker(state, {
+    this.addMarker(attrState, {
       type: "buy",
       side,
       t: nowSec,
-      y: state.assetPrice ?? null,
+      y: attrState.assetPrice ?? null,
       shares: fillShares,
       price: fillPrice,
       cost,
@@ -4825,7 +4905,7 @@ export class LiveTradingService {
     if (pos) {
       // Keep sim in sync only while previewing — live must not drive SimulatorEngine.
       if (!this.isLiveArmed()) {
-        this.autoEngine.adoptExternalBuy(state, side, pos.shares, pos.avgPrice, phaseIdx, nowSec);
+        this.autoEngine.adoptExternalBuy(attrState, side, pos.shares, pos.avgPrice, phaseIdx, nowSec);
         if (holdToSettlement) {
           this.autoEngine.suppressBuysForWindow();
           this.autoEngine.suppressSellsForWindow();
@@ -5028,15 +5108,21 @@ export class LiveTradingService {
       const delta = matched - resting.sizeMatched;
       const fillPrice = snap.price > 0 ? snap.price : resting.limitPrice;
       resting.sizeMatched = matched;
+      // Always attribute to the rest's market window (not live `state` on cancel/roll).
+      const fillState = fillStateForTriggerRest(resting, state);
+      const fillSlug =
+        typeof resting.slug === "string" && resting.slug.trim()
+          ? resting.slug.trim()
+          : undefined;
       await this.recordBuyFill(
-        state,
+        fillState,
         resting.side,
         delta,
         fillPrice,
         delta * fillPrice,
         resting.tokenId ?? snap.assetId,
         resting.conditionId ?? snap.market,
-        resting.slug,
+        fillSlug,
         "trigger",
         undefined,
         undefined,
@@ -5047,7 +5133,7 @@ export class LiveTradingService {
       );
       if (resting.sellOrderType === "GTD") {
         await this.ensureTriggerGtdSell(
-          state,
+          fillState,
           resting.side,
           resting.takeProfitCents,
           delta,
@@ -5061,11 +5147,11 @@ export class LiveTradingService {
         await this.cancelTriggerSiblingRests(
           resting.triggerId,
           resting.side,
-          state,
+          fillState,
           resting.sessionKey,
         );
       }
-      await this.cancelOtherTriggerRestingBuys(resting.triggerId, state);
+      await this.cancelOtherTriggerRestingBuys(resting.triggerId, fillState);
       resting.cancelPending = true;
       const status = String(snap.status || "").toLowerCase();
       if (
@@ -5286,18 +5372,7 @@ export class LiveTradingService {
         }
         continue;
       }
-      const fillState: LiveWindowState =
-        resting.sessionKey === currentKey
-          ? state
-          : {
-              ...state,
-              windowStart: restingWs ?? state.windowStart,
-              windowEnd:
-                restingWs != null && Number.isFinite(Number(state.windowEnd)) &&
-                Number.isFinite(Number(state.windowStart))
-                  ? restingWs + (Number(state.windowEnd) - Number(state.windowStart))
-                  : state.windowEnd,
-            };
+      const fillState = fillStateForTriggerRest(resting, state);
       const beforeMatched = resting.sizeMatched;
       const beforeSide = resting.side;
       const beforeTriggerId = resting.triggerId;
@@ -5311,12 +5386,13 @@ export class LiveTradingService {
           fillPrice: beforePrice,
           fillShares: Math.min(beforeShares, resting.sizeMatched - beforeMatched),
         });
+        const fillKey = sessionKey(fillState);
         const card = this.positionCards.find(
           (c) =>
             c.source === "trigger" &&
             c.triggerId === beforeTriggerId &&
             c.status === "open" &&
-            c.windowKey === resting.sessionKey,
+            (c.windowKey === fillKey || c.windowKey === resting.sessionKey),
         );
         if (card) {
           fills[fills.length - 1]!.fillPrice = card.buyPrice;
