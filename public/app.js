@@ -4276,6 +4276,7 @@ const DEMO_POSITION_CARDS_KEY = "poly-real:demo-position-cards";
 const PREDICTION_POSITION_CARDS_KEY = "poly-prediction-position-cards";
 const POSITIONS_HIDDEN_IDS_KEY = "poly-real:positions-hidden-ids";
 const POSITIONS_FILTER_KEY = "poly-real:positions-filter";
+const SETTLED_POSITIONS_CACHE_PREFIX = "poly-real:settled-position-cards:";
 const APP_PAGE_KEY = "poly-real:app-page";
 const SCHEDULE_VIEW_KEY = "poly-real:schedule-view";
 
@@ -4285,10 +4286,115 @@ let positionsFilter = "all";
 let demoPositionCards = [];
 /** @type {Array<Record<string, unknown>>} */
 let predictionPositionCards = [];
+/** Settled gallery from REST (SSE carries open/pending only). Keyed by series. */
+let settledPositionCardsBySeries = Object.create(null);
+let settledPositionsFetchPromise = null;
+let settledPositionsFetchSeries = null;
+let lastSettledPositionsStatsRevision = null;
 /** Card ids hidden by Positions → Clear (session). New fills get new ids and still show. */
 let positionsHiddenIds = new Set();
 let lastPositionsFingerprint = "";
 let lastDemoLastWindowKey = null;
+
+function settledPositionsCacheKey(series = selectedSeries) {
+  return `${SETTLED_POSITIONS_CACHE_PREFIX}${series || "btc-5m"}`;
+}
+
+function readSettledPositionsCache(series = selectedSeries) {
+  try {
+    const raw = localStorage.getItem(settledPositionsCacheKey(series));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.cards) ? parsed.cards : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSettledPositionsCache(series, cards) {
+  try {
+    localStorage.setItem(
+      settledPositionsCacheKey(series),
+      JSON.stringify({ cards: Array.isArray(cards) ? cards : [], savedAt: Date.now() }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearSettledPositionsCache(series = selectedSeries) {
+  delete settledPositionCardsBySeries[series || "btc-5m"];
+  try {
+    localStorage.removeItem(settledPositionsCacheKey(series));
+  } catch {
+    /* ignore */
+  }
+}
+
+function isSettledPositionCardStatus(status) {
+  const s = String(status || "").toLowerCase();
+  return s === "sold" || s === "win" || s === "loss";
+}
+
+/**
+ * Fetch Open+24h settled from Mongo; keep settled in client cache (open come from SSE).
+ * @param {{ force?: boolean, series?: string }} [opts]
+ */
+async function fetchSettledPositionCards(opts = {}) {
+  const series = opts.series || selectedSeries || "btc-5m";
+  if (
+    !opts.force &&
+    settledPositionsFetchPromise &&
+    settledPositionsFetchSeries === series
+  ) {
+    return settledPositionsFetchPromise;
+  }
+  settledPositionsFetchSeries = series;
+  settledPositionsFetchPromise = (async () => {
+    try {
+      const res = await fetch(
+        `/api/trading/positions?series=${encodeURIComponent(series)}`,
+        { credentials: "same-origin" },
+      );
+      if (!res.ok) return settledPositionCardsBySeries[series] || [];
+      const body = await res.json().catch(() => null);
+      const all = Array.isArray(body?.cards) ? body.cards : [];
+      const settled = all.filter((c) => c && isSettledPositionCardStatus(c.status));
+      settledPositionCardsBySeries[series] = settled;
+      writeSettledPositionsCache(series, settled);
+      lastPositionsFingerprint = "";
+      updatePositionsPanel(windowState);
+      return settled;
+    } catch {
+      return settledPositionCardsBySeries[series] || [];
+    } finally {
+      if (settledPositionsFetchSeries === series) {
+        settledPositionsFetchPromise = null;
+        settledPositionsFetchSeries = null;
+      }
+    }
+  })();
+  return settledPositionsFetchPromise;
+}
+
+function hydrateSettledPositionsFromCache(series = selectedSeries) {
+  const s = series || "btc-5m";
+  const cached = readSettledPositionsCache(s);
+  if (cached) settledPositionCardsBySeries[s] = cached;
+}
+
+function scheduleSettledPositionsRefresh(trading) {
+  const rev = Number(trading?.statsRevision);
+  if (
+    Number.isFinite(rev) &&
+    lastSettledPositionsStatsRevision != null &&
+    rev === lastSettledPositionsStatsRevision
+  ) {
+    return;
+  }
+  if (Number.isFinite(rev)) lastSettledPositionsStatsRevision = rev;
+  void fetchSettledPositionCards({ force: true });
+}
 
 function loadPositionsHiddenIds() {
   try {
@@ -4987,18 +5093,31 @@ function filterPositionsCards(cards) {
   return list;
 }
 
-/** Merge server Positions cards (Trade + Demo). Newest buyAt first. */
+/** Merge SSE open/pending + REST settled gallery. Newest buyAt first. */
 function mergePositionsCards(liveCards, series) {
-  // Server is source of truth for Demo and Trade; browser does not own Demo cards.
-  const live = (Array.isArray(liveCards) ? liveCards : [])
-    .filter((c) => c && (!c.series || c.series === series) && !isPositionCardHidden(c))
-    .map((c) => ({
+  const byId = new Map();
+  const settled = Array.isArray(settledPositionCardsBySeries[series])
+    ? settledPositionCardsBySeries[series]
+    : [];
+  for (const c of settled) {
+    if (!c?.id || (c.series && c.series !== series)) continue;
+    byId.set(String(c.id), {
       ...c,
       demo: c.demo === true || String(c.id || "").startsWith("demo:"),
-    }));
+    });
+  }
+  // SSE hot cards win (open / pending confirm).
+  for (const c of Array.isArray(liveCards) ? liveCards : []) {
+    if (!c?.id || (c.series && c.series !== series)) continue;
+    byId.set(String(c.id), {
+      ...c,
+      demo: c.demo === true || String(c.id || "").startsWith("demo:"),
+    });
+  }
+  const merged = [...byId.values()].filter((c) => !isPositionCardHidden(c));
   return trimDemoTradePositionCards(
     filterPositionsCards(
-      [...live].sort((a, b) => {
+      merged.sort((a, b) => {
         const ta = Number(a?.buyAt);
         const tb = Number(b?.buyAt);
         const aOk = Number.isFinite(ta);
@@ -5095,8 +5214,10 @@ function applyTriggerLiveUiFromRecord(triggerId, live, nowMs = Date.now()) {
   if (rt?.liveUi) setTriggerCardLiveUi(id, null);
 }
 
-function refreshTradeTriggerStatsFromPositions(state) {
-  const cards = state?.trading?.positionCards;
+function refreshTradeTriggerStatsFromPositions(state, cardsOverride) {
+  const cards =
+    cardsOverride ??
+    mergePositionsCards(state?.trading?.positionCards, selectedSeries);
   if (!Array.isArray(cards) || !Array.isArray(userTriggers)) return;
   const ids = new Set();
   for (const card of cards) {
@@ -5163,7 +5284,7 @@ function updatePositionsPanel(state) {
     return;
   }
   lastPositionsFingerprint = fingerprint;
-  refreshTradeTriggerStatsFromPositions(state);
+  refreshTradeTriggerStatsFromPositions(state, cards);
   syncTriggerLiveUiFromServer(state);
   // Demo stats are credited on the server — refresh Trigger card totals when Demo cards change.
   if (cards.some(isDemoPositionCard)) {
@@ -5229,7 +5350,9 @@ function bindPositionsClear() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.error || `Clear failed (${res.status})`);
       }
+      clearSettledPositionsCache(selectedSeries);
       lastPositionsFingerprint = "";
+      await fetchSettledPositionCards({ force: true });
       updatePositionsPanel(windowState);
     } catch (err) {
       window.alert(String(err?.message || err || "Clear failed"));
@@ -5402,6 +5525,7 @@ function applyTradingUpdate(trading) {
       statsRevision: trading.statsRevision,
     });
   }
+  scheduleSettledPositionsRefresh(trading);
 }
 
 function syncLatencyDisplay(state) {
@@ -5650,6 +5774,9 @@ function connectSSE() {
 async function onMarketSeriesChanged(nextSeries) {
   selectedSeries = nextSeries;
   lastPositionsFingerprint = "";
+  lastSettledPositionsStatsRevision = null;
+  hydrateSettledPositionsFromCache(selectedSeries);
+  void fetchSettledPositionCards({ force: true, series: selectedSeries });
   // Market Triggers are per series — reload list for the new market.
   void loadUserTriggers().then(() => renderTriggersList());
   const res = await fetch(`/api/window?series=${encodeURIComponent(selectedSeries)}`);
@@ -15012,6 +15139,8 @@ async function init() {
     credentials: "same-origin",
   });
   if (res.ok) updateWindowUI(await res.json());
+  hydrateSettledPositionsFromCache(selectedSeries);
+  void fetchSettledPositionCards({ force: true, series: selectedSeries });
   connectSSE();
 
   countdownTimer = setInterval(() => {
