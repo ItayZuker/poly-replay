@@ -555,13 +555,20 @@ export interface TradingPublicState {
   positionCardsReady: boolean;
   /** Per trigger id — BUY/SELL highlight from Mongo (Demo + Trade). */
   triggerLiveUi?: Record<string, TriggerLiveUiPublic>;
+  /**
+   * Prefer GET /api/schedule-placement-stats — usually empty on SSE (client REST + cache).
+   */
   placementStats: PlacementLiveStats[];
+  /** Increments when a settled trade is written — clients refetch REST aggregates. */
+  statsRevision?: number;
   /**
    * Optional Trigger Trade hour-slot stats (latest calendar day per weekday×hour).
    * Prefer GET /api/schedule-hour-stats; may be omitted from SSE snapshots.
    */
   hourSlotStats?: ScheduleHourSlotStats[];
-  /** Settled real outcomes in the header Live range (after last header reset; includes trades without a schedule card). */
+  /**
+   * Prefer GET /api/trading/session-memory?mode=live — usually empty on SSE.
+   */
   sessionTotals: {
     green: number;
     red: number;

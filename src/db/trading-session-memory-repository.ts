@@ -9,6 +9,14 @@ const META_COLLECTION = "trading_session_memory";
 const EVENTS_COLLECTION = "trading_stat_events";
 const LEGACY_META_DOC_ID = "live";
 
+/**
+ * Recent window for Schedule hour/placement aggregates (~last occurrence + buffer).
+ * Full history stays in Mongo; Live engines do not keep it in RAM.
+ */
+export const LIVE_STAT_RECENT_MS = 14 * 24 * 60 * 60 * 1000;
+
+let eventsIndexesPromise: Promise<void> | null = null;
+
 /** @deprecated Snapshot shape from archive-on-reset; still summed for week/all. */
 export interface TradingSessionMemoryEntry {
   closedAt: string;
@@ -241,6 +249,20 @@ async function eventsCollection() {
   return mongo.db(getMongoDbName()).collection<TradingStatEventDoc>(EVENTS_COLLECTION);
 }
 
+async function ensureEventIndexes(): Promise<void> {
+  if (!eventsIndexesPromise) {
+    eventsIndexesPromise = (async () => {
+      const col = await eventsCollection();
+      await col.createIndex({ userId: 1, settledAt: 1 });
+      await col.createIndex({ userId: 1, "card.series": 1, settledAt: 1 });
+    })().catch((err) => {
+      eventsIndexesPromise = null;
+      throw err;
+    });
+  }
+  await eventsIndexesPromise;
+}
+
 async function loadMeta(userId: string): Promise<TradingSessionMemoryDoc | null> {
   return (await metaCollection()).findOne({ _id: userId });
 }
@@ -427,27 +449,54 @@ export async function listTradingStatEvents(
     fromMs?: number;
     toMs?: number;
     afterLiveReset?: boolean;
+    /** When set, only events whose card.series matches (or missing series). */
+    series?: string;
   } = {},
 ): Promise<TradingStatEvent[]> {
   await ensureReady();
+  await ensureEventIndexes().catch(() => undefined);
   const col = await eventsCollection();
-  const docs = await col.find({ userId }).toArray();
-  let liveResetMs: number | null = null;
+
+  let fromMs = options.fromMs;
+  let toMs = options.toMs;
   if (options.afterLiveReset) {
     const resetAt = await getLiveResetAt(userId);
-    liveResetMs = resetAt ? Date.parse(resetAt) : null;
-    if (liveResetMs != null && !Number.isFinite(liveResetMs)) liveResetMs = null;
+    const liveResetMs = resetAt ? Date.parse(resetAt) : NaN;
+    if (Number.isFinite(liveResetMs)) {
+      const afterReset = liveResetMs + 1;
+      fromMs = fromMs == null ? afterReset : Math.max(fromMs, afterReset);
+    }
   }
 
-  return docs
-    .map(({ _id, userId: _uid, ...rest }) => rest)
-    .filter((event) => {
-      const at = settledMs(event);
-      if (liveResetMs != null && at <= liveResetMs) return false;
-      if (options.fromMs != null && at < options.fromMs) return false;
-      if (options.toMs != null && at > options.toMs) return false;
-      return true;
-    });
+  const filter: Record<string, unknown> = { userId };
+  const settledAt: Record<string, string> = {};
+  if (fromMs != null && Number.isFinite(fromMs)) {
+    settledAt.$gte = new Date(fromMs).toISOString();
+  }
+  if (toMs != null && Number.isFinite(toMs)) {
+    settledAt.$lte = new Date(toMs).toISOString();
+  }
+  if (Object.keys(settledAt).length > 0) filter.settledAt = settledAt;
+
+  const series = typeof options.series === "string" ? options.series.trim() : "";
+  if (series) {
+    filter.$or = [{ "card.series": series }, { "card.series": { $exists: false } }, { "card.series": "" }];
+  }
+
+  const docs = await col.find(filter).toArray();
+  return docs.map(({ _id, userId: _uid, ...rest }) => rest);
+}
+
+/** Recent events for Schedule hour/placement aggregates (not held in engine RAM). */
+export async function listRecentTradingStatEvents(
+  userId: string,
+  options: { series?: string; recentMs?: number } = {},
+): Promise<TradingStatEvent[]> {
+  const recentMs = options.recentMs ?? LIVE_STAT_RECENT_MS;
+  return listTradingStatEvents(userId, {
+    fromMs: Date.now() - recentMs,
+    series: options.series,
+  });
 }
 
 /** @deprecated Prefer upsertTradingStatEvent — kept for any callers of archive-on-reset. */
@@ -512,9 +561,27 @@ export async function sumTradingStatEventsForSeries(
   userId: string,
   series: string,
 ): Promise<SessionMemoryTotals> {
-  const events = await listTradingStatEvents(userId, {});
   const want = String(series || "").trim();
-  const filtered = events.filter((event) => String(event.card?.series ?? "").trim() === want);
+  const events = await listTradingStatEvents(userId, { series: want || undefined });
+  const filtered = want
+    ? events.filter((event) => String(event.card?.series ?? "").trim() === want)
+    : events;
+  return sumEvents(filtered);
+}
+
+/** Live header range (after reset) for one series — Mongo on demand, not engine RAM. */
+export async function sumLiveTradingStatEventsForSeries(
+  userId: string,
+  series: string,
+): Promise<SessionMemoryTotals> {
+  const want = String(series || "").trim();
+  const events = await listTradingStatEvents(userId, {
+    afterLiveReset: true,
+    series: want || undefined,
+  });
+  const filtered = want
+    ? events.filter((event) => String(event.card?.series ?? "").trim() === want)
+    : events;
   return sumEvents(filtered);
 }
 

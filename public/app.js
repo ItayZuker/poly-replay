@@ -5389,6 +5389,7 @@ function applyTradingUpdate(trading) {
   if (window.Simulator) window.Simulator.syncFromState(windowState);
   scheduleTriggerGtdArming(windowState);
 
+  // Placement / Live / hour aggregates: REST + client cache (SSE carries statsRevision).
   if (!isReplayWorkspace() && window.SchedulePlacements?.applyLivePlacementStats) {
     window.SchedulePlacements.applyLivePlacementStats(
       trading.placementStats,
@@ -5396,6 +5397,10 @@ function applyTradingUpdate(trading) {
       trading.demoLastWindow,
       trading,
     );
+  } else if (!isReplayWorkspace() && window.SchedulePlacements?.scheduleLiveStatsRestRefresh) {
+    window.SchedulePlacements.scheduleLiveStatsRestRefresh({
+      statsRevision: trading.statsRevision,
+    });
   }
 }
 
