@@ -115,6 +115,8 @@ export class MarketRecorder {
   private chainlinkCount = 0;
   private lastTraderStats: TraderStatsSnapshot | null = null;
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
+  /** True once crypto-price openPrice (or later Gamma priceToBeat) locked PTB for this window. */
+  private officialOpenLocked = false;
   private prefetchedNextWindowStart: number | null = null;
   private nextWindowPrefetchInFlight = false;
   /** Fingerprint of last written CLOB book tick (skip identical consecutive samples). */
@@ -329,6 +331,7 @@ export class MarketRecorder {
     this.chainlinkCount = 0;
     this.lastTraderStats = null;
     this.assetPrices = {};
+    this.officialOpenLocked = false;
     this.prefetchedNextWindowStart = null;
     this.nextWindowPrefetchInFlight = false;
     this.lastBookFingerprint = null;
@@ -504,21 +507,18 @@ export class MarketRecorder {
     const live = chainlinkPriceFeed.getLivePrice(asset);
     if (!live || !this.activeWindow) return;
 
-    this.applyAssetPrices(live.value, this.assetPrices.prevCloseAsset);
+    this.applyAssetPrice(live.value);
     const tMs = live.timestampMs || Date.now();
     this.pushChainlinkTick(tMs);
   }
 
-  private applyAssetPrices(assetPrice?: number, prevCloseAsset?: number): void {
+  /** Update live asset price only — never invent PTB. */
+  private applyAssetPrice(assetPrice?: number): void {
     if (!this.activeWindow) return;
 
     if (assetPrice != null && Number.isFinite(assetPrice)) {
       this.activeWindow.assetPrice = assetPrice;
       this.assetPrices.assetPrice = assetPrice;
-    }
-    if (prevCloseAsset != null && Number.isFinite(prevCloseAsset)) {
-      this.activeWindow.prevCloseAsset = prevCloseAsset;
-      this.assetPrices.prevCloseAsset = prevCloseAsset;
     }
     if (
       this.activeWindow.assetPrice != null &&
@@ -526,6 +526,8 @@ export class MarketRecorder {
     ) {
       this.activeWindow.assetGap =
         this.activeWindow.assetPrice - this.activeWindow.prevCloseAsset;
+    } else {
+      this.activeWindow.assetGap = undefined;
     }
 
     updateWindowDynamics(
@@ -534,6 +536,138 @@ export class MarketRecorder {
       this.activeWindow.assetPrice,
       this.activeWindow.prevCloseAsset,
     );
+  }
+
+  /**
+   * Lock PTB from Polymarket crypto-price openPrice once per window.
+   * Persists to disk/Mongo when first set; ignores later openPrice changes.
+   */
+  private tryLockOfficialOpen(openPrice?: number): boolean {
+    if (!this.activeWindow || this.officialOpenLocked) return false;
+    if (openPrice == null || !Number.isFinite(openPrice)) return false;
+
+    const ptb = roundTo4(openPrice);
+    this.officialOpenLocked = true;
+    this.activeWindow.prevCloseAsset = ptb;
+    this.assetPrices.prevCloseAsset = ptb;
+    this.applyAssetPrice(this.assetPrices.assetPrice);
+    void this.persistWindowOpenPtb(ptb);
+    logService.info(
+      "recorder",
+      `Official open locked for ${this.market._id} @ ${ptb}`,
+    );
+    return true;
+  }
+
+  /** Gamma settle may replace PTB with eventMetadata.priceToBeat. */
+  private applyGammaPtb(priceToBeat?: number): void {
+    if (!this.activeWindow) return;
+    if (priceToBeat == null || !Number.isFinite(priceToBeat)) return;
+    const ptb = roundTo4(priceToBeat);
+    this.officialOpenLocked = true;
+    this.activeWindow.prevCloseAsset = ptb;
+    this.assetPrices.prevCloseAsset = ptb;
+    this.applyAssetPrice(this.assetPrices.assetPrice ?? this.activeWindow.assetPrice);
+  }
+
+  /** Upsert window summary with locked open PTB (may run before finalize). */
+  private async persistWindowOpenPtb(ptb: number): Promise<void> {
+    if (!this.activeWindow) return;
+    const win = this.activeWindow;
+    const savedAt = new Date().toISOString();
+    const doc = {
+      windowStart: win.windowStart,
+      windowEnd: win.windowEnd,
+      savedAt,
+      slug: win.slug,
+      question: win.question,
+      conditionId: win.conditionId,
+      prevCloseAsset: ptb,
+      assetPrice: win.assetPrice,
+      assetGap: win.assetGap,
+      windowOutcome: win.windowOutcome,
+      yesPrice: win.yesPrice,
+      noPrice: win.noPrice,
+      ptbCrossings: win.ptbCrossings,
+      minAssetPrice: win.minAssetPrice,
+      maxAssetPrice: win.maxAssetPrice,
+      assetRange: win.assetRange,
+      rangeTop: win.rangeTop,
+      rangeBottom: win.rangeBottom,
+      uniqueTraders: win.uniqueTraders,
+      newWallets: win.newWallets,
+      knownWallets: win.knownWallets,
+      tickCount: this.clobRawCount + this.clobBookCount + this.chainlinkCount,
+      clobRawCount: this.clobRawCount,
+      clobBookCount: this.clobBookCount,
+      chainlinkCount: this.chainlinkCount,
+    };
+    try {
+      await saveRecordedWindow(this.market, doc);
+      await upsertRecordedWindowSummary(this.market._id, {
+        windowStart: doc.windowStart,
+        windowEnd: doc.windowEnd,
+        savedAt,
+        ptbCrossings: doc.ptbCrossings,
+        rangeTop: doc.rangeTop,
+        rangeBottom: doc.rangeBottom,
+        uniqueTraders: doc.uniqueTraders,
+        newWallets: doc.newWallets,
+        windowOutcome: doc.windowOutcome,
+        minAssetPrice: doc.minAssetPrice,
+        maxAssetPrice: doc.maxAssetPrice,
+        assetRange: doc.assetRange,
+        prevCloseAsset: ptb,
+        assetPrice: doc.assetPrice,
+      });
+      ingestRecordedWindow(this.market._id, {
+        _id: String(doc.windowStart),
+        updatedAt: savedAt,
+        ...doc,
+      });
+    } catch (err) {
+      logService.warn(
+        "recorder",
+        `Failed to persist open PTB for ${this.market._id}: ${String(err)}`,
+      );
+    }
+  }
+
+  /** Create Mongo/disk stub at window open with PTB unset. */
+  private async persistWindowStub(): Promise<void> {
+    if (!this.activeWindow) return;
+    const win = this.activeWindow;
+    const savedAt = new Date().toISOString();
+    const doc = {
+      windowStart: win.windowStart,
+      windowEnd: win.windowEnd,
+      savedAt,
+      slug: win.slug,
+      question: win.question,
+      conditionId: win.conditionId,
+      tickCount: 0,
+      clobRawCount: 0,
+      clobBookCount: 0,
+      chainlinkCount: 0,
+    };
+    try {
+      await saveRecordedWindow(this.market, doc);
+      await upsertRecordedWindowSummary(this.market._id, {
+        windowStart: doc.windowStart,
+        windowEnd: doc.windowEnd,
+        savedAt,
+      });
+      ingestRecordedWindow(this.market._id, {
+        _id: String(doc.windowStart),
+        updatedAt: savedAt,
+        ...doc,
+      });
+    } catch (err) {
+      logService.warn(
+        "recorder",
+        `Failed to persist window stub for ${this.market._id}: ${String(err)}`,
+      );
+    }
   }
 
   private async flushTicks(): Promise<void> {
@@ -581,12 +715,15 @@ export class MarketRecorder {
     this.chainlinkTickBuffer = [];
     this.lastBookFingerprint = null;
     this.lastTraderStats = null;
+    this.assetPrices = {};
+    this.officialOpenLocked = false;
     const now = Date.now();
     this.windowBeganAtMs = now;
     this.lastUsefulTickAtMs = now;
     this.lastClobTickAtMs = now;
     void ensureWindowTickDir(this.market._id, windowStart);
     this.startTradersPoll();
+    void this.persistWindowStub();
     logService.info(
       "recorder",
       `Window started ${new Date(windowStart * 1000).toLocaleTimeString()} for ${this.market._id}`,
@@ -673,17 +810,18 @@ export class MarketRecorder {
 
       const official = await fetchOfficialWindowResolution(this.activeWindow.slug);
       if (official) {
-        this.applyAssetPrices(official.finalPrice, official.priceToBeat);
+        this.applyAssetPrice(official.finalPrice);
+        this.applyGammaPtb(official.priceToBeat);
         this.activeWindow.windowOutcome = official.outcome;
         if (official.yesPrice != null) this.activeWindow.yesPrice = official.yesPrice;
         if (official.noPrice != null) this.activeWindow.noPrice = official.noPrice;
         return;
       }
 
-      // Record Chainlink/REST close/PTB when available, but do not invent windowOutcome
-      // from incomplete prices — leave unset for background Gamma / later backfill.
+      // Lock official open if available; never invent PTB. Leave outcome unset for Gamma.
       const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
-      this.applyAssetPrices(prices.assetPrice, prices.prevCloseAsset);
+      this.applyAssetPrice(prices.assetPrice);
+      this.tryLockOfficialOpen(prices.prevCloseAsset);
       logService.info(
         "recorder",
         `Gamma not ready for ${this.activeWindow.slug}; saving without windowOutcome (background poll ≤20m)`,
@@ -766,25 +904,33 @@ export class MarketRecorder {
       );
       return;
     }
-    if (hasOfficialWindowOutcome(existing.windowOutcome)) return;
-
+    // Always apply Gamma outcome + priceToBeat (may refine a prior live open).
     const nextAsset = official.finalPrice ?? existing.assetPrice;
-    const nextPtb = official.priceToBeat ?? existing.prevCloseAsset;
+    const nextPtb =
+      official.priceToBeat != null && Number.isFinite(official.priceToBeat)
+        ? roundTo4(official.priceToBeat)
+        : existing.prevCloseAsset;
     const nextGap =
       nextAsset != null && nextPtb != null ? roundTo4(nextAsset - nextPtb) : existing.assetGap;
+    const alreadySettled =
+      hasOfficialWindowOutcome(existing.windowOutcome) &&
+      existing.windowOutcome === official.outcome &&
+      existing.prevCloseAsset === nextPtb &&
+      existing.assetPrice === nextAsset;
+    if (alreadySettled) return;
 
     if (
       official.finalPrice != null &&
       Number.isFinite(official.finalPrice) &&
-      official.priceToBeat != null &&
-      Number.isFinite(official.priceToBeat) &&
+      nextPtb != null &&
+      Number.isFinite(nextPtb) &&
       Number.isFinite(existing.windowEnd)
     ) {
       await stampOfficialChainlinkCloseTip(
         this.market,
         existing.windowStart,
         existing.windowEnd,
-        { closePrice: official.finalPrice, priceToBeat: official.priceToBeat },
+        { closePrice: official.finalPrice, priceToBeat: nextPtb },
       );
     }
 
@@ -1062,6 +1208,26 @@ export class MarketRecorder {
         updatedAt: savedAt,
         ...recordedDoc,
       });
+
+      // Immediate Gamma settle at finalize: stamp official close tip (same as background path).
+      if (
+        hasOfficialWindowOutcome(recordedDoc.windowOutcome) &&
+        recordedDoc.assetPrice != null &&
+        Number.isFinite(recordedDoc.assetPrice) &&
+        recordedDoc.prevCloseAsset != null &&
+        Number.isFinite(recordedDoc.prevCloseAsset)
+      ) {
+        await stampOfficialChainlinkCloseTip(
+          this.market,
+          recordedDoc.windowStart,
+          recordedDoc.windowEnd,
+          {
+            closePrice: recordedDoc.assetPrice,
+            priceToBeat: recordedDoc.prevCloseAsset,
+          },
+        ).catch(() => {});
+      }
+
       await this.pruneOldData();
 
       this.lastTraderStats = {
@@ -1191,7 +1357,8 @@ export class MarketRecorder {
     }
 
     if (this.activeWindow && pair.windowStart === this.activeWindow.windowStart) {
-      this.applyAssetPrices(assetPrice, prevCloseAsset);
+      this.applyAssetPrice(assetPrice);
+      this.tryLockOfficialOpen(prevCloseAsset);
       const yesInfo = clobMarketFeed.getCachedMarketInfo(pair.yesTokenId);
       const noInfo = clobMarketFeed.getCachedMarketInfo(pair.noTokenId);
       if (yesInfo) this.activeWindow.yesPrice = pickDisplayPrice(yesInfo).price;
@@ -1226,7 +1393,8 @@ export class MarketRecorder {
             slug: pair.slug,
             conditionId: pair.conditionId,
           });
-          this.applyAssetPrices(assetPrice, prevCloseAsset);
+          this.applyAssetPrice(assetPrice);
+          this.tryLockOfficialOpen(prevCloseAsset);
           await this.writeOpeningSocketTicks(windowStart, pair.yesTokenId, pair.noTokenId);
         }
       } else if (this.activeWindow.windowStart === windowStart && pair.conditionId) {

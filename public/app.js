@@ -12584,6 +12584,10 @@ function triggerAskPrice(state, marketSide) {
 
 function triggerGapMatches(state, kind, gapSizeRaw, gapMode, side) {
   if (kind !== "positive" && kind !== "negative") return true;
+  // Gap triggers require official Polymarket open (PTB); never fire on a missing/stale gap.
+  if (state?.prevCloseAsset == null || !Number.isFinite(Number(state.prevCloseAsset))) {
+    return false;
+  }
   const mode = normalizeTriggerGapMode(gapMode);
   if (mode === "relative" && side !== "up" && side !== "down") return false;
   const absKind = triggerAbsoluteGapKindForSide(side, kind, mode) || kind;

@@ -423,6 +423,10 @@ function gapMatches(
   side: "up" | "down" | null = null,
 ): boolean {
   if (kind !== "positive" && kind !== "negative") return true;
+  // Gap triggers require official open (PTB) on the tick — never fire without it.
+  if (tick.prevCloseAsset == null || !Number.isFinite(Number(tick.prevCloseAsset))) {
+    return false;
+  }
   if (gapMode === "relative" && (side !== "up" && side !== "down")) return false;
   const absKind =
     side === "up" || side === "down"

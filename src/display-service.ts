@@ -41,6 +41,8 @@ export class DisplayService {
   private prefetchedNoTokenId: string | null = null;
   private nextWindowPrefetchInFlight = false;
   private lastPtbSide: PtbSide | null = null;
+  /** True once this window’s Polymarket crypto-price openPrice was applied. */
+  private officialOpenLocked = false;
 
   private emptyState(series: string): LiveWindowState {
     const now = Math.floor(Date.now() / 1000);
@@ -181,6 +183,10 @@ export class DisplayService {
         }
         this.lastPtbSide = ptbSide;
       }
+    } else {
+      // No official open yet — never invent a gap from a stale prior window.
+      this.state.assetGap = undefined;
+      this.lastPtbSide = null;
     }
     // Phase / GTD scheduling must follow wall clock, not oracle stamp (which can lag
     // or arrive out of order and briefly look like an earlier phase).
@@ -247,7 +253,11 @@ export class DisplayService {
         this.state.ptbCrossings = 0;
         this.state.bookTickSequence = 0;
         this.lastPtbSide = null;
-        // Keep prevCloseAsset until Polymarket open arrives.
+        // Official open only — never carry prior window PTB/gap.
+        this.state.prevCloseAsset = undefined;
+        this.state.assetGap = undefined;
+        this.state.priceToBeatSource = undefined;
+        this.officialOpenLocked = false;
         logService.setActiveWindow(pair.windowStart);
         this.prefetchedNextWindowStart = null;
         this.prefetchedYesTokenId = null;
@@ -273,10 +283,15 @@ export class DisplayService {
       try {
         const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
         const live = applyRtdsLivePrice(asset, prices);
-        // PTB only from Polymarket published open — do not overwrite with Chainlink guesses.
-        if (live.prevCloseAsset != null) {
+        // PTB = Polymarket crypto-price openPrice only; lock once per window.
+        if (
+          !this.officialOpenLocked &&
+          live.prevCloseAsset != null &&
+          Number.isFinite(live.prevCloseAsset)
+        ) {
           this.state.prevCloseAsset = live.prevCloseAsset;
           this.state.priceToBeatSource = live.priceToBeatSource;
+          this.officialOpenLocked = true;
         }
         if (live.assetPrice != null) {
           this.state.assetPrice = live.assetPrice;
@@ -284,15 +299,17 @@ export class DisplayService {
         if (this.state.assetPrice != null && this.state.prevCloseAsset != null) {
           this.state.assetGap = this.state.assetPrice - this.state.prevCloseAsset;
         } else {
-          this.state.assetGap = live.assetGap;
+          this.state.assetGap = undefined;
         }
       } catch {
         const live = chainlinkPriceFeed.getLivePrice(asset);
         if (live) {
           this.state.assetPrice = live.value;
-          if (this.state.prevCloseAsset != null) {
-            this.state.assetGap = live.value - this.state.prevCloseAsset;
-          }
+        }
+        if (this.state.prevCloseAsset != null && this.state.assetPrice != null) {
+          this.state.assetGap = this.state.assetPrice - this.state.prevCloseAsset;
+        } else {
+          this.state.assetGap = undefined;
         }
       }
 
