@@ -1,6 +1,11 @@
 {
-    "current": "1.68.12",
+    "current": "1.68.13",
     "releases": [
+        {
+            "version": "1.68.13",
+            "releasedAt": "2026-08-12T08:44:25.513Z",
+            "notes": "PTB is official crypto-price open only (unset until open); gap triggers wait for open; Gamma may refine recorded PTB at settle. Docs updated."
+        },
         {
             "version": "1.68.12",
             "releasedAt": "2026-08-11T12:32:29.183Z",
