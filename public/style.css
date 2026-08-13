@@ -6833,6 +6833,29 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   flex: 0 1 auto;
   min-width: 168px;
   max-width: 220px;
+  margin-left: auto;
+}
+
+.trigger-buy-sides-mode.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+  grid-template-columns: 1fr;
+  min-width: 0;
+}
+
+.trigger-buy-sides-mode.is-disabled [data-buy-sides="both"] {
+  display: none;
+}
+
+.trigger-buy-sides-mode.is-disabled .trigger-run-mode-btn,
+.trigger-buy-sides-mode.is-disabled .trigger-run-mode-btn.is-active {
+  color: var(--muted);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.trigger-buy-sides-mode .trigger-run-mode-btn:disabled {
+  cursor: not-allowed;
 }
 
 .trigger-buy-sides-mode .trigger-run-mode-btn {
@@ -6850,6 +6873,19 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 
 .trigger-order-type-field {
   margin: 0;
+}
+
+.trigger-order-type-field.is-sell-disabled .settings-field-label,
+.trigger-order-type-field.is-sell-disabled .settings-info-icon {
+  color: var(--muted);
+}
+
+.trigger-order-type-field.is-sell-disabled .modal-select:disabled {
+  color: var(--muted);
+  background: var(--bg-elevated, var(--bg));
+  border-color: var(--border);
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .trigger-order-type-info-toggle .settings-field-label {

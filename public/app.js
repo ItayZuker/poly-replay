@@ -6753,6 +6753,14 @@ function isTriggerExitDisabled(offsetCents) {
   return clampTriggerOffsetCents(offsetCents, 10) >= 100;
 }
 
+/** Both TP and SL at 100 — no early sell, so sell order type is unused. */
+function isTriggerSellFullyDisabled() {
+  return (
+    isTriggerExitDisabled(triggerCreateTakeProfitCents) &&
+    isTriggerExitDisabled(triggerCreateStopLossCents)
+  );
+}
+
 function normalizeTriggerBuyShares(raw) {
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n) || n < 1) return 10;
@@ -6814,6 +6822,7 @@ function syncTriggerCreateBuyOrderTypeUi() {
     note.classList.toggle("is-gtd-locked", !gtdOk);
   }
   syncTriggerGtdPlaceOffsetUi();
+  syncTriggerCreateBuySidesModeUi();
 }
 
 function normalizeTriggerGtdPlaceOffsetMs(raw, fallback = 0) {
@@ -6864,7 +6873,7 @@ function syncTriggerGtdPlaceOffsetDraft() {
   syncTriggerGtdPlaceOffsetUi();
 }
 
-/** Offset GTD placment is editable only when Buy type is GTD. */
+/** Place GTD before window is editable only when Buy type is GTD. */
 function syncTriggerGtdPlaceOffsetUi() {
   const wrap = $("trigger-gtd-place-offset");
   const valueEl = $("trigger-gtd-place-offset-value");
@@ -6887,22 +6896,51 @@ function syncTriggerCreateBuyOrderTypeDraft() {
   syncTriggerCreateBuyOrderTypeUi();
 }
 
-function normalizeTriggerBuySidesMode(raw) {
+function triggerBuySidesModeAllowed(durationMs, startMode) {
+  return (
+    isTriggerZeroDuration(durationMs) &&
+    normalizeTriggerStartMode(startMode) === "price"
+  );
+}
+
+function normalizeTriggerBuySidesMode(raw, durationMs, startMode) {
+  if (!triggerBuySidesModeAllowed(durationMs, startMode)) return "first";
   return raw === "both" ? "both" : "first";
 }
 
 function syncTriggerCreateBuySidesModeUi() {
-  const mode = normalizeTriggerBuySidesMode(triggerCreateBuySidesMode);
+  const allowed = triggerBuySidesModeAllowed(
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+  );
+  const mode = normalizeTriggerBuySidesMode(
+    triggerCreateBuySidesMode,
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+  );
   triggerCreateBuySidesMode = mode;
   const wrap = $("trigger-buy-sides-mode");
   if (!wrap) return;
+  wrap.classList.toggle("is-disabled", !allowed);
+  wrap.setAttribute("aria-disabled", allowed ? "false" : "true");
+  wrap.setAttribute(
+    "aria-label",
+    allowed ? "Buy first side or both sides" : "Buy first side",
+  );
   wrap.querySelectorAll("[data-buy-sides]").forEach((btn) => {
+    const isBoth = btn.getAttribute("data-buy-sides") === "both";
+    btn.hidden = !allowed && isBoth;
     btn.classList.toggle("is-active", btn.getAttribute("data-buy-sides") === mode);
+    btn.disabled = triggerCreateViewOnly || !allowed;
   });
 }
 
 function setTriggerCreateBuySidesMode(mode) {
-  triggerCreateBuySidesMode = normalizeTriggerBuySidesMode(mode);
+  triggerCreateBuySidesMode = normalizeTriggerBuySidesMode(
+    mode,
+    triggerCreateDurationMs,
+    triggerCreateStartMode,
+  );
   syncTriggerCreateBuySidesModeUi();
 }
 
@@ -6948,7 +6986,11 @@ function normalizeTriggerRecord(raw) {
       raw.ptbGap,
     ),
     sellOrderType: normalizeTriggerSellOrderType(raw.sellOrderType),
-    buySidesMode: normalizeTriggerBuySidesMode(raw.buySidesMode),
+    buySidesMode: normalizeTriggerBuySidesMode(
+      raw.buySidesMode,
+      raw.durationMs,
+      raw.startMode,
+    ),
     gtdPlaceOffsetMs: normalizeTriggerGtdPlaceOffsetMs(raw.gtdPlaceOffsetMs, 0),
     takeProfitCents: exits.takeProfitCents,
     stopLossCents: exits.stopLossCents,
@@ -8075,15 +8117,18 @@ function applyTriggerCreateViewOnlyLock() {
   const modal = $("trigger-create-modal");
   if (!modal) return;
   modal.classList.toggle("is-view-only", triggerCreateViewOnly);
-  if (!triggerCreateViewOnly) return;
-  modal.querySelectorAll("input, select, textarea, button").forEach((el) => {
-    if (triggerCreateControlStaysEnabled(el)) {
-      el.disabled = false;
-      return;
-    }
-    if (el.id === "trigger-create-cancel" || el.id === "trigger-create-submit") return;
-    el.disabled = true;
-  });
+  if (triggerCreateViewOnly) {
+    modal.querySelectorAll("input, select, textarea, button").forEach((el) => {
+      if (triggerCreateControlStaysEnabled(el)) {
+        el.disabled = false;
+        return;
+      }
+      if (el.id === "trigger-create-cancel" || el.id === "trigger-create-submit") return;
+      el.disabled = true;
+    });
+  }
+  syncTriggerCreateBuySidesModeUi();
+  syncTriggerSellOrderTypeUi();
 }
 
 function exitTriggerCreateViewOnly() {
@@ -8094,6 +8139,8 @@ function exitTriggerCreateViewOnly() {
     if (el.id === "trigger-create-submit") return;
     el.disabled = false;
   });
+  syncTriggerCreateBuySidesModeUi();
+  syncTriggerSellOrderTypeUi();
 }
 
 function syncTriggerCreateBuySharesDraft() {
@@ -8121,24 +8168,36 @@ function syncTriggerExitDisabledUi() {
   };
   syncOne("trigger-take-profit-field", "trigger-take-profit-disabled", triggerCreateTakeProfitCents);
   syncOne("trigger-stop-loss-field", "trigger-stop-loss-disabled", triggerCreateStopLossCents);
+  syncTriggerSellOrderTypeUi();
+}
+
+function syncTriggerSellOrderTypeUi() {
+  const typeEl = $("trigger-sell-order-type");
+  const field = $("trigger-sell-order-type-field");
+  const sellOff = isTriggerSellFullyDisabled();
+  field?.classList.toggle("is-sell-disabled", sellOff);
+  const noneOpt = typeEl?.querySelector('option[value="none"]');
+  if (noneOpt) noneOpt.hidden = !sellOff;
+  if (!typeEl) return;
+  typeEl.disabled = triggerCreateViewOnly || sellOff;
+  typeEl.value = sellOff ? "none" : triggerCreateSellOrderType;
 }
 
 function syncTriggerCreateSellDraft() {
   triggerCreateTakeProfitCents = clampTriggerOffsetCents($("trigger-take-profit")?.value ?? 10, 10);
   triggerCreateStopLossCents = clampTriggerOffsetCents($("trigger-stop-loss")?.value ?? 10, 10);
-  triggerCreateSellOrderType = normalizeTriggerSellOrderType(
-    $("trigger-sell-order-type")?.value ?? triggerCreateSellOrderType,
-  );
+  const rawType = $("trigger-sell-order-type")?.value;
+  if (!isTriggerSellFullyDisabled() && rawType && rawType !== "none") {
+    triggerCreateSellOrderType = normalizeTriggerSellOrderType(rawType);
+  }
   const tpEl = $("trigger-take-profit");
   const slEl = $("trigger-stop-loss");
-  const typeEl = $("trigger-sell-order-type");
   if (tpEl && String(tpEl.value) !== String(triggerCreateTakeProfitCents)) {
     tpEl.value = String(triggerCreateTakeProfitCents);
   }
   if (slEl && String(slEl.value) !== String(triggerCreateStopLossCents)) {
     slEl.value = String(triggerCreateStopLossCents);
   }
-  if (typeEl) typeEl.value = triggerCreateSellOrderType;
   syncTriggerExitDisabledUi();
 }
 
@@ -8148,10 +8207,8 @@ function applyTriggerSellToInputs(takeProfitCents, stopLossCents, sellOrderType)
   triggerCreateSellOrderType = normalizeTriggerSellOrderType(sellOrderType ?? "FAK");
   const tpEl = $("trigger-take-profit");
   const slEl = $("trigger-stop-loss");
-  const typeEl = $("trigger-sell-order-type");
   if (tpEl) tpEl.value = String(triggerCreateTakeProfitCents);
   if (slEl) slEl.value = String(triggerCreateStopLossCents);
-  if (typeEl) typeEl.value = triggerCreateSellOrderType;
   syncTriggerExitDisabledUi();
 }
 
@@ -8640,7 +8697,11 @@ function buildTriggerFromCreateDraft() {
       triggerCreatePtbGap,
     ),
     sellOrderType: normalizeTriggerSellOrderType(triggerCreateSellOrderType),
-    buySidesMode: normalizeTriggerBuySidesMode(triggerCreateBuySidesMode),
+    buySidesMode: normalizeTriggerBuySidesMode(
+      triggerCreateBuySidesMode,
+      triggerCreateDurationMs,
+      startMode,
+    ),
     windowArea: normalizeTriggerWindowArea(
       triggerCreateWindowArea.start,
       triggerCreateWindowArea.end,
@@ -8968,6 +9029,11 @@ function bindTriggerCreateModal() {
     if (!btn) return;
     e.preventDefault();
     if (triggerCreateViewOnly) return;
+    if (
+      !triggerBuySidesModeAllowed(triggerCreateDurationMs, triggerCreateStartMode)
+    ) {
+      return;
+    }
     setTriggerCreateBuySidesMode(btn.getAttribute("data-buy-sides"));
   });
   $("trigger-gtd-place-offset-value")?.addEventListener("input", () => {
@@ -11370,7 +11436,7 @@ function triggerApplyBoundsSec(state, areaStart, areaEnd) {
   };
 }
 
-/** Buy GTD place window: Apply start − Offset GTD placment → Apply end. */
+/** Buy GTD place window: Apply start − Place GTD before window → Apply end. */
 function triggerGtdPlaceBoundsSec(state, areaStart, areaEnd, offsetMs) {
   const bounds = triggerApplyBoundsSec(state, areaStart, areaEnd);
   if (!bounds) return null;
@@ -12633,7 +12699,11 @@ function invalidateTriggerGtdArmKeys(triggerId) {
 }
 
 function triggerBuySidesModeOf(trigger) {
-  return normalizeTriggerBuySidesMode(trigger?.buySidesMode);
+  return normalizeTriggerBuySidesMode(
+    trigger?.buySidesMode,
+    trigger?.durationMs,
+    trigger?.startMode,
+  );
 }
 
 function triggerSideRuntimeIsOpen(triggerId, side) {

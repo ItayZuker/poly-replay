@@ -100,6 +100,16 @@
         }
         return rawType;
       })(),
+      buySidesMode: (() => {
+        const durationMs = (() => {
+          const n = Math.floor(Number(raw.durationMs));
+          return Number.isFinite(n) && n >= 0 ? n : 5000;
+        })();
+        const startMode =
+          raw.startMode === "price" || raw.startMode === "change-side" ? "price" : "range";
+        if (!(durationMs === 0 && startMode === "price")) return "first";
+        return raw.buySidesMode === "both" ? "both" : "first";
+      })(),
       replayStats: normalizeStats(raw.replayStats),
     };
   }
