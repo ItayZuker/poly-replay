@@ -390,11 +390,6 @@
             <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M4 2.5h8l-2.5 4.5H12L6.5 13.5 8 8H4.5z" />
           </svg>
         </button>
-        <button type="button" class="left-column-rail-btn" data-left-section="book" title="Book" aria-label="Open Book">
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3 4h4M3 6.5h5M3 9h3M9 4h4M9 6.5h4M9 9h4M9 11.5h3" />
-          </svg>
-        </button>
         <button type="button" class="left-column-rail-btn" data-left-section="log" title="Log" aria-label="Open Log">
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3.5 3h9v10h-9zM6 6h4M6 8.5h4M6 11h2.5" />
@@ -604,50 +599,6 @@
           </div>
         </section>
 
-        <section class="panel book-panel" aria-label="Order book">
-          <div class="book-panel-header">
-            <div
-              class="panel-header-drag-handle"
-              data-drag-edge="book"
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="Resize Triggers and Book sections"
-              tabindex="0"
-            ></div>
-            <div class="panel-header-main">
-              <div class="panel-header-heading">
-                <span class="panel-header-chevron" aria-hidden="true">
-                  <svg viewBox="0 0 12 12" focusable="false">
-                    <path
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M3 4.5 6 7.5 9 4.5"
-                    />
-                  </svg>
-                </span>
-                <h2 class="book-panel-title">Book</h2>
-              </div>
-            </div>
-          </div>
-          <div id="book-body" class="book-body is-collapsed">
-            <div class="book-sides">
-              <div class="book-side book-side-up" aria-label="UP book">
-                <div class="book-col-label book-col-label-top">BUY UP</div>
-                <div class="book-ladder" id="book-ladder-up"></div>
-                <div class="book-col-label book-col-label-bottom">SELL UP</div>
-              </div>
-              <div class="book-side book-side-down" aria-label="DOWN book">
-                <div class="book-col-label book-col-label-top">BUY DOWN</div>
-                <div class="book-ladder" id="book-ladder-down"></div>
-                <div class="book-col-label book-col-label-bottom">SELL DOWN</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section class="panel log-panel" aria-label="Application log">
           <div class="log-panel-header">
             <div
@@ -655,7 +606,7 @@
               data-drag-edge="log"
               role="separator"
               aria-orientation="horizontal"
-              aria-label="Resize Book and Log sections"
+              aria-label="Resize Triggers and Log sections"
               tabindex="0"
             ></div>
             <div class="panel-header-main">

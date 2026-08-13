@@ -1733,7 +1733,6 @@ body {
 
   .app-page-simulator.is-mobile-stack .positions-panel-header,
   .app-page-simulator.is-mobile-stack .triggers-panel-header,
-  .app-page-simulator.is-mobile-stack .book-panel-header,
   .app-page-simulator.is-mobile-stack .log-panel-header {
     cursor: pointer;
     /* Drag handles are hidden on mobile — restore a top edge on each section header. */
@@ -1749,9 +1748,6 @@ body {
     .panel-header-chevron,
   .app-page-simulator.is-mobile-stack
     .triggers-panel-header[aria-expanded="true"]
-    .panel-header-chevron,
-  .app-page-simulator.is-mobile-stack
-    .book-panel-header[aria-expanded="true"]
     .panel-header-chevron,
   .app-page-simulator.is-mobile-stack
     .log-panel-header[aria-expanded="true"]
@@ -1778,15 +1774,6 @@ body {
   .app-page-simulator.is-mobile-stack .trigger-card {
     width: 100%;
     max-width: none;
-  }
-
-  /* Book ladders need a definite height (not content-auto). */
-  .app-page-simulator.is-mobile-stack .book-body:not(.is-collapsed) {
-    flex: 0 0 min(40vh, 280px) !important;
-    height: min(40vh, 280px) !important;
-    min-height: min(40vh, 280px) !important;
-    max-height: min(50vh, 420px) !important;
-    overflow: hidden !important;
   }
 
   .app-page-simulator.is-mobile-stack .log-panel {
@@ -5165,7 +5152,6 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   --trade-content-height: 0px;
   --prev-content-height: 400px;
   --triggers-content-height: 0px;
-  --book-content-height: 0px;
   --log-content-height: 0px;
   --log-margin-top: 0px;
 }
@@ -5185,7 +5171,6 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 .trade-panel,
 .positions-panel,
 .triggers-panel,
-.book-panel,
 .log-panel {
   flex: 0 0 auto;
   display: flex;
@@ -5217,7 +5202,6 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 
 .positions-panel-header,
 .triggers-panel-header,
-.book-panel-header,
 .log-panel-header {
   display: flex;
   flex-direction: column;
@@ -5288,7 +5272,6 @@ body.is-row-resizing .panel-header-drag-handle {
 .settings-panel-title,
 .positions-panel-title,
 .triggers-panel-title,
-.book-panel-title,
 .log-panel-title {
   font-size: 14px;
   font-weight: 600;
@@ -5768,7 +5751,6 @@ body.is-row-resizing .panel-header-drag-handle {
 
 .positions-panel-header,
 .triggers-panel-header,
-.book-panel-header,
 .log-panel-header {
   /* Desktop: drag handle is the top edge. Mobile stack adds border-top (handles hidden). */
   border-top: none;
@@ -6123,183 +6105,6 @@ body.is-row-resizing .panel-header-drag-handle {
 
 .triggers-body.is-scrollable {
   overflow-y: auto;
-}
-
-.book-body {
-  flex: 0 0 var(--book-content-height);
-  height: var(--book-content-height);
-  min-height: var(--book-content-height);
-  max-height: var(--book-content-height);
-  box-sizing: border-box;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0;
-  background: var(--bg);
-  scrollbar-width: thin;
-  scrollbar-color: #484f58 transparent;
-}
-
-.book-body.is-collapsed {
-  flex: 0 0 0;
-  height: 0;
-  min-height: 0;
-  max-height: 0;
-  border: none;
-}
-
-.book-body.is-scrollable {
-  overflow: hidden;
-}
-
-.book-sides {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  height: 100%;
-  min-height: 0;
-  padding: 0 8px;
-  box-sizing: border-box;
-}
-
-/* One continuous mid line from left of UP to right of DOWN. */
-.book-sides::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  top: 50%;
-  z-index: 1;
-  height: 1px;
-  transform: translateY(-50%);
-  background: var(--border);
-  pointer-events: none;
-}
-
-/* Vertical divider between UP and DOWN columns. */
-.book-sides::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  z-index: 1;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--border);
-  pointer-events: none;
-}
-
-.book-side {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: transparent;
-}
-
-.book-col-label {
-  flex: 0 0 auto;
-  padding: 4px 4px;
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  text-align: center;
-  line-height: 1.2;
-  color: var(--muted);
-  user-select: none;
-}
-
-/* One mid line across both columns; asks grow up, bids grow down. */
-.book-ladder {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  overflow: hidden;
-}
-
-.book-asks,
-.book-bids {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: transparent;
-}
-
-.book-asks {
-  justify-content: flex-end;
-}
-
-.book-bids {
-  justify-content: flex-start;
-}
-
-/* Invisible spacer matching mid line + gap so best levels clear the line. */
-.book-mid-gap {
-  flex: 0 0 13px;
-  width: 100%;
-  height: 13px;
-  margin: 0;
-  padding: 0;
-  pointer-events: none;
-}
-
-.book-row {
-  flex: 0 0 auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  padding: 1px 4px;
-  line-height: 1.3;
-  background: transparent;
-  box-sizing: border-box;
-  border: 1px solid transparent;
-}
-
-.book-row-ask {
-  color: var(--down, #f85149);
-}
-
-.book-row-bid {
-  color: var(--up, #3fb950);
-}
-
-.book-side-up .book-row-best {
-  border-color: var(--up, #3fb950);
-}
-
-.book-side-down .book-row-best {
-  border-color: var(--down, #f85149);
-}
-
-.book-row .book-size {
-  text-align: left;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.book-row .book-price {
-  text-align: right;
-  font-weight: 600;
-}
-
-.book-empty {
-  padding: 4px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .triggers-empty {
@@ -8048,7 +7853,6 @@ body.is-trigger-price-dragging * {
 .trade-panel-actions,
 .positions-panel-actions,
 .triggers-panel-actions,
-.book-panel-actions,
 .log-panel-actions {
   display: flex;
   align-items: center;

@@ -20,7 +20,7 @@ import {
   parseMarketSeries,
 } from "./market-pair.js";
 import { pickDisplayPrice, pickTriggerPrice } from "./quote-price.js";
-import { takeLevels } from "./book-depth.js";
+import { RECORDING_BOOK_DEPTH, takeLevels } from "./book-depth.js";
 import { makeStoredTickId, roundTo4 } from "./tick-compact.js";
 import {
   createWindowDynamicsTracker,
@@ -355,10 +355,10 @@ export class MarketRecorder {
       windowStart: this.activeWindow.windowStart,
       windowEnd: this.activeWindow.windowEnd,
       tMs,
-      yesBids: takeLevels(yesInfo?.bids),
-      yesAsks: takeLevels(yesInfo?.asks),
-      noBids: takeLevels(noInfo?.bids),
-      noAsks: takeLevels(noInfo?.asks),
+      yesBids: takeLevels(yesInfo?.bids, RECORDING_BOOK_DEPTH),
+      yesAsks: takeLevels(yesInfo?.asks, RECORDING_BOOK_DEPTH),
+      noBids: takeLevels(noInfo?.bids, RECORDING_BOOK_DEPTH),
+      noAsks: takeLevels(noInfo?.asks, RECORDING_BOOK_DEPTH),
     };
 
     if (yesInfo) {

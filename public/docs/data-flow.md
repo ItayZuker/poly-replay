@@ -28,7 +28,7 @@ Server -> SSE -> Browser
 
 | Data | Source |
 |------|--------|
-| Quotes / book (top + 10-level depth) | Polymarket CLOB (server WS); SSE `quotes` every book change |
+| Quotes (best bid/ask + size) | Polymarket CLOB (server WS); SSE `quotes` every book change |
 | Chart points | Chainlink WS → SSE `chainlink-tick` (client appends); full `priceHistory` only on SSE connect / window roll / series change |
 | Window / tokens | Polymarket REST; full SSE `window` (history + trading) on connect, market-window roll, and rare REST-driven pushes — not every tick |
 | Positions (open / pending) / markers / phases | SSE `trading` (~250ms coalesce) — settled Positions via REST + browser cache |
@@ -78,7 +78,7 @@ Live server -> GET /api/internal/ticks -> Recorder DATA_DIR
 
 Replay uses recent `recorded_windows` in Mongo (default ~**14 days**, overridable per series via Admin CRM retention), then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Idle Replay gray counts come from `GET /api/schedule-replay-slot-counts` (usable windows with CLOB book + Chainlink ticks + official Gamma). Tick/window files older than that retention are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from Replay.
 
-**CLOB book capture (recorder process):** At each window open the recorder **REST-seeds** the YES/NO order books (and again ~30s before rollover for the next window), then writes an opening `clob-book` tick stamped at `windowStart` so Replay sees early Asks (including cheap ~1¢ sides) that Live Demo can fill on. While the window is open it keeps sampling books on the recorder poll (~500ms) whenever the book changes, plus every WebSocket update; at finalize it forces a last in-window book tick. Identical consecutive books are not rewritten. Chainlink ticks are unchanged.
+**CLOB book capture (recorder process):** At each window open the recorder **REST-seeds** the YES/NO order books (and again ~30s before rollover for the next window), then writes an opening `clob-book` tick stamped at `windowStart` so Replay sees early Asks (including cheap ~1¢ sides) that Live Demo can fill on. Each snapshot stores the **top 5** bid and ask levels per side. While the window is open it keeps sampling books on the recorder poll (~500ms) whenever the book changes, plus every WebSocket update; at finalize it forces a last in-window book tick. Identical consecutive books are not rewritten. Chainlink ticks are unchanged.
 
 **Recording recovery (recorder process):** If Chainlink for an asset goes silent (~20s), RTDS reconnects and the active window for that asset is discarded. A health watchdog also covers two silence cases (after a short grace at window open): ~**60s** with **no book and no Chainlink** ticks discards that window, force-reconnects Chainlink + CLOB, and restarts the stuck series’ recorder; ~**20s** with **no CLOB book ticks** while Chainlink is still flowing force-reconnects only the market WebSocket and re-subscribes tokens (keeps the window so Chainlink capture continues). Window rollover (official close wait + save) always clears the in-progress finalize lock so a failed save cannot stall Recording forever.
 

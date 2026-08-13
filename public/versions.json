@@ -1,6 +1,11 @@
 {
-    "current": "1.69.0",
+    "current": "1.70.0",
     "releases": [
+        {
+            "version": "1.70.0",
+            "releasedAt": "2026-08-13T09:12:00.000Z",
+            "notes": "Remove Market Book section. Recordings store 5 CLOB levels. Docs updated."
+        },
         {
             "version": "1.69.0",
             "releasedAt": "2026-08-13T08:29:50.455Z",

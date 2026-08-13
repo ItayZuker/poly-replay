@@ -1822,75 +1822,6 @@ function canQuoteAction(trading, side, leg) {
   return Boolean(pos);
 }
 
-function formatBookPriceCents(price) {
-  const n = Number(price);
-  if (!Number.isFinite(n)) return "—";
-  return `${(n * 100).toFixed(1)}¢`;
-}
-
-function formatBookSize(size) {
-  const n = Number(size);
-  if (!Number.isFinite(n) || n <= 0) return "—";
-  if (n >= 1000) return n.toFixed(0);
-  if (n >= 10) return n.toFixed(1);
-  return n.toFixed(2);
-}
-
-function normalizeBookLevels(levels) {
-  if (!Array.isArray(levels)) return [];
-  return levels
-    .map((l) => ({
-      price: Number(l?.price),
-      size: Number(l?.size),
-    }))
-    .filter((l) => Number.isFinite(l.price) && Number.isFinite(l.size) && l.size > 0);
-}
-
-function bookLevelRowHtml(level, kind, isBest = false) {
-  const bestClass = isBest ? " book-row-best" : "";
-  return (
-    `<div class="book-row book-row-${kind}${bestClass}">` +
-    `<span class="book-size">${formatBookSize(level.size)}</span>` +
-    `<span class="book-price">${formatBookPriceCents(level.price)}</span>` +
-    `</div>`
-  );
-}
-
-function renderBookLadder(el, asks, bids) {
-  if (!el) return;
-  const askLevels = normalizeBookLevels(asks);
-  const bidLevels = normalizeBookLevels(bids);
-  // Worst ask at the top of the upper half; best ask against the mid line.
-  const askRows = [...askLevels].reverse();
-  let asksHtml = "";
-  for (let i = 0; i < askRows.length; i++) {
-    asksHtml += bookLevelRowHtml(askRows[i], "ask", i === askRows.length - 1);
-  }
-  if (!asksHtml && askLevels.length === 0 && bidLevels.length === 0) {
-    asksHtml = '<div class="book-empty">—</div>';
-  }
-  let bidsHtml = "";
-  for (let i = 0; i < bidLevels.length; i++) {
-    bidsHtml += bookLevelRowHtml(bidLevels[i], "bid", i === 0);
-  }
-  if (!bidsHtml && askLevels.length === 0 && bidLevels.length === 0) {
-    bidsHtml = '<div class="book-empty">—</div>';
-  }
-  el.innerHTML =
-    `<div class="book-asks">${asksHtml}</div>` +
-    `<div class="book-mid-gap" aria-hidden="true"></div>` +
-    `<div class="book-bids">${bidsHtml}</div>`;
-}
-
-/** Live CLOB depth (same feed as UP/DOWN quote boxes); up to 10 levels per side. */
-function updateBookPanel(state) {
-  const upEl = $("book-ladder-up");
-  const downEl = $("book-ladder-down");
-  if (!upEl && !downEl) return;
-  renderBookLadder(upEl, state?.yesAsks, state?.yesBids);
-  renderBookLadder(downEl, state?.noAsks, state?.noBids);
-}
-
 /** Normalize quoteLocks value: array (oldest→newest) or legacy single number. */
 function normalizeQuoteLockPrices(raw) {
   if (Array.isArray(raw)) {
@@ -2606,15 +2537,12 @@ function initLeftRowSplitter() {
   const tradeBody = document.querySelector(".trade-panel-body");
   const prevHeader = document.querySelector(".positions-panel-header");
   const triggersHeader = document.querySelector(".triggers-panel-header");
-  const bookHeader = document.querySelector(".book-panel-header");
   const logHeader = document.querySelector(".log-panel-header");
   const prevBody = document.querySelector(".positions-body");
   const triggersBody = document.querySelector(".triggers-body");
-  const bookBody = document.querySelector(".book-body");
   const logBody = document.querySelector(".log-output");
   const prevDragHandle = document.querySelector('[data-drag-edge="prev"]');
   const triggersDragHandle = document.querySelector('[data-drag-edge="triggers"]');
-  const bookDragHandle = document.querySelector('[data-drag-edge="book"]');
   const logDragHandle = document.querySelector('[data-drag-edge="log"]');
   if (
     !leftColumn ||
@@ -2623,15 +2551,12 @@ function initLeftRowSplitter() {
     !tradeBody ||
     !prevHeader ||
     !triggersHeader ||
-    !bookHeader ||
     !logHeader ||
     !prevDragHandle ||
     !triggersDragHandle ||
-    !bookDragHandle ||
     !logDragHandle ||
     !prevBody ||
     !triggersBody ||
-    !bookBody ||
     !logBody
   ) {
     return;
@@ -2641,8 +2566,6 @@ function initLeftRowSplitter() {
   let dragKind = null;
   let anchorTriggersHeaderTop = 0;
   let anchorTriggersContent = 0;
-  let anchorBookHeaderTop = 0;
-  let anchorBookContent = 0;
   let anchorLogHeaderTop = 0;
   let anchorLogContent = 0;
   let anchorTradeContent = 0;
@@ -2662,10 +2585,9 @@ function initLeftRowSplitter() {
     const tradeHeaderH = tradeHeader.offsetHeight;
     const prevHeaderH = prevHeader.offsetHeight;
     const triggersHeaderH = triggersHeader.offsetHeight;
-    const bookHeaderH = bookHeader.offsetHeight;
     const logHeaderH = logHeader.offsetHeight;
     const chrome =
-      walletHeaderH + tradeHeaderH + prevHeaderH + triggersHeaderH + bookHeaderH + logHeaderH;
+      walletHeaderH + tradeHeaderH + prevHeaderH + triggersHeaderH + logHeaderH;
     const maxContent = Math.max(0, colRect.height - chrome);
     return {
       colRect,
@@ -2673,7 +2595,6 @@ function initLeftRowSplitter() {
       tradeHeaderH,
       prevHeaderH,
       triggersHeaderH,
-      bookHeaderH,
       logHeaderH,
       chrome,
       maxContent,
@@ -2684,11 +2605,10 @@ function initLeftRowSplitter() {
     trade: parseHeight("--trade-content-height", 140),
     prev: parseHeight("--prev-content-height", 0),
     triggers: parseHeight("--triggers-content-height", 0),
-    book: parseHeight("--book-content-height", 0),
     log: parseHeight("--log-content-height", 0),
   });
 
-  const applyHeights = (trade, prev, triggers, book, log) => {
+  const applyHeights = (trade, prev, triggers, _book, log) => {
     const { colRect, chrome, maxContent } = getMetrics();
     // Trade UI is hidden (Allow trade is on Settings → User), but keep this
     // height as the spacer above Positions so dragging the Positions header
@@ -2696,7 +2616,6 @@ function initLeftRowSplitter() {
     let t = Math.max(0, trade);
     let p = Math.max(0, prev);
     let tr = Math.max(0, triggers);
-    let b = Math.max(0, book);
     let l = Math.max(0, log);
 
     // While the market page is hidden (display:none), geometry is 0 — do not
@@ -2704,13 +2623,12 @@ function initLeftRowSplitter() {
     const layoutReady = colRect.height > chrome;
 
     if (layoutReady) {
-      const total = t + p + tr + b + l;
+      const total = t + p + tr + l;
       if (total > maxContent && total > 0) {
         const scale = maxContent / total;
         t *= scale;
         p *= scale;
         tr *= scale;
-        b *= scale;
         l *= scale;
       } else if (total < maxContent && !dragging) {
         // Fill leftover column space into an open content body (not as a gap
@@ -2719,8 +2637,6 @@ function initLeftRowSplitter() {
         const slack = maxContent - total;
         if (l > 0) {
           l += slack;
-        } else if (b > 0) {
-          b += slack;
         } else if (tr > 0) {
           tr += slack;
         } else if (p > 0) {
@@ -2734,14 +2650,13 @@ function initLeftRowSplitter() {
     leftColumn.style.setProperty("--trade-content-height", `${t}px`);
     leftColumn.style.setProperty("--prev-content-height", `${p}px`);
     leftColumn.style.setProperty("--triggers-content-height", `${tr}px`);
-    leftColumn.style.setProperty("--book-content-height", `${b}px`);
     leftColumn.style.setProperty("--log-content-height", `${l}px`);
 
     if (layoutReady) {
-      const stackHeight = chrome + t + p + tr + b + l;
+      const stackHeight = chrome + t + p + tr + l;
       // Only pin Log with margin when every content body is collapsed.
       const margin =
-        t <= 0 && p <= 0 && tr <= 0 && b <= 0 && l <= 0
+        t <= 0 && p <= 0 && tr <= 0 && l <= 0
           ? Math.max(0, colRect.height - stackHeight)
           : 0;
       leftColumn.style.setProperty("--log-margin-top", `${margin}px`);
@@ -2750,25 +2665,22 @@ function initLeftRowSplitter() {
     tradeBody.classList.toggle("is-collapsed", t <= 0);
     prevBody.classList.toggle("is-collapsed", p <= 0);
     triggersBody.classList.toggle("is-collapsed", tr <= 0);
-    bookBody.classList.toggle("is-collapsed", b <= 0);
     logBody.classList.toggle("is-collapsed", l <= 0);
     const hasPositionCards = Boolean(prevBody.querySelector(".position-card"));
     const hasTriggerCards = Boolean(triggersBody.querySelector(".trigger-card"));
     prevBody.classList.toggle("is-scrollable", p > 0 && hasPositionCards);
     triggersBody.classList.toggle("is-scrollable", tr > 0 && hasTriggerCards);
-    bookBody.classList.toggle("is-scrollable", b > 0);
     logBody.classList.toggle("is-scrollable", l > 0);
     if (document.getElementById("page-simulator")?.classList.contains("is-mobile-stack")) {
       prevHeader.setAttribute("aria-expanded", p > 0 ? "true" : "false");
       triggersHeader.setAttribute("aria-expanded", tr > 0 ? "true" : "false");
-      bookHeader.setAttribute("aria-expanded", b > 0 ? "true" : "false");
       logHeader.setAttribute("aria-expanded", l > 0 ? "true" : "false");
     }
   };
 
   const reflowHeights = () => {
     const heights = readHeights();
-    applyHeights(heights.trade, heights.prev, heights.triggers, heights.book, heights.log);
+    applyHeights(heights.trade, heights.prev, heights.triggers, 0, heights.log);
   };
 
   const maximizeSection = (section) => {
@@ -2779,10 +2691,6 @@ function initLeftRowSplitter() {
     }
     if (section === "triggers") {
       applyHeights(0, 0, maxContent, 0, 0);
-      return;
-    }
-    if (section === "book") {
-      applyHeights(0, 0, 0, maxContent, 0);
       return;
     }
     if (section === "log") {
@@ -2800,7 +2708,6 @@ function initLeftRowSplitter() {
     };
     setExpanded(prevHeader, heights.prev > 0);
     setExpanded(triggersHeader, heights.triggers > 0);
-    setExpanded(bookHeader, heights.book > 0);
     setExpanded(logHeader, heights.log > 0);
   };
 
@@ -2810,8 +2717,6 @@ function initLeftRowSplitter() {
       applyHeights(0, openPx, 0, 0, 0);
     } else if (section === "triggers") {
       applyHeights(0, 0, openPx, 0, 0);
-    } else if (section === "book") {
-      applyHeights(0, 0, 0, openPx, 0);
     } else if (section === "log") {
       applyHeights(0, 0, 0, 0, openPx);
     } else {
@@ -2828,21 +2733,18 @@ function initLeftRowSplitter() {
         ? "prev"
         : section === "triggers"
           ? "triggers"
-          : section === "book"
-            ? "book"
-            : section === "log"
-              ? "log"
-              : null;
+          : section === "log"
+            ? "log"
+            : null;
     if (!key) return;
     const next = {
       trade: 0,
       prev: heights.prev,
       triggers: heights.triggers,
-      book: heights.book,
       log: heights.log,
     };
     next[key] = heights[key] > 0 ? 0 : openPx;
-    applyHeights(next.trade, next.prev, next.triggers, next.book, next.log);
+    applyHeights(next.trade, next.prev, next.triggers, 0, next.log);
     syncMobileAccordionAria();
   };
 
@@ -2869,13 +2771,12 @@ function initLeftRowSplitter() {
       tradeHeaderH,
       prevHeaderH,
       triggersHeaderH,
-      bookHeaderH,
       logHeaderH,
     } = getMetrics();
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
     const minPrevTop = tradeHeaderBottom;
     const maxPrevTop =
-      colRect.bottom - prevHeaderH - triggersHeaderH - bookHeaderH - logHeaderH;
+      colRect.bottom - prevHeaderH - triggersHeaderH - logHeaderH;
     const prevTop = Math.max(minPrevTop, Math.min(clientY, maxPrevTop));
     const trade = prevTop - tradeHeaderBottom;
     const prevBottom = prevTop + prevHeaderH;
@@ -2883,19 +2784,17 @@ function initLeftRowSplitter() {
       anchorTriggersHeaderTop = prevBottom;
       const below = Math.max(
         0,
-        colRect.bottom - prevBottom - triggersHeaderH - bookHeaderH - logHeaderH,
+        colRect.bottom - prevBottom - triggersHeaderH - logHeaderH,
       );
       const log = Math.min(anchorLogContent, below);
-      const book = Math.min(anchorBookContent, Math.max(0, below - log));
-      const triggers = Math.max(0, below - log - book);
+      const triggers = Math.max(0, below - log);
       anchorTriggersContent = triggers;
-      anchorBookContent = book;
       anchorLogContent = log;
-      applyHeights(trade, 0, triggers, book, log);
+      applyHeights(trade, 0, triggers, 0, log);
       return;
     }
     const prev = Math.max(0, anchorTriggersHeaderTop - prevBottom);
-    applyHeights(trade, prev, anchorTriggersContent, anchorBookContent, anchorLogContent);
+    applyHeights(trade, prev, anchorTriggersContent, 0, anchorLogContent);
   };
 
   const clampTriggersDrag = (clientY) => {
@@ -2905,13 +2804,12 @@ function initLeftRowSplitter() {
       tradeHeaderH,
       prevHeaderH,
       triggersHeaderH,
-      bookHeaderH,
       logHeaderH,
     } = getMetrics();
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
     const prevBottom = tradeHeaderBottom + anchorTradeContent + prevHeaderH;
     const minTriggersTop = tradeHeaderBottom + prevHeaderH;
-    const maxTriggersTop = colRect.bottom - triggersHeaderH - bookHeaderH - logHeaderH;
+    const maxTriggersTop = colRect.bottom - triggersHeaderH - logHeaderH;
     const triggersTop = Math.max(minTriggersTop, Math.min(clientY, maxTriggersTop));
     const triggersBottom = triggersTop + triggersHeaderH;
 
@@ -2921,98 +2819,28 @@ function initLeftRowSplitter() {
       anchorPrevContent = 0;
       const below = Math.max(
         0,
-        colRect.bottom - triggersBottom - bookHeaderH - logHeaderH,
+        colRect.bottom - triggersBottom - logHeaderH,
       );
       const log = Math.min(anchorLogContent, below);
-      const book = Math.min(anchorBookContent, Math.max(0, below - log));
-      const triggers = Math.max(0, below - log - book);
-      anchorBookContent = book;
+      const triggers = Math.max(0, below - log);
       anchorLogContent = log;
-      applyHeights(trade, 0, triggers, book, log);
+      applyHeights(trade, 0, triggers, 0, log);
       return;
     }
 
     const prev = Math.max(0, triggersTop - prevBottom);
     anchorPrevContent = prev;
 
-    if (triggersBottom > anchorBookHeaderTop) {
-      anchorBookHeaderTop = triggersBottom;
-      const below = Math.max(0, colRect.bottom - triggersBottom - bookHeaderH - logHeaderH);
-      const log = Math.min(anchorLogContent, below);
-      const book = Math.max(0, below - log);
-      anchorBookContent = book;
+    if (triggersBottom > anchorLogHeaderTop) {
+      anchorLogHeaderTop = triggersBottom;
+      const log = Math.max(0, colRect.bottom - triggersBottom - logHeaderH);
       anchorLogContent = log;
-      applyHeights(anchorTradeContent, prev, 0, book, log);
+      applyHeights(anchorTradeContent, prev, 0, 0, log);
       return;
     }
 
-    const triggers = Math.max(0, anchorBookHeaderTop - triggersBottom);
-    applyHeights(anchorTradeContent, prev, triggers, anchorBookContent, anchorLogContent);
-  };
-
-  const clampBookDrag = (clientY) => {
-    const {
-      colRect,
-      walletHeaderH,
-      tradeHeaderH,
-      prevHeaderH,
-      triggersHeaderH,
-      bookHeaderH,
-      logHeaderH,
-    } = getMetrics();
-    const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
-    // Bottom of Triggers header (top of Triggers content) — same pattern as
-    // clampTriggersDrag's prevBottom. Do NOT include Triggers content height
-    // here; that made any upward Book drag look like a "push" and shove Log.
-    const triggersHeaderBottom =
-      tradeHeaderBottom +
-      anchorTradeContent +
-      prevHeaderH +
-      anchorPrevContent +
-      triggersHeaderH;
-    const minBookTop = tradeHeaderBottom + prevHeaderH + triggersHeaderH;
-    const maxBookTop = colRect.bottom - bookHeaderH - logHeaderH;
-    const bookTop = Math.max(minBookTop, Math.min(clientY, maxBookTop));
-    const bookBottom = bookTop + bookHeaderH;
-
-    if (bookTop < triggersHeaderBottom) {
-      // Collapse Triggers content; may push Positions / Trade.
-      anchorTriggersContent = 0;
-      const triggersHeaderTop = bookTop - triggersHeaderH;
-      const prevHeaderBottom = tradeHeaderBottom + anchorTradeContent + prevHeaderH;
-      const below = Math.max(0, colRect.bottom - bookBottom - logHeaderH);
-      const log = Math.min(anchorLogContent, below);
-      const book = Math.max(0, below - log);
-      anchorBookContent = book;
-      anchorLogContent = log;
-      if (triggersHeaderTop < prevHeaderBottom) {
-        const trade = Math.max(0, triggersHeaderTop - prevHeaderH - tradeHeaderBottom);
-        anchorTradeContent = trade;
-        anchorPrevContent = 0;
-        applyHeights(trade, 0, 0, book, log);
-        return;
-      }
-      const prev = Math.max(0, triggersHeaderTop - prevHeaderBottom);
-      anchorPrevContent = prev;
-      applyHeights(anchorTradeContent, prev, 0, book, log);
-      return;
-    }
-
-    const triggers = Math.max(0, bookTop - triggersHeaderBottom);
-    anchorTriggersContent = triggers;
-
-    if (bookBottom > anchorLogHeaderTop) {
-      // Contact Log header — push it down and shrink Log content.
-      anchorLogHeaderTop = bookBottom;
-      const log = Math.max(0, colRect.bottom - bookBottom - logHeaderH);
-      anchorLogContent = log;
-      applyHeights(anchorTradeContent, anchorPrevContent, triggers, 0, log);
-      return;
-    }
-
-    // Trade space between Triggers and Book; keep Log header pinned.
-    const book = Math.max(0, anchorLogHeaderTop - bookBottom);
-    applyHeights(anchorTradeContent, anchorPrevContent, triggers, book, anchorLogContent);
+    const triggers = Math.max(0, anchorLogHeaderTop - triggersBottom);
+    applyHeights(anchorTradeContent, prev, triggers, 0, anchorLogContent);
   };
 
   const clampLogDrag = (clientY) => {
@@ -3022,58 +2850,40 @@ function initLeftRowSplitter() {
       tradeHeaderH,
       prevHeaderH,
       triggersHeaderH,
-      bookHeaderH,
       logHeaderH,
     } = getMetrics();
     const tradeHeaderBottom = colRect.top + walletHeaderH + tradeHeaderH;
-    const minLogTop = tradeHeaderBottom + prevHeaderH + triggersHeaderH + bookHeaderH;
+    const minLogTop = tradeHeaderBottom + prevHeaderH + triggersHeaderH;
     const maxLogTop = colRect.bottom - logHeaderH;
     const logTop = Math.max(minLogTop, Math.min(clientY, maxLogTop));
     const log = Math.max(0, colRect.bottom - logTop - logHeaderH);
-    const bookHeaderBottom =
+    const triggersHeaderBottom =
       tradeHeaderBottom +
       anchorTradeContent +
       prevHeaderH +
       anchorPrevContent +
-      triggersHeaderH +
-      anchorTriggersContent +
-      bookHeaderH;
+      triggersHeaderH;
 
-    if (logTop < bookHeaderBottom) {
-      // Book content collapses; Book header sits directly above Log.
-      anchorBookContent = 0;
-      const bookHeaderTop = logTop - bookHeaderH;
-      const triggersHeaderBottom =
-        tradeHeaderBottom +
-        anchorTradeContent +
-        prevHeaderH +
-        anchorPrevContent +
-        triggersHeaderH;
-      if (bookHeaderTop < triggersHeaderBottom) {
-        anchorTriggersContent = 0;
-        const triggersHeaderTop = bookHeaderTop - triggersHeaderH;
-        const prevHeaderBottom = tradeHeaderBottom + anchorTradeContent + prevHeaderH;
-        if (triggersHeaderTop < prevHeaderBottom) {
-          const trade = Math.max(0, triggersHeaderTop - prevHeaderH - tradeHeaderBottom);
-          anchorTradeContent = trade;
-          anchorPrevContent = 0;
-          applyHeights(trade, 0, 0, 0, log);
-          return;
-        }
-        const prev = Math.max(0, triggersHeaderTop - prevHeaderBottom);
-        anchorPrevContent = prev;
-        applyHeights(anchorTradeContent, prev, 0, 0, log);
+    if (logTop < triggersHeaderBottom) {
+      anchorTriggersContent = 0;
+      const triggersHeaderTop = logTop - triggersHeaderH;
+      const prevHeaderBottom = tradeHeaderBottom + anchorTradeContent + prevHeaderH;
+      if (triggersHeaderTop < prevHeaderBottom) {
+        const trade = Math.max(0, triggersHeaderTop - prevHeaderH - tradeHeaderBottom);
+        anchorTradeContent = trade;
+        anchorPrevContent = 0;
+        applyHeights(trade, 0, 0, 0, log);
         return;
       }
-      const triggers = Math.max(0, bookHeaderTop - triggersHeaderBottom);
-      anchorTriggersContent = triggers;
-      applyHeights(anchorTradeContent, anchorPrevContent, triggers, 0, log);
+      const prev = Math.max(0, triggersHeaderTop - prevHeaderBottom);
+      anchorPrevContent = prev;
+      applyHeights(anchorTradeContent, prev, 0, 0, log);
       return;
     }
 
-    const book = Math.max(0, logTop - bookHeaderBottom);
-    anchorBookContent = book;
-    applyHeights(anchorTradeContent, anchorPrevContent, anchorTriggersContent, book, log);
+    const triggers = Math.max(0, logTop - triggersHeaderBottom);
+    anchorTriggersContent = triggers;
+    applyHeights(anchorTradeContent, anchorPrevContent, triggers, 0, log);
   };
 
   const stopDragging = () => {
@@ -3093,7 +2903,6 @@ function initLeftRowSplitter() {
     const heights = readHeights();
     anchorTriggersHeaderTop = triggersHeader.getBoundingClientRect().top;
     anchorTriggersContent = heights.triggers;
-    anchorBookContent = heights.book;
     anchorLogContent = heights.log;
     activeHandle.classList.add("is-dragging");
     document.body.classList.add("is-row-resizing");
@@ -3114,8 +2923,7 @@ function initLeftRowSplitter() {
     const heights = readHeights();
     anchorTradeContent = heights.trade;
     anchorPrevContent = heights.prev;
-    anchorBookHeaderTop = bookHeader.getBoundingClientRect().top;
-    anchorBookContent = heights.book;
+    anchorLogHeaderTop = logHeader.getBoundingClientRect().top;
     anchorLogContent = heights.log;
     activeHandle.classList.add("is-dragging");
     document.body.classList.add("is-row-resizing");
@@ -3128,28 +2936,6 @@ function initLeftRowSplitter() {
     e.preventDefault();
   };
 
-  const startBookDrag = (e) => {
-    if (e.button !== 0 || isMarketMobileStack()) return;
-    dragging = true;
-    dragKind = "book";
-    activeHandle = bookDragHandle;
-    const heights = readHeights();
-    anchorTradeContent = heights.trade;
-    anchorPrevContent = heights.prev;
-    anchorTriggersContent = heights.triggers;
-    anchorLogHeaderTop = logHeader.getBoundingClientRect().top;
-    anchorLogContent = heights.log;
-    activeHandle.classList.add("is-dragging");
-    document.body.classList.add("is-row-resizing");
-    try {
-      bookDragHandle.setPointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
-    clampBookDrag(e.clientY);
-    e.preventDefault();
-  };
-
   const startLogDrag = (e) => {
     if (e.button !== 0 || isMarketMobileStack()) return;
     dragging = true;
@@ -3159,7 +2945,6 @@ function initLeftRowSplitter() {
     anchorTradeContent = heights.trade;
     anchorPrevContent = heights.prev;
     anchorTriggersContent = heights.triggers;
-    anchorBookContent = heights.book;
     activeHandle.classList.add("is-dragging");
     document.body.classList.add("is-row-resizing");
     try {
@@ -3182,7 +2967,6 @@ function initLeftRowSplitter() {
     if (!dragging) return;
     if (dragKind === "prev") clampPrevDrag(e.clientY);
     else if (dragKind === "triggers") clampTriggersDrag(e.clientY);
-    else if (dragKind === "book") clampBookDrag(e.clientY);
     else if (dragKind === "log") clampLogDrag(e.clientY);
   };
 
@@ -3196,7 +2980,6 @@ function initLeftRowSplitter() {
 
   bindHandle(prevDragHandle, startPrevDrag);
   bindHandle(triggersDragHandle, startTriggersDrag);
-  bindHandle(bookDragHandle, startBookDrag);
   bindHandle(logDragHandle, startLogDrag);
   window.addEventListener("blur", stopDragging);
 
@@ -3226,7 +3009,6 @@ function initLeftRowSplitter() {
 
   bindMobileAccordion(prevHeader, "positions");
   bindMobileAccordion(triggersHeader, "triggers");
-  bindMobileAccordion(bookHeader, "book");
   bindMobileAccordion(logHeader, "log");
 }
 
@@ -3290,7 +3072,7 @@ function syncMarketMobileStack() {
   document.querySelector(".app-header")?.classList.toggle("is-mobile-header", mobile);
 
   const accordionHeaders = page.querySelectorAll(
-    ".positions-panel-header, .triggers-panel-header, .book-panel-header, .log-panel-header"
+    ".positions-panel-header, .triggers-panel-header, .log-panel-header"
   );
   accordionHeaders.forEach((header) => {
     if (!mobile) header.removeAttribute("aria-expanded");
@@ -5160,7 +4942,6 @@ function updateWindowUI(state) {
   updatePositionsPanel(state);
   syncTriggerLiveUiFromServer(state);
   updateQuoteBoxes(state);
-  updateBookPanel(state);
   updateCountdown(state);
   updateGraphPanel(state);
   syncManipulationAreaUi();
@@ -5271,7 +5052,6 @@ function applyQuotesUpdate(quotes) {
   }
 
   updateQuoteBoxes(windowState);
-  updateBookPanel(windowState);
   syncLatencyDisplay(windowState);
   if (quotes.windowEnd != null) updateCountdown(windowState);
   tickManipulationDetector(windowState);
