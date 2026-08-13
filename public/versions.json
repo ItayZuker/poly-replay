@@ -1,11 +1,18 @@
 {
-    "current": "1.71.0",
+    "current": "1.72.0",
     "releases": [
+        {
+            "version": "1.72.0",
+            "releasedAt": "2026-08-13T13:01:31.089Z",
+            "notes": "Trigger dialog BUY row: Type then Share; First side/Both sides right-aligned and only enabled at Duration 0 + UP/DOWN Price (otherwise First side only). SELL: both TP and SL at 100 disables Sell order type (shows None). Offset GTD renamed Place GTD before window. Docs updated."
+        },
         {
             "version": "1.71.0",
             "releasedAt": "2026-08-13T11:33:22.080Z",
             "notes": "Replay Pause/Test (no reset; Test Run starts stats from zero; Pause keeps stats). Schedule Live eye icon opens View Trigger (read-only). New triggers default Duration 0 and left UP/DOWN Price at 40¢; Duration 0 hides the right bar. Trigger dialog: duration aligned with Offset GTD, no timeline between bars, gold PTB line keeps length when the right bar appears. Stop Loss row removed from trigger cards. Docs updated."
         },
+        {
+            "version": "1.70.1",
             "releasedAt": "2026-08-13T09:40:00.000Z",
             "notes": "Serialize live trading ticks so CLOB updates cannot stack Demo/GTD Mongo work (Heroku R14/R15)."
         },

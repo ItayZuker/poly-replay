@@ -295,7 +295,8 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     sellOrderType,
     windowArea: { start: areaStart, end: areaEnd },
     gtdPlaceOffsetMs,
-    buySidesMode: o.buySidesMode === "both" ? "both" : "first",
+    buySidesMode:
+      durationMs === 0 && startMode === "price" && o.buySidesMode === "both" ? "both" : "first",
   };
 }
 

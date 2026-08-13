@@ -332,6 +332,7 @@ export function normalizeUserTriggerInput(
           : existing?.sellOrderType || "FAK",
     windowArea: normalizeWindowArea(o.windowArea ?? existing?.windowArea),
     buySidesMode: ((): "first" | "both" => {
+      if (!(durationMs === 0 && startMode === "price")) return "first";
       if (o.buySidesMode === "both" || o.buySidesMode === "first") return o.buySidesMode;
       if (existing?.buySidesMode === "both") return "both";
       return "first";
