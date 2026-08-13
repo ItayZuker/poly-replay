@@ -21,7 +21,7 @@ Product docs live in `public/docs/*.md` (index in `public/docs/manifest.json`).
   - Overview → `overview.md`
   - Onboarding → `getting-started.md`
   - Market page → `market.md`
-  - Schedule / Heatmap → `schedule.md`
+  - Schedule → `schedule.md`
   - Setups & phases → `setups-phases.md`
   - Information flow → `data-flow.md`
   - Settings / wallet → `settings.md`

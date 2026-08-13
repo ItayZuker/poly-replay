@@ -17,11 +17,8 @@
         document.documentElement.dataset.signedInHint = "1";
       }
       var initialPage = localStorage.getItem("poly-real:app-page");
-      if (initialPage === "schedule" || initialPage === "settings") {
+      if (initialPage === "schedule" || initialPage === "replay" || initialPage === "settings") {
         document.documentElement.dataset.initialPage = initialPage;
-      }
-      if (localStorage.getItem("poly-real:schedule-view") === "heatmap") {
-        document.documentElement.dataset.initialScheduleView = "heatmap";
       }
     } catch (e) {}
   </script>
@@ -55,10 +52,12 @@
       display: inline-flex !important;
     }
     html[data-initial-page="schedule"] #page-simulator,
+    html[data-initial-page="replay"] #page-simulator,
     html[data-initial-page="settings"] #page-simulator {
       display: none !important;
     }
-    html[data-initial-page="schedule"] #page-schedule-heatmap {
+    html[data-initial-page="schedule"] #page-schedule,
+    html[data-initial-page="replay"] #page-schedule {
       display: flex !important;
     }
     html[data-initial-page="settings"] #page-settings {
@@ -66,11 +65,31 @@
       flex-direction: column;
     }
     html[data-initial-page="schedule"] #schedule-setups-list,
-    html[data-initial-page="schedule"] .schedule-add-setup-wrap {
+    html[data-initial-page="replay"] #schedule-setups-list,
+    html[data-initial-page="schedule"] .schedule-add-setup-wrap,
+    html[data-initial-page="replay"] .schedule-add-setup-wrap {
       display: none !important;
     }
-    html[data-initial-page="schedule"][data-initial-schedule-view="heatmap"] #schedule-heatmap-panel {
-      display: block !important;
+    html[data-initial-page="replay"] .app-title-poly {
+      color: inherit !important;
+    }
+    html[data-initial-page="replay"] .app-title-replay {
+      color: var(--accent) !important;
+    }
+    html[data-initial-page="replay"] #page-schedule .schedule-live-triggers {
+      max-height: 0 !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      flex: 0 0 auto !important;
+      overflow: hidden !important;
+    }
+    html[data-initial-page="replay"] #page-schedule .schedule-replay-panel {
+      max-height: none !important;
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      min-height: 0 !important;
+      flex: 1 1 auto !important;
+      overflow: hidden !important;
     }
   </style>
 </head>
@@ -243,17 +262,15 @@
             type="button"
             class="page-toggle-btn"
             data-page="schedule"
-            data-schedule-tab="schedule"
           >
             Schedule
           </button>
           <button
             type="button"
             class="page-toggle-btn"
-            data-page="heatmap"
-            data-schedule-tab="heatmap"
+            data-page="replay"
           >
-            Heatmap
+            Replay
           </button>
         </div>
       </div>
@@ -1043,7 +1060,7 @@
         </div>
       </div>
 
-      <div id="page-schedule-heatmap" class="app-page app-page-schedule" hidden>
+      <div id="page-schedule" class="app-page app-page-schedule" hidden>
         <header class="schedule-page-subheader" aria-label="Schedule side panel">
           <button
             type="button"
@@ -1193,25 +1210,9 @@
               ></div>
             </div>
             </div>
-            <div class="schedule-workspace-switcher-bar">
-              <div class="schedule-workspace-switcher-toolbar">
-                <div
-                  id="schedule-workspace-switcher"
-                  class="schedule-workspace-switcher"
-                  role="switch"
-                  aria-checked="false"
-                  aria-label="Schedule workspace"
-                >
-                  <span class="schedule-workspace-switcher-handle" aria-hidden="true"></span>
-                  <button type="button" class="schedule-workspace-switcher-opt is-active" data-schedule-workspace="live">Live</button>
-                  <button type="button" class="schedule-workspace-switcher-opt" data-schedule-workspace="replay">Replay</button>
-                </div>
-              </div>
-            </div>
           </div>
-          <div id="schedule-heatmap-panel" class="schedule-heatmap-panel" hidden></div>
         </aside>
-        <section class="schedule-main-panel" aria-label="Schedule and heatmap">
+        <section class="schedule-main-panel" aria-label="Schedule">
           <div class="schedule-week-layout">
             <div class="schedule-utc-column" aria-label="UTC hours">
               <div class="schedule-utc-header">UTC</div>
@@ -2434,9 +2435,9 @@
   <script src="/setup-editor.js?v=1.5.2"></script>
   <script src="/schedule-replay-triggers.js?v=1"></script>
   <script src="/schedule-live-triggers.js?v=1"></script>
-  <script src="/schedule-hour-slots.js?v=1.5.4"></script>
-  <script src="/schedule.js?v=1.5.4"></script>
+  <script src="/schedule-hour-slots.js?v=1.5.5"></script>
+  <script src="/schedule.js?v=1.5.5"></script>
   <script src="/schedule-play.js?v=1.5.7"></script>
-  <script src="/app.js?v=1.5.12"></script>
+  <script src="/app.js?v=1.5.13"></script>
 </body>
 </html>

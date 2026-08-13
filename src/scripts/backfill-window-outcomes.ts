@@ -128,7 +128,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         chainlinkCount: window.chainlinkCount,
       };
       await saveRecordedWindow(market, nextDoc);
-      // Keep Mongo heatmap/Replay index in sync with disk (same fields as recorder finalize).
+      // Keep Mongo Replay index in sync with disk (same fields as recorder finalize).
       await upsertRecordedWindowSummary(market._id, {
         windowStart: nextDoc.windowStart,
         windowEnd: nextDoc.windowEnd,

@@ -1,8 +1,15 @@
 import { ObjectId } from "mongodb";
 import { getMongoClient, getMongoDbName } from "./mongo-client.js";
-import { getRollingCutoffUtcSec } from "../heatmap-service.js";
 
 const COLLECTION = "fill_attempts";
+
+/** Start of UTC today − 6 days — fill-success rolling window. */
+export function getRollingCutoffUtcSec(now = new Date()): number {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  return Math.floor(Date.UTC(y, m, d - 6) / 1000);
+}
 
 /** CLOB order styles tracked in Market → Trade fill success. */
 export type FillOrderKind = "FAK" | "FOK" | "GTD";

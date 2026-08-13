@@ -7,7 +7,7 @@
 | Channel | Direction | For |
 |---------|-----------|-----|
 | **REST** `/api/...` | Browser → server | Login, settings, toggles, triggers, schedule hour stats, Trigger/Prediction orders |
-| **SSE** `/api/stream` | Server → browser | Quotes, chainlink ticks, trading (positions/markers + `statsRevision`), window (sparse), log, schedule (heatmap + live stats are REST + browser cache) |
+| **SSE** `/api/stream` | Server → browser | Quotes, chainlink ticks, trading (positions/markers + `statsRevision`), window (sparse), log, schedule (live stats + Replay slot counts are REST + browser cache) |
 | **WebSocket** | Server ↔ exchanges | CLOB book + Chainlink (server only) |
 
 ```flow
@@ -71,17 +71,15 @@ Live server -> GET /api/internal/ticks -> Recorder DATA_DIR
 |---------------|------|
 | **Available / Recording / Retention** (Admin CRM) | Per-series flags in shared Mongo `markets` (CRM writes Mongo directly). Available gates trader UI + APIs; Recording starts capture on recorder sync (~30s); Retention days drive prune |
 | `TRADING_EXECUTOR=1` | Live — may place CLOB orders; never runs recorders (Recording flag still persists) |
-| Non-executor process | Starts/stops `MarketRecorder` for each series with Recording on; writes `DATA_DIR` + Mongo heatmap summaries |
+| Non-executor process | Starts/stops `MarketRecorder` for each series with Recording on; writes `DATA_DIR` + Mongo `recorded_windows` summaries |
 | `SCHEDULE_REPLAY_SERVICE_URL` | Live → full URL of recorder `/api/internal/schedule-replay`. Empty = run backtest in-process. Same origin is used to proxy Open Replay ticks (`/api/internal/ticks`), tick presence (`/api/internal/ticks/presence`), and Replay play payloads |
 | `SCHEDULE_REPLAY_WORKER_SECRET` | Optional shared secret for the worker endpoint |
 | `DATA_DIR` | Local tick/window files (default `./data`) |
 
-Heatmap and Replay use recent `recorded_windows` in Mongo (default ~**14 days**, overridable per series via Admin CRM retention), then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). The Live/web dyno does **not** keep a full heatmap copy in RAM: `GET /api/heatmap` builds the grid from Mongo per request, and the browser caches it; `GET /api/heatmap/window` patches one finished window after each market roll. Tick/window files older than that retention are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from heatmap/Replay.
-
-**Heatmap wallet counts** (Wallets / New wallets): when a window finishes, the recorder classifies unique trader addresses and writes `uniqueTraders` / `newWallets` onto that `recorded_windows` summary. Mongo `trader_wallets` keeps only address presence (and light sighting metadata) so “new” vs “seen before” can be counted — no wallet list UI, no per-window address lists, and no Polymarket PnL / I WON / I LOST. The hourly retention job deletes addresses not seen again within **30 days**. The Live executor does not run a trader-registry watcher.
+Replay uses recent `recorded_windows` in Mongo (default ~**14 days**, overridable per series via Admin CRM retention), then for each UTC weekday×hour keep only the **latest** calendar day in that slot (so a new Monday hour replaces last Monday’s same hour without clearing the rest of the column). Idle Replay gray counts come from `GET /api/schedule-replay-slot-counts` (usable windows with CLOB book + Chainlink ticks + official Gamma). Tick/window files older than that retention are deleted on the recorder. Windows with a flat asset price for the whole recording are treated as bad data: deleted from Mongo + local files and omitted from Replay.
 
 **CLOB book capture (recorder process):** At each window open the recorder **REST-seeds** the YES/NO order books (and again ~30s before rollover for the next window), then writes an opening `clob-book` tick stamped at `windowStart` so Replay sees early Asks (including cheap ~1¢ sides) that Live Demo can fill on. While the window is open it keeps sampling books on the recorder poll (~500ms) whenever the book changes, plus every WebSocket update; at finalize it forces a last in-window book tick. Identical consecutive books are not rewritten. Chainlink ticks are unchanged.
 
 **Recording recovery (recorder process):** If Chainlink for an asset goes silent (~20s), RTDS reconnects and the active window for that asset is discarded. A health watchdog also covers two silence cases (after a short grace at window open): ~**60s** with **no book and no Chainlink** ticks discards that window, force-reconnects Chainlink + CLOB, and restarts the stuck series’ recorder; ~**20s** with **no CLOB book ticks** while Chainlink is still flowing force-reconnects only the market WebSocket and re-subscribes tokens (keeps the window so Chainlink capture continues). Window rollover (official close wait + save) always clears the in-progress finalize lock so a failed save cannot stall Recording forever.
 
-Wallet credentials in [Settings](doc:settings) unlock Market/Schedule and live signing.
+Wallet credentials in [Settings](doc:settings) unlock Market, Schedule, and Replay, and live signing.

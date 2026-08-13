@@ -3,8 +3,8 @@ import { getMongoClient, getMongoDbName } from "./mongo-client.js";
 
 const COLLECTION = "recorded_windows";
 
-/** Slim window summary fields used by the heatmap (Mongo read-only consumer). */
-export interface HeatmapRecordedWindow {
+/** Slim window summary used by Replay slot counts and Open Replay (Mongo). */
+export interface RecordedWindowSummary {
   series: string;
   windowStart: number;
   windowEnd: number;
@@ -61,7 +61,7 @@ type MongoRecordedWindowDoc = {
   };
 };
 
-const HEATMAP_PROJECTION = {
+const WINDOW_SUMMARY_PROJECTION = {
   _id: 1,
   series: 1,
   marketSeries: 1,
@@ -110,7 +110,7 @@ function savedAtToString(value: string | Date | undefined, fallback: number): st
   return String(fallback);
 }
 
-function normalizeDoc(doc: MongoRecordedWindowDoc): HeatmapRecordedWindow | null {
+function normalizeDoc(doc: MongoRecordedWindowDoc): RecordedWindowSummary | null {
   const nested = doc.window;
   const series = seriesFromDoc(doc);
   const windowStart = doc.windowStart ?? nested?.windowStart;
@@ -120,7 +120,7 @@ function normalizeDoc(doc: MongoRecordedWindowDoc): HeatmapRecordedWindow | null
   const savedAt = savedAtToString(doc.savedAt ?? nested?.savedAt, windowStart);
   const windowOutcome = doc.windowOutcome ?? nested?.windowOutcome;
 
-  const out: HeatmapRecordedWindow = {
+  const out: RecordedWindowSummary = {
     series,
     windowStart,
     windowEnd,
@@ -153,7 +153,7 @@ function normalizeDoc(doc: MongoRecordedWindowDoc): HeatmapRecordedWindow | null
   return out;
 }
 
-/** Upsert slim heatmap fields for one finished window (recorder role). */
+/** Upsert slim recorded-window fields for one finished window (recorder role). */
 export async function upsertRecordedWindowSummary(
   series: string,
   window: {
@@ -230,7 +230,7 @@ export async function deleteRecordedWindowSummary(
     .deleteOne({ _id });
 }
 
-/** Delete Mongo heatmap summaries older than cutoff (optionally one series). */
+/** Delete Mongo recorded_windows summaries older than cutoff (optionally one series). */
 export async function deleteRecordedWindowsBefore(
   cutoffUtc: number,
   series?: string,
@@ -248,13 +248,13 @@ export async function deleteRecordedWindowsBefore(
 }
 
 /**
- * Fetch rolling-window summaries for the heatmap.
- * Projects only heatmap fields — never ticks.
+ * Fetch rolling-window summaries for Replay slot counts.
+ * Projects only summary fields — never ticks.
  */
 export async function listRecordedWindowsSince(
   cutoffUtc: number,
   series?: string,
-): Promise<HeatmapRecordedWindow[]> {
+): Promise<RecordedWindowSummary[]> {
   const mongo = await getMongoClient();
   const filter: { windowStart: { $gte: number }; series?: string } = {
     windowStart: { $gte: cutoffUtc },
@@ -263,27 +263,27 @@ export async function listRecordedWindowsSince(
   const docs = await mongo
     .db(getMongoDbName())
     .collection<MongoRecordedWindowDoc>(COLLECTION)
-    .find(filter, { projection: HEATMAP_PROJECTION })
+    .find(filter, { projection: WINDOW_SUMMARY_PROJECTION })
     .sort({ windowStart: 1 })
     .batchSize(5_000)
     .toArray();
 
-  const out: HeatmapRecordedWindow[] = [];
+  const out: RecordedWindowSummary[] = [];
   for (const doc of docs) {
     const normalized = normalizeDoc(doc);
     if (!normalized) continue;
-    // Legacy docs may lack `series` on the filter field — keep heatmap-wide scans intact.
+    // Legacy docs may lack `series` on the filter field — keep series-wide scans intact.
     if (series && normalized.series !== series) continue;
     out.push(normalized);
   }
   return out;
 }
 
-/** One window summary for client heatmap patch (Mongo only). */
+/** One window summary from Mongo. */
 export async function getRecordedWindowSummary(
   series: string,
   windowStart: number,
-): Promise<HeatmapRecordedWindow | null> {
+): Promise<RecordedWindowSummary | null> {
   const ser = String(series || "").trim();
   const ws = Math.floor(Number(windowStart));
   if (!ser || !Number.isFinite(ws) || ws <= 0) return null;
@@ -291,7 +291,7 @@ export async function getRecordedWindowSummary(
   const doc = await mongo
     .db(getMongoDbName())
     .collection<MongoRecordedWindowDoc>(COLLECTION)
-    .findOne({ _id: `${ser}:${ws}` }, { projection: HEATMAP_PROJECTION });
+    .findOne({ _id: `${ser}:${ws}` }, { projection: WINDOW_SUMMARY_PROJECTION });
   if (!doc) return null;
   const normalized = normalizeDoc(doc);
   if (!normalized || normalized.series !== ser) return null;

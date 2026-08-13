@@ -181,10 +181,6 @@ export class RecordingManager {
     return this.recorders.get(series)?.getActiveWindow() ?? null;
   }
 
-  getTraderStats(series: string) {
-    return this.recorders.get(series)?.getTraderStats() ?? null;
-  }
-
   stopAll(): void {
     if (this.stallUnsub) {
       this.stallUnsub();

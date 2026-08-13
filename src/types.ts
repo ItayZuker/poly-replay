@@ -49,16 +49,6 @@ export interface RecordedWindowDocument {
   chainlinkCount?: number;
 }
 
-export interface WalletRegistryEntry {
-  address: string;
-  firstSeenAt: number;
-  lastSeenAt: number;
-  markets: Record<string, number>;
-  totalSightings: number;
-}
-
-export type WalletRegistry = Record<string, WalletRegistryEntry>;
-
 /** Raw CLOB websocket payload for audit replay. */
 export interface ClobRawTickDocument {
   _id: string;
@@ -135,23 +125,6 @@ export interface ReplayTickDocument {
 
 /** @deprecated Use BookTickDocument */
 export type TickDocument = BookTickDocument;
-
-export interface HeatmapWindowDocument {
-  _id: string;
-  windowStart: number;
-  windowEnd: number;
-  savedAt: string;
-  ptbCrossings?: number;
-  assetRange?: number;
-  minAssetPrice?: number;
-  maxAssetPrice?: number;
-  rangeTop?: number;
-  rangeBottom?: number;
-  uniqueTraders?: number;
-  newWallets?: number;
-  knownWallets?: number;
-  windowOutcome?: WindowOutcome;
-}
 
 export interface WindowHitRecord {
   windowStart: number;

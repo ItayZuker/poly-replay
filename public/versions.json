@@ -1,6 +1,11 @@
 {
-    "current": "1.68.21",
+    "current": "1.69.0",
     "releases": [
+        {
+            "version": "1.69.0",
+            "releasedAt": "2026-08-13T08:29:50.455Z",
+            "notes": "Remove Heatmap. Header tabs are Market | Schedule | Replay (Schedule is live; Replay is its own page). Docs updated."
+        },
         {
             "version": "1.68.21",
             "releasedAt": "2026-08-13T07:12:39.387Z",

@@ -22,8 +22,6 @@ import {
 import { pickDisplayPrice, pickTriggerPrice } from "./quote-price.js";
 import { takeLevels } from "./book-depth.js";
 import { makeStoredTickId, roundTo4 } from "./tick-compact.js";
-import { enrichWindowWithUniqueTraders, listUniqueTradersForWindow, resolveConditionIdForSlug } from "./market-participants.js";
-import { classifyWindowTraders } from "./wallet-registry.js";
 import {
   createWindowDynamicsTracker,
   finalizeWindowDynamics,
@@ -52,7 +50,6 @@ import {
   saveRecordedWindow,
 } from "./db/recorded-window-repository.js";
 import { upsertRecordedWindowSummary } from "./db/recorded-window-mongo-repository.js";
-import { ingestRecordedWindow } from "./heatmap-service.js";
 import { pruneColdMarketData } from "./db/tick-archive.js";
 import {
   marketWindowsDir,
@@ -63,7 +60,6 @@ import path from "path";
 
 const TICK_FLUSH_MS = 1_500;
 const POLL_MS = 500;
-const TRADERS_POLL_MS = 15_000;
 /** Subscribe the next window's CLOB tokens this many seconds before current end. */
 const NEXT_WINDOW_PREFETCH_SEC = 30;
 /** No book/chainlink ticks into the active window for this long → health recovery. */
@@ -82,20 +78,12 @@ const OFFICIAL_RESOLVE_POLL_MS = 2_000;
 
 type StateChangeListener = (series: string) => void;
 
-export interface TraderStatsSnapshot {
-  uniqueTraders?: number;
-  newWallets?: number;
-  knownWallets?: number;
-}
-
 /** Records CLOB book ticks and Chainlink asset ticks in separate collections. */
 export class MarketRecorder {
   private readonly market: MarketDocument;
   private readonly onStateChange: StateChangeListener | null;
   private interval: ReturnType<typeof setInterval> | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private tradersPollTimer: ReturnType<typeof setInterval> | null = null;
-  private tradersPollInFlight = false;
   private clobRawUnsub: (() => void) | null = null;
   private chainlinkUnsub: (() => void) | null = null;
   private sampleInFlight = false;
@@ -118,7 +106,6 @@ export class MarketRecorder {
   private clobRawCount = 0;
   private clobBookCount = 0;
   private chainlinkCount = 0;
-  private lastTraderStats: TraderStatsSnapshot | null = null;
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
   /** True once Gamma eventMetadata PTB/close were applied — stop following crypto-price open. */
   private gammaSettled = false;
@@ -202,17 +189,6 @@ export class MarketRecorder {
     return this.activeWindow ? { ...this.activeWindow } : null;
   }
 
-  getTraderStats(): TraderStatsSnapshot | null {
-    if (this.activeWindow) {
-      return {
-        uniqueTraders: this.activeWindow.uniqueTraders,
-        newWallets: this.activeWindow.newWallets,
-        knownWallets: this.activeWindow.knownWallets,
-      };
-    }
-    return this.lastTraderStats;
-  }
-
   isRunning(): boolean {
     return this.interval != null;
   }
@@ -261,7 +237,6 @@ export class MarketRecorder {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
-    this.stopTradersPoll();
     if (this.clobRawUnsub) {
       this.clobRawUnsub();
       this.clobRawUnsub = null;
@@ -319,7 +294,6 @@ export class MarketRecorder {
   }
 
   private resetActiveWindow(): void {
-    this.stopTradersPoll();
     this.activeWindow = null;
     this.activeYesTokenId = null;
     this.activeNoTokenId = null;
@@ -334,7 +308,7 @@ export class MarketRecorder {
     this.clobRawCount = 0;
     this.clobBookCount = 0;
     this.chainlinkCount = 0;
-    this.lastTraderStats = null;
+    this.lastBookFingerprint = null;
     this.assetPrices = {};
     this.gammaSettled = false;
     this.prefetchedNextWindowStart = null;
@@ -596,9 +570,6 @@ export class MarketRecorder {
       assetRange: win.assetRange,
       rangeTop: win.rangeTop,
       rangeBottom: win.rangeBottom,
-      uniqueTraders: win.uniqueTraders,
-      newWallets: win.newWallets,
-      knownWallets: win.knownWallets,
       tickCount: this.clobRawCount + this.clobBookCount + this.chainlinkCount,
       clobRawCount: this.clobRawCount,
       clobBookCount: this.clobBookCount,
@@ -613,19 +584,12 @@ export class MarketRecorder {
         ptbCrossings: doc.ptbCrossings,
         rangeTop: doc.rangeTop,
         rangeBottom: doc.rangeBottom,
-        uniqueTraders: doc.uniqueTraders,
-        newWallets: doc.newWallets,
         windowOutcome: doc.windowOutcome,
         minAssetPrice: doc.minAssetPrice,
         maxAssetPrice: doc.maxAssetPrice,
         assetRange: doc.assetRange,
         prevCloseAsset: ptb,
         assetPrice: doc.assetPrice,
-      });
-      ingestRecordedWindow(this.market._id, {
-        _id: String(doc.windowStart),
-        updatedAt: savedAt,
-        ...doc,
       });
     } catch (err) {
       logService.warn(
@@ -658,11 +622,6 @@ export class MarketRecorder {
         windowStart: doc.windowStart,
         windowEnd: doc.windowEnd,
         savedAt,
-      });
-      ingestRecordedWindow(this.market._id, {
-        _id: String(doc.windowStart),
-        updatedAt: savedAt,
-        ...doc,
       });
     } catch (err) {
       logService.warn(
@@ -716,7 +675,6 @@ export class MarketRecorder {
     this.clobBookBuffer = [];
     this.chainlinkTickBuffer = [];
     this.lastBookFingerprint = null;
-    this.lastTraderStats = null;
     this.assetPrices = {};
     this.gammaSettled = false;
     const now = Date.now();
@@ -724,75 +682,11 @@ export class MarketRecorder {
     this.lastUsefulTickAtMs = now;
     this.lastClobTickAtMs = now;
     void ensureWindowTickDir(this.market._id, windowStart);
-    this.startTradersPoll();
     void this.persistWindowStub();
     logService.info(
       "recorder",
       `Window started ${new Date(windowStart * 1000).toLocaleTimeString()} for ${this.market._id}`,
     );
-  }
-
-  private stopTradersPoll(): void {
-    if (this.tradersPollTimer) {
-      clearInterval(this.tradersPollTimer);
-      this.tradersPollTimer = null;
-    }
-  }
-
-  private startTradersPoll(): void {
-    this.stopTradersPoll();
-    void this.refreshUniqueTraders();
-    this.tradersPollTimer = setInterval(() => {
-      void this.refreshUniqueTraders();
-    }, TRADERS_POLL_MS);
-  }
-
-  private async refreshUniqueTraders(): Promise<void> {
-    if (!this.activeWindow || this.tradersPollInFlight) return;
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (nowSec >= this.activeWindow.windowEnd) return;
-
-    const windowStart = this.activeWindow.windowStart;
-    this.tradersPollInFlight = true;
-    try {
-      let conditionId = this.activeWindow.conditionId;
-      if (!conditionId && this.activeWindow.slug) {
-        conditionId = await resolveConditionIdForSlug(this.activeWindow.slug);
-        if (conditionId && this.activeWindow?.windowStart === windowStart) {
-          this.activeWindow.conditionId = conditionId;
-        }
-      }
-      if (!conditionId || this.activeWindow?.windowStart !== windowStart) return;
-
-      const wallets = await listUniqueTradersForWindow({
-        conditionId,
-        windowStart: this.activeWindow.windowStart,
-        windowEnd: this.activeWindow.windowEnd,
-        slug: this.activeWindow.slug,
-        waitForSettle: false,
-      });
-      const { newWallets, knownWallets } = await classifyWindowTraders(wallets);
-
-      if (this.activeWindow?.windowStart !== windowStart) return;
-
-      const count = wallets.length;
-      const changed =
-        this.activeWindow.uniqueTraders !== count ||
-        this.activeWindow.newWallets !== newWallets ||
-        this.activeWindow.knownWallets !== knownWallets;
-
-      if (changed) {
-        this.activeWindow.uniqueTraders = count;
-        this.activeWindow.newWallets = newWallets;
-        this.activeWindow.knownWallets = knownWallets;
-        this.onStateChange?.(this.market._id);
-      }
-    } catch (err) {
-      logService.error("recorder", `Trader poll failed (${this.market._id}): ${String(err)}`);
-    } finally {
-      this.tradersPollInFlight = false;
-    }
   }
 
   private async captureEndPrices(): Promise<void> {
@@ -975,8 +869,6 @@ export class MarketRecorder {
       ptbCrossings: nextDoc.ptbCrossings,
       rangeTop: nextDoc.rangeTop,
       rangeBottom: nextDoc.rangeBottom,
-      uniqueTraders: nextDoc.uniqueTraders,
-      newWallets: nextDoc.newWallets,
       windowOutcome: nextDoc.windowOutcome,
       minAssetPrice: nextDoc.minAssetPrice,
       maxAssetPrice: nextDoc.maxAssetPrice,
@@ -988,11 +880,6 @@ export class MarketRecorder {
         "recorder",
         `Mongo recorded_windows upsert failed (${this.market._id}): ${String(err)}`,
       );
-    });
-    ingestRecordedWindow(this.market._id, {
-      _id: String(nextDoc.windowStart),
-      updatedAt: nextDoc.savedAt ?? new Date().toISOString(),
-      ...nextDoc,
     });
     this.onStateChange?.(this.market._id);
   }
@@ -1157,8 +1044,6 @@ export class MarketRecorder {
         return;
       }
 
-      record = await enrichWindowWithUniqueTraders(record, this.market._id, { force: true });
-
       const savedAt = record.savedAt ?? new Date().toISOString();
       const recordedDoc = {
         windowStart: record.windowStart,
@@ -1179,9 +1064,6 @@ export class MarketRecorder {
         assetRange: record.assetRange,
         rangeTop: record.rangeTop,
         rangeBottom: record.rangeBottom,
-        uniqueTraders: record.uniqueTraders,
-        newWallets: record.newWallets,
-        knownWallets: record.knownWallets,
         tickCount: this.clobRawCount + this.clobBookCount + this.chainlinkCount,
         clobRawCount: this.clobRawCount,
         clobBookCount: this.clobBookCount,
@@ -1195,8 +1077,6 @@ export class MarketRecorder {
         ptbCrossings: recordedDoc.ptbCrossings,
         rangeTop: recordedDoc.rangeTop,
         rangeBottom: recordedDoc.rangeBottom,
-        uniqueTraders: recordedDoc.uniqueTraders,
-        newWallets: recordedDoc.newWallets,
         windowOutcome: recordedDoc.windowOutcome,
         minAssetPrice: recordedDoc.minAssetPrice,
         maxAssetPrice: recordedDoc.maxAssetPrice,
@@ -1208,11 +1088,6 @@ export class MarketRecorder {
           "recorder",
           `Mongo recorded_windows upsert failed (${this.market._id}): ${String(err)}`,
         );
-      });
-      ingestRecordedWindow(this.market._id, {
-        _id: String(record.windowStart),
-        updatedAt: savedAt,
-        ...recordedDoc,
       });
 
       // Immediate Gamma settle at finalize: stamp official close tip (same as background path).
@@ -1236,16 +1111,10 @@ export class MarketRecorder {
 
       await this.pruneOldData();
 
-      this.lastTraderStats = {
-        uniqueTraders: record.uniqueTraders,
-        newWallets: record.newWallets,
-        knownWallets: record.knownWallets,
-      };
-
       this.finalizedWindowStarts.add(windowStart);
       logService.success(
         "recorder",
-        `Window saved ${new Date(windowStart * 1000).toLocaleTimeString()} (${this.clobRawCount} raw, ${this.clobBookCount} book, ${this.chainlinkCount} chainlink, ${record.newWallets ?? 0} new wallets)`,
+        `Window saved ${new Date(windowStart * 1000).toLocaleTimeString()} (${this.clobRawCount} raw, ${this.clobBookCount} book, ${this.chainlinkCount} chainlink)`,
       );
       this.onStateChange?.(this.market._id);
 

@@ -12,7 +12,7 @@ One codebase, two process roles:
 ## Requirements
 
 - Node.js 20+
-- MongoDB (users, setups, schedule, markets, heatmap summaries)
+- MongoDB (users, setups, schedule, markets, recorded windows)
 - Wallet credentials for live trading (optional for recorder-only)
 
 ## Setup

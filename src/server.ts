@@ -95,12 +95,10 @@ import {
 } from "./db/user-trigger-repository.js";
 import { closeMongoClient } from "./db/mongo-client.js";
 import {
-  getHeatmapState,
-  getHeatmapWindowPatch,
   getReplaySlotWindowCounts,
   listActiveReplaySlotWindows,
   replayUsableWindowKey,
-} from "./heatmap-service.js";
+} from "./recorded-window-index.js";
 import type {
   EnrichedLiveWindowState,
   SimSetup,
@@ -127,7 +125,6 @@ import {
 } from "./schedule-backtest-service.js";
 import { buildDemoTriggerPlayPayload, buildLiveHourPlayPayload } from "./schedule-live-play.js";
 import { purgeFlatPriceRecordings } from "./bad-recording-cleanup.js";
-import { ensureWalletRegistryReady } from "./wallet-registry.js";
 import {
   authenticateUser,
   deleteUserById,
@@ -1782,35 +1779,6 @@ app.delete("/api/trading-setups/:id", async (req, res) => {
   }
 });
 
-app.get("/api/heatmap", async (req, res) => {
-  try {
-    const series = parseSeriesParam(req);
-    res.json(await getHeatmapState(series));
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-/** One finished window — client merges into its heatmap cache (no full reload). */
-app.get("/api/heatmap/window", async (req, res) => {
-  try {
-    const series = parseSeriesParam(req);
-    const windowStart = Math.floor(Number(req.query.windowStart));
-    if (!Number.isFinite(windowStart) || windowStart <= 0) {
-      res.status(400).json({ error: "windowStart required" });
-      return;
-    }
-    const patch = await getHeatmapWindowPatch(series, windowStart);
-    if (!patch) {
-      res.status(404).json({ error: "Window not found" });
-      return;
-    }
-    res.json(patch);
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
 /** Replay Schedule: usable recorded window counts per UTC weekday×hour (latest day per slot). */
 app.get("/api/schedule-replay-slot-counts", async (req, res) => {
   try {
@@ -2789,7 +2757,7 @@ app.get("/api/stream", (req, res) => {
       );
       res.write(`event: log-history\ndata: ${JSON.stringify(logService.getRecent())}\n\n`);
       const series = displayService.getState().series || "btc-5m";
-      // Heatmap is client-cached + fetched via REST (no SSE full dump / dyno RAM cache).
+      // Replay slot counts and live hour stats are REST + browser cache.
       if (userId) {
         const placements = await listSchedulePlacements(userId, series, "live");
         res.write(`event: schedule-placements\ndata: ${JSON.stringify({ mode: "live", placements })}\n\n`);
@@ -2812,10 +2780,6 @@ async function main(): Promise<void> {
     await ensureSessionIndexes();
     await ensureTriggerModeTimelineIndexes();
     await ensureDefaultUser();
-    // Wallet address presence (New wallets counts) only on the recorder — not Live executor.
-    if (canProcessRecord()) {
-      await ensureWalletRegistryReady();
-    }
     await maybeBootstrapDefaultPassword();
     await maybeBootstrapAdminFromEnv();
     const bootstrapId = await getBootstrapUserId();
@@ -2832,8 +2796,6 @@ async function main(): Promise<void> {
     // Trading blob only (no priceHistory) — coalesced so GTD sync can't flood SSE.
     scheduleTradingPush();
   });
-  // Per-address wallet list/registry watcher removed — heatmap keeps counts only
-  // (MarketRecorder finalize writes uniqueTraders / newWallets).
 
   if (isTradingExecutor()) {
     logService.info("server", "TRADING_EXECUTOR enabled — this process may place orders");
@@ -2868,7 +2830,7 @@ async function main(): Promise<void> {
     broadcast("account", status, userId);
   });
 
-  // Drop stuck/flat Chainlink windows (Mongo + files); heatmap is on-demand from Mongo.
+  // Drop stuck/flat Chainlink windows (Mongo + files).
   await purgeFlatPriceRecordings().catch((err) => {
     logService.warn("recorder", `Flat-price purge failed: ${String(err)}`);
   });

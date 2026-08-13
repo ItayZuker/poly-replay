@@ -5,7 +5,5 @@ Phase **setups**, schedule **placement cards**, **Auto Trade**, and **Use Schedu
 Trading and Schedule stats are **Trigger-only**:
 
 - Create and arm **Market Triggers** on [Market](doc:market)
-- Live **Schedule** shows a stats line in every UTC hour cell — [Schedule](doc:schedule)
-- **Replay** uses local Replay Triggers + **Run** on the same hour grid
-
-Heatmap is unchanged.
+- **Schedule** shows a stats line in every UTC hour cell — [Schedule](doc:schedule)
+- **Replay** (its own header tab) uses local Replay Triggers + **Run** on the same hour grid

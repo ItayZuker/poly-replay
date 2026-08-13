@@ -1,6 +1,6 @@
 {
   "name": "poly-simulator",
-  "version": "1.68.21",
+  "version": "1.69.0",
   "description": "Schedule-driven Polymarket up/down trading with optional recording and Replay",
   "type": "module",
   "engines": {
@@ -14,7 +14,6 @@
     "typecheck": "tsc --noEmit",
     "backfill:outcomes": "tsx src/scripts/backfill-window-outcomes.ts",
     "sync:mongo-outcomes": "tsx src/scripts/sync-mongo-outcomes-from-disk.ts",
-    "migrate:heatmap-to-windows": "tsx src/scripts/migrate-heatmap-to-windows.ts",
     "set-password": "tsx src/scripts/set-user-password.ts",
     "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",
     "repair:false-wins": "tsx src/scripts/repair-false-wins.ts",

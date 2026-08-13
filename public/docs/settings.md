@@ -18,7 +18,7 @@ Feed **Latency (ms)** is shown in the Settings page header (not in this tab).
 
 ### Credentials
 
-Both are required to unlock Market and Schedule:
+Both are required to unlock Market, Schedule, and Replay:
 
 | Field | Meaning |
 |-------|---------|
@@ -29,7 +29,7 @@ In-app info next to each field shows where to find values on Polymarket.
 
 ## Wallet gate
 
-If either credential is missing, Market and Schedule stay locked until both are saved.
+If either credential is missing, Market, Schedule, and Replay stay locked until both are saved.
 
 ## Safety
 

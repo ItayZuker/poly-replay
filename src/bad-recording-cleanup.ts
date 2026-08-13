@@ -9,19 +9,17 @@ import {
   deleteRecordedWindowFile,
   listRecordedWindows,
 } from "./db/recorded-window-repository.js";
-import { forgetRecordedWindow } from "./heatmap-service.js";
 import { getWeekHistoryCutoffUtcSec } from "./day-hour-slots.js";
 import { logService } from "./log-service.js";
 import { isFlatPriceWindow } from "./window-dynamics.js";
 import type { MarketDocument } from "./types.js";
 
-/** Remove a bad window from Mongo, local files, ticks, and heatmap memory. */
+/** Remove a bad window from Mongo, local files, and ticks. */
 export async function discardBadRecording(
   series: string,
   windowStart: number,
   reason: string,
 ): Promise<void> {
-  forgetRecordedWindow(series, windowStart);
   await deleteRecordedWindowSummary(series, windowStart).catch(() => undefined);
   await deleteRecordedWindowFile(series, windowStart).catch(() => undefined);
   const ticksDir = windowTicksDir(series, windowStart);
