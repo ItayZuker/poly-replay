@@ -19,6 +19,14 @@ import { simulatorService } from "./simulator-service.js";
 import { liveTradingRegistry } from "./live-trading-service.js";
 import { resolveTakerFeeParams } from "./taker-fee.js";
 import { logService } from "./log-service.js";
+import {
+  applyOfficialDisplayToState,
+  fetchOfficialWindowResolution,
+} from "./official-window-resolution.js";
+import {
+  assetGapOrUnset,
+  roundPolymarketAssetPriceMaybe,
+} from "./polymarket-display-price.js";
 import type { LiveWindowState } from "./types.js";
 
 type UpdateListener = (state: LiveWindowState) => void;
@@ -41,8 +49,8 @@ export class DisplayService {
   private prefetchedNoTokenId: string | null = null;
   private nextWindowPrefetchInFlight = false;
   private lastPtbSide: PtbSide | null = null;
-  /** True once this window’s Polymarket crypto-price openPrice was applied. */
-  private officialOpenLocked = false;
+  /** True once Gamma PTB/close were applied for this window (stop following live ticks). */
+  private officialSettled = false;
 
   private emptyState(series: string): LiveWindowState {
     const now = Math.floor(Date.now() / 1000);
@@ -99,6 +107,7 @@ export class DisplayService {
     this.prefetchedNextWindowStart = null;
     this.prefetchedYesTokenId = null;
     this.prefetchedNoTokenId = null;
+    this.officialSettled = false;
     void this.collectSample();
   }
 
@@ -176,14 +185,17 @@ export class DisplayService {
   }
 
   private updateAssetFromChainlink(): void {
+    if (this.officialSettled) return;
     const { asset } = parseMarketSeries(this.series);
     const live = chainlinkPriceFeed.getLivePrice(asset);
     if (!live) return;
 
-    this.state.assetPrice = live.value;
+    const current = roundPolymarketAssetPriceMaybe(live.value);
+    if (current == null) return;
+    this.state.assetPrice = current;
+    this.state.assetGap = assetGapOrUnset(current, this.state.prevCloseAsset);
     if (this.state.prevCloseAsset != null) {
-      this.state.assetGap = live.value - this.state.prevCloseAsset;
-      const ptbSide = getPtbSide(live.value, this.state.prevCloseAsset);
+      const ptbSide = getPtbSide(current, this.state.prevCloseAsset);
       if (ptbSide != null) {
         if (this.lastPtbSide != null && this.lastPtbSide !== ptbSide) {
           this.state.ptbCrossings = (this.state.ptbCrossings ?? 0) + 1;
@@ -191,8 +203,7 @@ export class DisplayService {
         this.lastPtbSide = ptbSide;
       }
     } else {
-      // No official open yet — never invent a gap from a stale prior window.
-      this.state.assetGap = undefined;
+      // No published open yet — never invent a gap from a stale prior window.
       this.lastPtbSide = null;
     }
     // Phase / GTD scheduling must follow wall clock, not oracle stamp (which can lag
@@ -202,7 +213,7 @@ export class DisplayService {
 
     const tickSec = tickMs / 1000;
     if (tickSec >= this.state.windowStart && tickSec < this.state.windowEnd) {
-      this.state.priceHistory.push({ t: tickSec, price: live.value });
+      this.state.priceHistory.push({ t: tickSec, price: current });
       if (this.state.priceHistory.length > 2000) {
         this.state.priceHistory.splice(0, this.state.priceHistory.length - 2000);
       }
@@ -262,11 +273,12 @@ export class DisplayService {
         this.state.ptbCrossings = 0;
         this.state.bookTickSequence = 0;
         this.lastPtbSide = null;
-        // Official open only — never carry prior window PTB/gap.
+        // Never carry prior window PTB/gap.
         this.state.prevCloseAsset = undefined;
         this.state.assetGap = undefined;
         this.state.priceToBeatSource = undefined;
-        this.officialOpenLocked = false;
+        this.state.officialSettled = false;
+        this.officialSettled = false;
         logService.setActiveWindow(pair.windowStart);
         this.prefetchedNextWindowStart = null;
         this.prefetchedYesTokenId = null;
@@ -288,38 +300,61 @@ export class DisplayService {
         .then((feeParams) => simulatorService.setFeeParams(feeParams))
         .catch(() => {});
 
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (
+        !this.officialSettled &&
+        nowSec >= pair.windowEnd &&
+        pair.slug
+      ) {
+        try {
+          const official = await fetchOfficialWindowResolution(pair.slug);
+          if (official) {
+            applyOfficialDisplayToState(this.state, official);
+            this.officialSettled = true;
+            if (this.state.assetPrice != null) {
+              this.state.priceHistory.push({
+                t: pair.windowEnd,
+                price: this.state.assetPrice,
+              });
+            }
+            this.updateQuotesFromCache();
+            return;
+          }
+        } catch {
+          // Gamma not ready — keep following published open + Chainlink until it is.
+        }
+      }
+
+      if (this.officialSettled) {
+        this.updateQuotesFromCache();
+        return;
+      }
+
       const { asset, timeframe } = parseMarketSeries(this.series);
       try {
         const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
         const live = applyRtdsLivePrice(asset, prices);
-        // PTB = Polymarket crypto-price openPrice only; lock once per window.
-        if (
-          !this.officialOpenLocked &&
-          live.prevCloseAsset != null &&
-          Number.isFinite(live.prevCloseAsset)
-        ) {
+        // Follow published crypto-price openPrice until Polymarket freezes it.
+        if (live.prevCloseAsset != null && Number.isFinite(live.prevCloseAsset)) {
           this.state.prevCloseAsset = live.prevCloseAsset;
           this.state.priceToBeatSource = live.priceToBeatSource;
-          this.officialOpenLocked = true;
         }
         if (live.assetPrice != null) {
           this.state.assetPrice = live.assetPrice;
         }
-        if (this.state.assetPrice != null && this.state.prevCloseAsset != null) {
-          this.state.assetGap = this.state.assetPrice - this.state.prevCloseAsset;
-        } else {
-          this.state.assetGap = undefined;
-        }
+        this.state.assetGap = assetGapOrUnset(
+          this.state.assetPrice,
+          this.state.prevCloseAsset,
+        );
       } catch {
         const live = chainlinkPriceFeed.getLivePrice(asset);
         if (live) {
-          this.state.assetPrice = live.value;
+          this.state.assetPrice = roundPolymarketAssetPriceMaybe(live.value);
         }
-        if (this.state.prevCloseAsset != null && this.state.assetPrice != null) {
-          this.state.assetGap = this.state.assetPrice - this.state.prevCloseAsset;
-        } else {
-          this.state.assetGap = undefined;
-        }
+        this.state.assetGap = assetGapOrUnset(
+          this.state.assetPrice,
+          this.state.prevCloseAsset,
+        );
       }
 
       this.updateQuotesFromCache();

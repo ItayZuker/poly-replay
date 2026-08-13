@@ -395,6 +395,7 @@ function quotesPayloadFromState(state: ReturnType<typeof displayService.peekStat
     assetGap: state.assetGap,
     prevCloseAsset: state.prevCloseAsset,
     priceToBeatSource: state.priceToBeatSource,
+    officialSettled: state.officialSettled === true,
     yesBid: state.yesBid,
     yesAsk: state.yesAsk,
     noBid: state.noBid,

@@ -186,8 +186,10 @@ export interface LiveWindowState {
   prevCloseAsset?: number;
   assetPrice?: number;
   assetGap?: number;
-  /** Where prevCloseAsset (PTB) came from — Polymarket published window open. */
-  priceToBeatSource?: "polymarket-openPrice";
+  /** Where prevCloseAsset (PTB) came from — published crypto-price open, or Gamma after settle. */
+  priceToBeatSource?: "polymarket-openPrice" | "gamma";
+  /** True once Gamma eventMetadata PTB/close were applied for this window. */
+  officialSettled?: boolean;
   yesBid?: number;
   yesAsk?: number;
   noBid?: number;

@@ -8,6 +8,11 @@ import {
   type OfficialWindowResolution,
 } from "./official-window-resolution.js";
 import {
+  assetGapOrUnset,
+  roundPolymarketAssetPrice,
+  roundPolymarketAssetPriceMaybe,
+} from "./polymarket-display-price.js";
+import {
   fetchCurrentUpDownMarket,
   fetchCurrentUpDownMarketWithRetry,
   fetchMarketPairFromSlug,
@@ -115,8 +120,8 @@ export class MarketRecorder {
   private chainlinkCount = 0;
   private lastTraderStats: TraderStatsSnapshot | null = null;
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
-  /** True once crypto-price openPrice (or later Gamma priceToBeat) locked PTB for this window. */
-  private officialOpenLocked = false;
+  /** True once Gamma eventMetadata PTB/close were applied — stop following crypto-price open. */
+  private gammaSettled = false;
   private prefetchedNextWindowStart: number | null = null;
   private nextWindowPrefetchInFlight = false;
   /** Fingerprint of last written CLOB book tick (skip identical consecutive samples). */
@@ -331,7 +336,7 @@ export class MarketRecorder {
     this.chainlinkCount = 0;
     this.lastTraderStats = null;
     this.assetPrices = {};
-    this.officialOpenLocked = false;
+    this.gammaSettled = false;
     this.prefetchedNextWindowStart = null;
     this.nextWindowPrefetchInFlight = false;
     this.lastBookFingerprint = null;
@@ -505,7 +510,7 @@ export class MarketRecorder {
   private recordChainlinkTick(): void {
     const { asset } = parseMarketSeries(this.market._id);
     const live = chainlinkPriceFeed.getLivePrice(asset);
-    if (!live || !this.activeWindow) return;
+    if (!live || !this.activeWindow || this.gammaSettled) return;
 
     this.applyAssetPrice(live.value);
     const tMs = live.timestampMs || Date.now();
@@ -516,19 +521,15 @@ export class MarketRecorder {
   private applyAssetPrice(assetPrice?: number): void {
     if (!this.activeWindow) return;
 
-    if (assetPrice != null && Number.isFinite(assetPrice)) {
-      this.activeWindow.assetPrice = assetPrice;
-      this.assetPrices.assetPrice = assetPrice;
+    const current = roundPolymarketAssetPriceMaybe(assetPrice);
+    if (current != null) {
+      this.activeWindow.assetPrice = current;
+      this.assetPrices.assetPrice = current;
     }
-    if (
-      this.activeWindow.assetPrice != null &&
-      this.activeWindow.prevCloseAsset != null
-    ) {
-      this.activeWindow.assetGap =
-        this.activeWindow.assetPrice - this.activeWindow.prevCloseAsset;
-    } else {
-      this.activeWindow.assetGap = undefined;
-    }
+    this.activeWindow.assetGap = assetGapOrUnset(
+      this.activeWindow.assetPrice,
+      this.activeWindow.prevCloseAsset,
+    );
 
     updateWindowDynamics(
       this.activeWindow,
@@ -539,38 +540,39 @@ export class MarketRecorder {
   }
 
   /**
-   * Lock PTB from Polymarket crypto-price openPrice once per window.
-   * Persists to disk/Mongo when first set; ignores later openPrice changes.
+   * Follow Polymarket crypto-price openPrice until they freeze it (or Gamma settles).
+   * Persists when the published open actually changes.
    */
-  private tryLockOfficialOpen(openPrice?: number): boolean {
-    if (!this.activeWindow || this.officialOpenLocked) return false;
-    if (openPrice == null || !Number.isFinite(openPrice)) return false;
+  private tryApplyPublishedOpen(openPrice?: number): boolean {
+    if (!this.activeWindow || this.gammaSettled) return false;
+    const ptb = roundPolymarketAssetPriceMaybe(openPrice);
+    if (ptb == null) return false;
+    if (this.activeWindow.prevCloseAsset === ptb) return false;
 
-    const ptb = roundTo4(openPrice);
-    this.officialOpenLocked = true;
+    const first = this.activeWindow.prevCloseAsset == null;
     this.activeWindow.prevCloseAsset = ptb;
     this.assetPrices.prevCloseAsset = ptb;
     this.applyAssetPrice(this.assetPrices.assetPrice);
     void this.persistWindowOpenPtb(ptb);
     logService.info(
       "recorder",
-      `Official open locked for ${this.market._id} @ ${ptb}`,
+      `${first ? "Published PTB" : "Published PTB updated"} for ${this.market._id} @ ${ptb}`,
     );
     return true;
   }
 
-  /** Gamma settle may replace PTB with eventMetadata.priceToBeat. */
+  /** Gamma settle replaces PTB/Current with eventMetadata.priceToBeat / finalPrice. */
   private applyGammaPtb(priceToBeat?: number): void {
     if (!this.activeWindow) return;
-    if (priceToBeat == null || !Number.isFinite(priceToBeat)) return;
-    const ptb = roundTo4(priceToBeat);
-    this.officialOpenLocked = true;
+    const ptb = roundPolymarketAssetPriceMaybe(priceToBeat);
+    if (ptb == null) return;
+    this.gammaSettled = true;
     this.activeWindow.prevCloseAsset = ptb;
     this.assetPrices.prevCloseAsset = ptb;
     this.applyAssetPrice(this.assetPrices.assetPrice ?? this.activeWindow.assetPrice);
   }
 
-  /** Upsert window summary with locked open PTB (may run before finalize). */
+  /** Upsert window summary with published open PTB (may run before finalize). */
   private async persistWindowOpenPtb(ptb: number): Promise<void> {
     if (!this.activeWindow) return;
     const win = this.activeWindow;
@@ -716,7 +718,7 @@ export class MarketRecorder {
     this.lastBookFingerprint = null;
     this.lastTraderStats = null;
     this.assetPrices = {};
-    this.officialOpenLocked = false;
+    this.gammaSettled = false;
     const now = Date.now();
     this.windowBeganAtMs = now;
     this.lastUsefulTickAtMs = now;
@@ -812,16 +814,17 @@ export class MarketRecorder {
       if (official) {
         this.applyAssetPrice(official.finalPrice);
         this.applyGammaPtb(official.priceToBeat);
+        this.gammaSettled = true;
         this.activeWindow.windowOutcome = official.outcome;
         if (official.yesPrice != null) this.activeWindow.yesPrice = official.yesPrice;
         if (official.noPrice != null) this.activeWindow.noPrice = official.noPrice;
         return;
       }
 
-      // Lock official open if available; never invent PTB. Leave outcome unset for Gamma.
+      // Follow published open if available; never invent PTB. Leave outcome unset for Gamma.
       const prices = await getPolymarketWindowAssetPricesForPair(asset, timeframe, pair);
       this.applyAssetPrice(prices.assetPrice);
-      this.tryLockOfficialOpen(prices.prevCloseAsset);
+      this.tryApplyPublishedOpen(prices.prevCloseAsset);
       logService.info(
         "recorder",
         `Gamma not ready for ${this.activeWindow.slug}; saving without windowOutcome (background poll ≤20m)`,
@@ -905,10 +908,13 @@ export class MarketRecorder {
       return;
     }
     // Always apply Gamma outcome + priceToBeat (may refine a prior live open).
-    const nextAsset = official.finalPrice ?? existing.assetPrice;
+    const nextAsset =
+      official.finalPrice != null
+        ? roundPolymarketAssetPrice(official.finalPrice)
+        : existing.assetPrice;
     const nextPtb =
       official.priceToBeat != null && Number.isFinite(official.priceToBeat)
-        ? roundTo4(official.priceToBeat)
+        ? roundPolymarketAssetPrice(official.priceToBeat)
         : existing.prevCloseAsset;
     const nextGap =
       nextAsset != null && nextPtb != null ? roundTo4(nextAsset - nextPtb) : existing.assetGap;
@@ -1358,7 +1364,7 @@ export class MarketRecorder {
 
     if (this.activeWindow && pair.windowStart === this.activeWindow.windowStart) {
       this.applyAssetPrice(assetPrice);
-      this.tryLockOfficialOpen(prevCloseAsset);
+      this.tryApplyPublishedOpen(prevCloseAsset);
       const yesInfo = clobMarketFeed.getCachedMarketInfo(pair.yesTokenId);
       const noInfo = clobMarketFeed.getCachedMarketInfo(pair.noTokenId);
       if (yesInfo) this.activeWindow.yesPrice = pickDisplayPrice(yesInfo).price;
@@ -1394,7 +1400,7 @@ export class MarketRecorder {
             conditionId: pair.conditionId,
           });
           this.applyAssetPrice(assetPrice);
-          this.tryLockOfficialOpen(prevCloseAsset);
+          this.tryApplyPublishedOpen(prevCloseAsset);
           await this.writeOpeningSocketTicks(windowStart, pair.yesTokenId, pair.noTokenId);
         }
       } else if (this.activeWindow.windowStart === windowStart && pair.conditionId) {
