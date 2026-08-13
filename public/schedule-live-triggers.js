@@ -1,9 +1,14 @@
 /**
  * Schedule Live workspace: Trade + Active Market Triggers only.
  * No Demo/Pause badges (membership implies Trade + Active).
- * Edit opens the Market trigger editor.
+ * Eye icon opens the trigger dialog in view-only mode.
  */
 (function () {
+  const VIEW_ICON_SVG =
+    '<svg class="schedule-live-trigger-view-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+    '<path fill="currentColor" d="M8 3C4.7 3 2.1 5.1 1 8c1.1 2.9 3.7 5 7 5s5.9-2.1 7-5c-1.1-2.9-3.7-5-7-5zm0 8.2A3.2 3.2 0 1 1 8 4.8a3.2 3.2 0 0 1 0 6.4zm0-2.1a1.1 1.1 0 1 0 0-2.2 1.1 1.1 0 0 0 0 2.2z"/>' +
+    "</svg>";
+
   function listTradeActive() {
     const list =
       typeof window.listMarketTriggersForSchedule === "function"
@@ -11,10 +16,6 @@
         : [];
     if (!Array.isArray(list)) return [];
     return list.filter((t) => t && t.runMode === "trade" && t.paused === false);
-  }
-
-  function closeMenus() {
-    document.querySelectorAll(".schedule-live-trigger-menu").forEach((el) => el.remove());
   }
 
   function render() {
@@ -47,39 +48,18 @@
         title.style.paddingLeft = "6px";
       }
 
-      const menuWrap = document.createElement("div");
-      menuWrap.className = "schedule-setup-menu-wrap";
-      const menuBtn = document.createElement("button");
-      menuBtn.type = "button";
-      menuBtn.className = "schedule-setup-menu-btn";
-      menuBtn.setAttribute("aria-label", "Trigger menu");
-      menuBtn.textContent = "⋮";
-      menuBtn.addEventListener("click", (e) => {
+      const viewBtn = document.createElement("button");
+      viewBtn.type = "button";
+      viewBtn.className = "schedule-setup-menu-btn schedule-live-trigger-view-btn";
+      viewBtn.setAttribute("aria-label", "View trigger");
+      viewBtn.title = "View trigger";
+      viewBtn.innerHTML = VIEW_ICON_SVG;
+      viewBtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        closeMenus();
-        const menu = document.createElement("div");
-        menu.className = "schedule-setup-menu schedule-live-trigger-menu";
-        menu.setAttribute("role", "menu");
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "schedule-setup-menu-item";
-        editBtn.textContent = "Edit";
-        editBtn.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          closeMenus();
-          window.openTriggerEditModalForHost?.("market", trigger);
-        });
-        menu.appendChild(editBtn);
-        document.body.appendChild(menu);
-        const rect = menuBtn.getBoundingClientRect();
-        menu.style.position = "fixed";
-        menu.style.top = `${Math.round(rect.bottom + 4)}px`;
-        menu.style.left = `${Math.round(rect.right - 140)}px`;
-        menu.style.zIndex = "10000";
+        window.openTriggerViewModal?.(trigger);
       });
-      menuWrap.appendChild(menuBtn);
-      header.append(title, menuWrap);
+      header.append(title, viewBtn);
 
       const statsRow = document.createElement("div");
       statsRow.className = "trigger-card-stats";
@@ -87,7 +67,7 @@
 
       const statsBody = document.createElement("div");
       statsBody.className = "trigger-card-stats-body";
-      // Row order: Sell/Win/Loss dots → Stop Loss → P/L (right-aligned), equal gaps.
+      // Row order: Sell/Win/Loss dots → P/L (right-aligned), equal gaps.
       statsBody.innerHTML =
         '<div class="trigger-card-stats-main">' +
         '<span class="trigger-card-stats-counts">' +
@@ -95,9 +75,6 @@
         '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         "</span>" +
-        "</div>" +
-        '<div class="trigger-card-stats-exits">' +
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
         "</div>" +
         '<div class="trigger-card-stats-pnl-row">' +
         '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>' +
@@ -143,11 +120,6 @@
 
   function init() {
     render();
-    document.addEventListener("click", (e) => {
-      if (e.target?.closest?.(".schedule-live-trigger-menu")) return;
-      if (e.target?.closest?.(".schedule-setup-menu-btn")) return;
-      closeMenus();
-    });
   }
 
   window.ScheduleLiveTriggers = {
