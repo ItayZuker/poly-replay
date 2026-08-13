@@ -10,12 +10,13 @@ import { listSchedulePlacements } from "./db/schedule-placement-repository.js";
 import {
   cancelOpenOrder,
   fetchOpenOrder,
+  listOpenOrders,
   placeLimitGtdBuy,
   placeLimitGtdSell,
   placeMarketOrder,
   type MarketOrderType,
 } from "./order-service.js";
-import { fetchCurrentUpDownMarket } from "./market-pair.js";
+import { fetchCurrentUpDownMarket, fetchUpDownMarketAtWindow } from "./market-pair.js";
 import {
   getTradingClient,
   initTradingClient,
@@ -81,6 +82,7 @@ import { recordTriggerLiveStatsForSettledCard } from "./db/trigger-live-stats-re
 import { listTriggerModeEvents } from "./db/trigger-mode-timeline-repository.js";
 import {
   getUserTrigger,
+  listActiveTradeGtdTriggersForSeries,
   listUserTriggers,
   setTriggerLiveBuy,
   setTriggerLiveSell,
@@ -106,6 +108,7 @@ import {
 import { DEFAULT_MARKET_SERIES } from "./collections.js";
 import { isTradingExecutor } from "./trading-executor.js";
 import { seriesMarketHub } from "./series-market-hub.js";
+import { normalizeReplayTriggerDef } from "./trigger-replay-sim.js";
 import {
   centsToPrice,
   describeGapFilterCancelReason,
@@ -1037,6 +1040,8 @@ export class LiveTradingService {
    * Separate from phase restingBuys so First dual-rest does not collide.
    */
   private triggerRestingBuys = new Map<string, TriggerRestingBuyOrder>();
+  /** Skip re-place for a rest key until this time (insufficient balance / CLOB disable). */
+  private gtdPlaceBackoffUntil = new Map<string, number>();
   /**
    * After a Trigger GTD buy fill, latch that triggerId → sessionKey until the
    * position is confirmed sold (or the window rolls). Blocks further rests on
@@ -1106,6 +1111,10 @@ export class LiveTradingService {
 
   getUserId(): string {
     return this.userId;
+  }
+
+  hasTriggerGtdRests(): boolean {
+    return this.triggerRestingBuys.size > 0;
   }
 
   onUpdate(listener: UpdateListener): () => void {
@@ -1375,6 +1384,7 @@ export class LiveTradingService {
       });
       await this.reconcileDemoStatsFromPositionCards();
       await this.reloadTriggerLiveUiFromMongo();
+      await this.restoreTriggerGtdRestsFromClob();
       this.ensureConfirmLoop();
     } catch (err) {
       logService.warn("trading", `Failed to hydrate live stats from Mongo: ${String(err)}`);
@@ -3274,6 +3284,7 @@ export class LiveTradingService {
       await pruneExpiredSettledPositionCards(this.userId, this.boundSeries).catch(() => 0);
       const uiCards = await listPositionCards(this.userId, { series: this.boundSeries });
       this.positionCards = trimPositionCardsForUi(uiCards).filter((c) => isEngineHotPositionCard(c));
+      await this.restoreTriggerGtdRestsFromClob();
     } catch (err) {
       logService.warn("trading", `Failed to reload position cards for ${this.boundSeries}: ${String(err)}`);
     }
@@ -5092,6 +5103,120 @@ export class LiveTradingService {
     return `${triggerId}:${side}:${windowStart}`;
   }
 
+  private forgetTriggerGtdRest(key: string): void {
+    this.triggerRestingBuys.delete(key);
+    this.gtdPlaceBackoffUntil.delete(key);
+  }
+
+  private async restoreTriggerGtdRestsFromClob(): Promise<void> {
+    if (!isTradingExecutor() || !this.config.startTrading) return;
+    try {
+      const snaps = await listOpenOrders(this.userId);
+      if (snaps.length === 0) return;
+      const knownIds = new Set(
+        [...this.triggerRestingBuys.values()].map((r) => r.orderId),
+      );
+      const listed = await listActiveTradeGtdTriggersForSeries(this.boundSeries);
+      const defs = listed
+        .filter((t) => t.userId === this.userId)
+        .map((t) => normalizeReplayTriggerDef(t))
+        .filter((d): d is NonNullable<typeof d> => Boolean(d));
+      if (defs.length === 0) return;
+
+      const current = await fetchCurrentUpDownMarket(this.boundSeries).catch(() => null);
+      const windows: Array<{
+        yes: string;
+        no: string;
+        ws: number;
+        we: number;
+        key: string;
+        slug?: string;
+        conditionId?: string;
+      }> = [];
+      const curWs = Number(current?.windowStart);
+      const curWe = Number(current?.windowEnd);
+      if (current && Number.isFinite(curWs) && Number.isFinite(curWe) && curWe > curWs) {
+        windows.push({
+          yes: current.yesTokenId,
+          no: current.noTokenId,
+          ws: curWs,
+          we: curWe,
+          key: sessionKeyForWindow(this.boundSeries, curWs),
+          slug: current.slug,
+          conditionId: current.conditionId,
+        });
+        const next = await fetchUpDownMarketAtWindow(this.boundSeries, curWe).catch(
+          () => null,
+        );
+        const nextWs = Number(next?.windowStart ?? curWe);
+        const nextWe = Number(next?.windowEnd ?? curWe + (curWe - curWs));
+        if (next && Number.isFinite(nextWs) && Number.isFinite(nextWe) && nextWe > nextWs) {
+          windows.push({
+            yes: next.yesTokenId,
+            no: next.noTokenId,
+            ws: nextWs,
+            we: nextWe,
+            key: sessionKeyForWindow(this.boundSeries, nextWs),
+            slug: next.slug,
+            conditionId: next.conditionId,
+          });
+        }
+      }
+
+      let attached = 0;
+      for (const snap of snaps) {
+        if (knownIds.has(snap.orderId)) continue;
+        if (String(snap.side || "").toLowerCase() !== "buy") continue;
+        for (const win of windows) {
+          const side: "up" | "down" | null =
+            snap.assetId && snap.assetId === win.yes
+              ? "up"
+              : snap.assetId && snap.assetId === win.no
+                ? "down"
+                : null;
+          if (!side) continue;
+          const def = defs.find((d) => {
+            const limit = Math.max(0.001, Math.min(0.999, d.startPriceCents / 100));
+            return (
+              Math.abs(limit - snap.price) <= 1e-6 &&
+              Math.abs(d.buyShares - snap.originalSize) < 0.51
+            );
+          });
+          if (!def) continue;
+          const rk = this.triggerRestKey(def.id, side, win.ws);
+          if (this.triggerRestingBuys.has(rk)) continue;
+          this.triggerRestingBuys.set(rk, {
+            orderId: snap.orderId,
+            triggerId: def.id,
+            side,
+            sessionKey: win.key,
+            shares: snap.originalSize || def.buyShares,
+            limitPrice: snap.price || def.startPriceCents / 100,
+            sizeMatched: snap.sizeMatched,
+            sellOrderType: def.sellOrderType,
+            takeProfitCents: def.takeProfitCents,
+            buySidesMode: def.buySidesMode === "both" ? "both" : "first",
+            tokenId: snap.assetId,
+            conditionId: win.conditionId,
+            slug: win.slug,
+          });
+          this.latchTriggerGtdPlaced(def.id, side, win.key);
+          knownIds.add(snap.orderId);
+          attached += 1;
+          break;
+        }
+      }
+      if (attached > 0) {
+        logService.info(
+          "trading",
+          `Reattached ${attached} live CLOB GTD buy rest(s) after restart`,
+        );
+      }
+    } catch (err) {
+      logService.warn("trading", `Failed to reattach CLOB GTD rests: ${String(err)}`);
+    }
+  }
+
   private async cancelAllTriggerRestingBuys(
     reason: string,
     state?: LiveWindowState,
@@ -5156,7 +5281,7 @@ export class LiveTradingService {
     why: "filled" | "cancel confirmed" | "window end",
     reason: string,
   ): void {
-    this.triggerRestingBuys.delete(key);
+    this.forgetTriggerGtdRest(key);
     logService.info(
       "trading",
       `Trigger GTD slot free — ${why} ${resting.side.toUpperCase()} (${reason})`,
@@ -5574,6 +5699,8 @@ export class LiveTradingService {
 
     for (const [rk, want] of desireByKey.entries()) {
       if (this.triggerRestingBuys.has(rk)) continue;
+      const backoffUntil = this.gtdPlaceBackoffUntil.get(rk) ?? 0;
+      if (Date.now() < backoffUntil) continue;
       if (this.isTriggerGtdHeld(want.triggerId, want.targetKey, want.side)) continue;
       if (this.isTriggerGtdPlaced(want.triggerId, want.side, want.targetKey)) continue;
       // Side already held in live positions — skip that side only.
@@ -5645,7 +5772,12 @@ export class LiveTradingService {
             this.autoEngine.setExternalBuyPaused(false);
           }
           const err = result.error ?? "";
-          if (err) logService.warn("trading", `Trigger GTD place failed (${want.side}): ${err}`);
+          if (err) {
+            logService.warn("trading", `Trigger GTD place failed (${want.side}): ${err}`);
+            if (/balance|allowance|not enough|trading is disabled/i.test(err)) {
+              this.gtdPlaceBackoffUntil.set(rk, Date.now() + 20_000);
+            }
+          }
           continue;
         }
         this.latchTriggerGtdPlaced(want.triggerId, want.side, want.targetKey);
@@ -5734,6 +5866,7 @@ export class LiveTradingService {
           conditionId: result.conditionId,
           slug: result.slug,
         });
+        this.gtdPlaceBackoffUntil.delete(rk);
         this.notify();
       } finally {
         this.orderInFlight = false;
@@ -6757,6 +6890,10 @@ class LiveTradingRegistry {
     for (const listener of this.listeners) listener();
   };
 
+  listEngines(): LiveTradingService[] {
+    return [...this.engines.values()];
+  }
+
   get(userId: string): LiveTradingService {
     let engine = this.engines.get(userId);
     if (!engine) {
@@ -6879,10 +7016,6 @@ class LiveTradingRegistry {
   onUpdate(listener: UpdateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
-  }
-
-  listEngines(): LiveTradingService[] {
-    return [...this.engines.values()];
   }
 }
 

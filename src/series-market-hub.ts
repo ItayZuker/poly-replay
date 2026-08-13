@@ -264,6 +264,10 @@ class SeriesMarketHub {
         [...this.feeds.keys()].map(async (series) => {
           const feed = this.getState(series);
           if (feed) await tickTriggerDemoEngine(feed, nowMs).catch(() => {});
+          if (feed) {
+            const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
+            await tickTriggerGtdEngine(feed, nowMs).catch(() => {});
+          }
         }),
       );
     } catch {

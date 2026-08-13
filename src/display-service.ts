@@ -169,6 +169,8 @@ export class DisplayService {
       await liveTradingRegistry.tickAll(this.state, tickMs);
       const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
       await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
+      const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
+      await tickTriggerGtdEngine(this.state, tickMs).catch(() => {});
       this.notify();
     })();
   }
@@ -210,6 +212,8 @@ export class DisplayService {
       await liveTradingRegistry.tickAll(this.state, tickMs);
       const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
       await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
+      const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
+      await tickTriggerGtdEngine(this.state, tickMs).catch(() => {});
       this.notify();
     })();
   }
