@@ -17,6 +17,7 @@ import { recordAskSamples } from "./phase-config.js";
 import { getPtbSide, type PtbSide } from "./window-dynamics.js";
 import { simulatorService } from "./simulator-service.js";
 import { liveTradingRegistry } from "./live-trading-service.js";
+import { createCoalescer } from "./coalesce-async.js";
 import { resolveTakerFeeParams } from "./taker-fee.js";
 import { logService } from "./log-service.js";
 import {
@@ -44,6 +45,8 @@ export class DisplayService {
   private yesTokenId: string | null = null;
   private noTokenId: string | null = null;
   private sampleInFlight = false;
+  /** One executor tick at a time; extra CLOB/Chainlink updates coalesce. */
+  private readonly scheduleTradingTick = createCoalescer();
   private prefetchedNextWindowStart: number | null = null;
   private prefetchedYesTokenId: string | null = null;
   private prefetchedNoTokenId: string | null = null;
@@ -145,6 +148,21 @@ export class DisplayService {
     }
   }
 
+  /** Score live books once; if more quotes arrived, run again with the latest. */
+  private async runTradingTick(): Promise<void> {
+    try {
+      const tickMs = Date.now();
+      this.state.lastTickMs = tickMs;
+      await liveTradingRegistry.tickAll(this.state, tickMs);
+      const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
+      await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
+      const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
+      await tickTriggerGtdEngine(this.state, tickMs).catch(() => {});
+    } catch (err) {
+      logService.warn("display", `Trading tick failed: ${String(err)}`);
+    }
+  }
+
   private updateQuotesFromCache(): void {
     if (!this.yesTokenId || !this.noTokenId) return;
     const yesInfo = clobMarketFeed.getCachedMarketInfo(this.yesTokenId);
@@ -174,14 +192,8 @@ export class DisplayService {
       this.state.feedLatencyMs = feedLatency;
     }
     recordAskSamples(this.state);
-    void (async () => {
-      await liveTradingRegistry.tickAll(this.state, tickMs);
-      const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
-      await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
-      const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
-      await tickTriggerGtdEngine(this.state, tickMs).catch(() => {});
-      this.notify();
-    })();
+    this.notify();
+    this.scheduleTradingTick(() => this.runTradingTick());
   }
 
   private updateAssetFromChainlink(): void {
@@ -219,14 +231,8 @@ export class DisplayService {
       }
     }
 
-    void (async () => {
-      await liveTradingRegistry.tickAll(this.state, tickMs);
-      const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
-      await tickTriggerDemoEngine(this.state, tickMs).catch(() => {});
-      const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
-      await tickTriggerGtdEngine(this.state, tickMs).catch(() => {});
-      this.notify();
-    })();
+    this.notify();
+    this.scheduleTradingTick(() => this.runTradingTick());
   }
 
   private async prefetchNextWindowTokens(): Promise<void> {

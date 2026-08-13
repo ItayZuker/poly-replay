@@ -16,6 +16,7 @@ import { recordAskSamples } from "./phase-config.js";
 import { getPtbSide, type PtbSide } from "./window-dynamics.js";
 import { resolveTakerFeeParams } from "./taker-fee.js";
 import { logService } from "./log-service.js";
+import { createCoalescer } from "./coalesce-async.js";
 import {
   applyOfficialDisplayToState,
   fetchOfficialWindowResolution,
@@ -235,6 +236,7 @@ class SeriesMarketHub {
   private readonly feeds = new Map<string, SeriesFeed>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private activeSeries = new Set<string>();
+  private readonly scheduleSampleAll = createCoalescer();
 
   async ensureSeries(seriesList: string[]): Promise<void> {
     this.setActiveSeries(seriesList);
@@ -274,8 +276,8 @@ class SeriesMarketHub {
 
   private start(): void {
     if (this.interval) return;
-    void this.sampleAll();
-    this.interval = setInterval(() => void this.sampleAll(), 500);
+    this.scheduleSampleAll(() => this.sampleAll());
+    this.interval = setInterval(() => this.scheduleSampleAll(() => this.sampleAll()), 500);
   }
 
   private stop(): void {
@@ -291,17 +293,14 @@ class SeriesMarketHub {
       const { isTradingExecutor } = await import("./trading-executor.js");
       if (!isTradingExecutor()) return;
       const { tickTriggerDemoEngine } = await import("./trigger-demo-engine.js");
+      const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
       const nowMs = Date.now();
-      await Promise.all(
-        [...this.feeds.keys()].map(async (series) => {
-          const feed = this.getState(series);
-          if (feed) await tickTriggerDemoEngine(feed, nowMs).catch(() => {});
-          if (feed) {
-            const { tickTriggerGtdEngine } = await import("./trigger-gtd-engine.js");
-            await tickTriggerGtdEngine(feed, nowMs).catch(() => {});
-          }
-        }),
-      );
+      for (const series of this.feeds.keys()) {
+        const feed = this.getState(series);
+        if (!feed) continue;
+        await tickTriggerDemoEngine(feed, nowMs).catch(() => {});
+        await tickTriggerGtdEngine(feed, nowMs).catch(() => {});
+      }
     } catch {
       /* ignore */
     }
