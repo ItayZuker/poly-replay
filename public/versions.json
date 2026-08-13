@@ -1,6 +1,11 @@
 {
-    "current": "1.70.0",
+    "current": "1.70.1",
     "releases": [
+        {
+            "version": "1.70.1",
+            "releasedAt": "2026-08-13T09:40:00.000Z",
+            "notes": "Serialize live trading ticks so CLOB updates cannot stack Demo/GTD Mongo work (Heroku R14/R15)."
+        },
         {
             "version": "1.70.0",
             "releasedAt": "2026-08-13T09:12:00.000Z",
