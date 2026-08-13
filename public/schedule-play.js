@@ -438,7 +438,12 @@
 
   function fmtPlayPrice(v) {
     if (v == null || !Number.isFinite(v)) return "—";
-    if (v >= 1000) return `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    if (v >= 1000) {
+      return `$${v.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    }
     return `$${v.toFixed(2)}`;
   }
 

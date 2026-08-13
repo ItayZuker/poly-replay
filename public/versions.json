@@ -1,6 +1,11 @@
 {
-    "current": "1.68.20",
+    "current": "1.68.21",
     "releases": [
+        {
+            "version": "1.68.21",
+            "releasedAt": "2026-08-13T07:12:39.387Z",
+            "notes": "Market PTB/Current/Gap follow Polymarket published open and Chainlink rounding while live, then Gamma priceToBeat/finalPrice after official settle. Docs updated."
+        },
         {
             "version": "1.68.20",
             "releasedAt": "2026-08-13T05:21:17.973Z",

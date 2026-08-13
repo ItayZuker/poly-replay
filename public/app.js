@@ -1966,7 +1966,12 @@ function scrollLogToBottom() {
 
 function fmtPrice(v) {
   if (v == null || !Number.isFinite(v)) return "—";
-  if (v >= 1000) return `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  if (v >= 1000) {
+    return `$${v.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
   return `$${v.toFixed(2)}`;
 }
 
@@ -2396,7 +2401,10 @@ function fmtTickDelta(delta) {
   const sign = delta >= 0 ? "+" : "-";
   const abs = Math.abs(delta);
   if (abs >= 1000) {
-    return `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    return `${sign}$${abs.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
   if (abs >= 1) return `${sign}$${abs.toFixed(2)}`;
   return `${sign}$${abs.toFixed(4)}`;
@@ -2424,7 +2432,9 @@ function windowPricePoints(state) {
     !points.some((p) => p.price === state.assetPrice)
   ) {
     const nowSec = Math.floor(Date.now() / 1000);
-    if (nowSec >= windowStart && nowSec < windowEnd) {
+    if (state.officialSettled && nowSec >= windowEnd) {
+      points.push({ t: windowEnd, price: state.assetPrice });
+    } else if (nowSec >= windowStart && nowSec < windowEnd) {
       points.push({ t: nowSec, price: state.assetPrice });
     }
   }
@@ -5415,10 +5425,16 @@ function selectedAsset() {
   return String(selectedSeries || "").split("-")[0].toLowerCase();
 }
 
+function roundPolymarketAssetPrice(value) {
+  if (value == null || !Number.isFinite(value)) return value;
+  return Math.round(value * 100) / 100;
+}
+
 function appendChainlinkTick(tick, redraw = true) {
   if (!tick || tick.asset !== selectedAsset()) return;
+  if (windowState?.officialSettled) return;
 
-  const price = Number(tick.price);
+  const price = roundPolymarketAssetPrice(Number(tick.price));
   const timestampMs = Number(tick.timestampMs);
   if (!Number.isFinite(price) || !Number.isFinite(timestampMs)) return;
 
@@ -5469,18 +5485,45 @@ function applyQuotesUpdate(quotes) {
   if (!quotes) return;
   if (quotes.series && selectedSeries && quotes.series !== selectedSeries) return;
 
+  const prevPtb = windowState?.prevCloseAsset;
+  const wasSettled = windowState?.officialSettled === true;
+  const settledIncoming = quotes.officialSettled === true;
+
   if (!windowState) {
     windowState = { priceHistory: [], ...(quotes || {}) };
   } else {
-    Object.assign(windowState, quotes);
+    const next = { ...quotes };
+    // Live Current comes from chainlink-tick; don't let book quotes rewind it.
+    if (!wasSettled && !settledIncoming) {
+      delete next.assetPrice;
+      delete next.assetGap;
+    }
+    Object.assign(windowState, next);
   }
   window.windowState = windowState;
+
+  if (
+    windowState.assetPrice != null &&
+    Number.isFinite(windowState.assetPrice) &&
+    windowState.prevCloseAsset != null &&
+    Number.isFinite(windowState.prevCloseAsset)
+  ) {
+    windowState.assetGap = windowState.assetPrice - windowState.prevCloseAsset;
+  } else if (windowState.prevCloseAsset == null || !Number.isFinite(windowState.prevCloseAsset)) {
+    windowState.assetGap = undefined;
+  }
 
   updateQuoteBoxes(windowState);
   updateBookPanel(windowState);
   syncLatencyDisplay(windowState);
   if (quotes.windowEnd != null) updateCountdown(windowState);
   tickManipulationDetector(windowState);
+
+  const ptbChanged = quotes.prevCloseAsset !== undefined && quotes.prevCloseAsset !== prevPtb;
+  const settledNow = windowState.officialSettled === true && !wasSettled;
+  if (ptbChanged || settledNow) {
+    updateGraphPanel(windowState);
+  }
 }
 
 /** Positions / markers / phases — no chart history (history comes from chainlink-tick + window rolls). */

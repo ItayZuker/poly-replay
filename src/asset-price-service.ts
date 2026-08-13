@@ -1,6 +1,10 @@
 import { type MarketPairInfo } from "./market-pair.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
 import { fetchWithTimeout } from "./fetch-timeout.js";
+import {
+  assetGapOrUnset,
+  roundPolymarketAssetPriceMaybe,
+} from "./polymarket-display-price.js";
 import { outcomeFromOpenClose } from "./window-outcome.js";
 import type { WindowOutcome } from "./types.js";
 
@@ -86,7 +90,7 @@ export function normalizePolymarketIso(iso: string): string {
 function parsePrice(value: unknown): number | undefined {
   if (value == null) return undefined;
   const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return roundPolymarketAssetPriceMaybe(parsed);
 }
 
 function isCryptoPriceComplete(data: PolymarketCryptoPriceResponse): boolean {
@@ -125,15 +129,13 @@ function buildPrices(
   priceToBeatSource: PriceToBeatSource = "polymarket-openPrice",
   restClosePrice?: number,
 ): WindowAssetPrices {
-  const rtdsPrice = getRtdsLiveAssetPrice(asset);
-  const assetPrice = rtdsPrice ?? restClosePrice;
+  const rtdsPrice = roundPolymarketAssetPriceMaybe(getRtdsLiveAssetPrice(asset));
+  const assetPrice = rtdsPrice ?? roundPolymarketAssetPriceMaybe(restClosePrice);
+  const ptb = roundPolymarketAssetPriceMaybe(priceToBeat);
   return {
     assetPrice,
-    prevCloseAsset: priceToBeat,
-    assetGap:
-      assetPrice != null && priceToBeat != null
-        ? assetPrice - priceToBeat
-        : undefined,
+    prevCloseAsset: ptb,
+    assetGap: assetGapOrUnset(assetPrice, ptb),
     assetPriceSource: rtdsPrice != null ? "chainlink-rtds" : "polymarket-rest",
     priceToBeatSource,
   };
@@ -144,13 +146,12 @@ export function applyRtdsLivePrice(
   asset: string,
   prices: WindowAssetPrices,
 ): WindowAssetPrices {
-  const live = getRtdsLiveAssetPrice(asset);
+  const live = roundPolymarketAssetPriceMaybe(getRtdsLiveAssetPrice(asset));
   if (live == null) return prices;
   return {
     ...prices,
     assetPrice: live,
-    assetGap:
-      prices.prevCloseAsset != null ? live - prices.prevCloseAsset : undefined,
+    assetGap: assetGapOrUnset(live, prices.prevCloseAsset),
     assetPriceSource: "chainlink-rtds",
   };
 }

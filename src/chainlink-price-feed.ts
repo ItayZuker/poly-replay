@@ -1,3 +1,5 @@
+import { roundPolymarketAssetPrice } from "./polymarket-display-price.js";
+
 const RTDS_URL = "wss://ws-live-data.polymarket.com";
 const PING_INTERVAL_MS = 5_000;
 /** Whole-socket silence (no crypto_prices messages at all). */
@@ -489,8 +491,9 @@ export class ChainlinkPriceFeed {
     const asset = ASSET_BY_CHAINLINK_SYMBOL[symbol.toLowerCase()];
     if (!asset) return;
 
-    const parsedValue = typeof value === "number" ? value : Number(value);
-    if (!Number.isFinite(parsedValue)) return;
+    const parsedRaw = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(parsedRaw)) return;
+    const parsedValue = roundPolymarketAssetPrice(parsedRaw);
 
     const ts =
       typeof timestampMs === "number" && Number.isFinite(timestampMs)

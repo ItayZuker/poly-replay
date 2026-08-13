@@ -1,5 +1,5 @@
 import { fetchWithTimeout, sleepMs } from "./fetch-timeout.js";
-import { roundTo4 } from "./tick-compact.js";
+import { roundPolymarketAssetPriceMaybe } from "./polymarket-display-price.js";
 import type { WindowOutcome } from "./types.js";
 
 const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
@@ -153,14 +153,8 @@ export async function fetchGammaWindowResolution(
   const meta = event.eventMetadata as
     | { finalPrice?: number; priceToBeat?: number }
     | undefined;
-  const finalPrice =
-    meta?.finalPrice != null && Number.isFinite(meta.finalPrice)
-      ? roundTo4(meta.finalPrice)
-      : undefined;
-  const priceToBeat =
-    meta?.priceToBeat != null && Number.isFinite(meta.priceToBeat)
-      ? roundTo4(meta.priceToBeat)
-      : undefined;
+  const finalPrice = roundPolymarketAssetPriceMaybe(meta?.finalPrice);
+  const priceToBeat = roundPolymarketAssetPriceMaybe(meta?.priceToBeat);
 
   return { outcome, finalPrice, priceToBeat, yesPrice, noPrice };
 }

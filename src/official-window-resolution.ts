@@ -1,6 +1,18 @@
 import { sleepMs } from "./fetch-timeout.js";
 import { fetchGammaWindowResolution } from "./gamma-window-resolution.js";
+import {
+  assetGapOrUnset,
+  roundPolymarketAssetPriceMaybe,
+} from "./polymarket-display-price.js";
 import type { WindowOutcome } from "./types.js";
+
+export type OfficialDisplayState = {
+  prevCloseAsset?: number;
+  assetPrice?: number;
+  assetGap?: number;
+  priceToBeatSource?: "polymarket-openPrice" | "gamma";
+  officialSettled?: boolean;
+};
 
 export type OfficialOutcomeSource = "crypto-price" | "gamma";
 
@@ -18,6 +30,24 @@ export function hasOfficialWindowOutcome(
   outcome: unknown,
 ): outcome is WindowOutcome {
   return outcome === "up" || outcome === "down";
+}
+
+/** Overlay Gamma eventMetadata PTB/close onto live or recorded display fields. */
+export function applyOfficialDisplayToState(
+  state: OfficialDisplayState,
+  official: OfficialWindowResolution,
+): void {
+  const ptb = roundPolymarketAssetPriceMaybe(official.priceToBeat);
+  const current = roundPolymarketAssetPriceMaybe(official.finalPrice);
+  if (ptb != null) {
+    state.prevCloseAsset = ptb;
+    state.priceToBeatSource = "gamma";
+  }
+  if (current != null) {
+    state.assetPrice = current;
+  }
+  state.assetGap = assetGapOrUnset(state.assetPrice, state.prevCloseAsset);
+  state.officialSettled = true;
 }
 
 /**
