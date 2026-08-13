@@ -1048,7 +1048,7 @@
                 type="button"
                 id="schedule-replay-run-btn"
                 class="schedule-replay-run-btn"
-                title="Run Active Replay Triggers over every UTC hour with recordings"
+                title="Run Test Replay Triggers over every UTC hour with recordings"
                 tabindex="-1"
               >
                 <span>Run</span>
@@ -1381,7 +1381,7 @@
         <section class="modal-section trigger-duration-section" aria-label="Duration">
           <div class="trigger-duration-diagram" aria-label="Trigger duration period">
             <div class="trigger-duration-stage">
-              <div class="trigger-price-column" data-edge="start">
+              <div class="trigger-price-column is-start-price-mode" data-edge="start">
                 <label class="trigger-price-side-wrap">
                   <span class="visually-hidden">Start condition type</span>
                   <select
@@ -1389,8 +1389,8 @@
                     class="trigger-price-side is-buy"
                     aria-label="Start condition: UP/DOWN range or UP/DOWN price"
                   >
-                    <option value="range" selected>UP/DOWN Range</option>
-                    <option value="price">UP/DOWN Price</option>
+                    <option value="range">UP/DOWN Range</option>
+                    <option value="price" selected>UP/DOWN Price</option>
                   </select>
                 </label>
                 <div
@@ -1410,7 +1410,7 @@
                       data-thumb="high"
                       aria-label="Start max price"
                     >
-                      <span class="trigger-price-thumb-label" data-label="start-high">70¢</span>
+                      <span class="trigger-price-thumb-label" data-label="start-high">40.0¢</span>
                     </button>
                     <button
                       type="button"
@@ -1621,8 +1621,6 @@
                 - Gap
               </button>
 
-              <div class="trigger-duration-timeline" aria-hidden="true"></div>
-
               <div class="trigger-price-column" data-edge="end">
                 <label class="trigger-price-side-wrap">
                   <span class="visually-hidden">End condition type</span>
@@ -1680,7 +1678,7 @@
                     class="trigger-duration-value"
                     min="0"
                     step="1"
-                    value="5"
+                    value="0"
                     inputmode="numeric"
                     aria-label="Duration value (0 = fire immediately on start)"
                     title="0 = no wait; start condition fires immediately"
@@ -2062,6 +2060,7 @@
       <div class="modal-footer modal-footer-actions">
         <button type="button" id="trigger-create-cancel" class="modal-btn-secondary">Cancel</button>
         <button type="button" id="trigger-create-submit" class="modal-btn-primary" disabled>Create</button>
+        <button type="button" id="trigger-create-view-close" class="modal-btn-secondary" hidden>Close</button>
       </div>
     </div>
   </div>
@@ -2384,11 +2383,11 @@
   <script src="/markdown.js?v=1.5.2"></script>
   <script src="/simulator.js?v=1.5.5"></script>
   <script src="/setup-editor.js?v=1.5.2"></script>
-  <script src="/schedule-replay-triggers.js?v=1"></script>
-  <script src="/schedule-live-triggers.js?v=1"></script>
+  <script src="/schedule-replay-triggers.js?v=1.2"></script>
+  <script src="/schedule-live-triggers.js?v=1.2"></script>
   <script src="/schedule-hour-slots.js?v=1.5.5"></script>
   <script src="/schedule.js?v=1.5.5"></script>
   <script src="/schedule-play.js?v=1.5.7"></script>
-  <script src="/app.js?v=1.5.13"></script>
+  <script src="/app.js?v=1.5.17"></script>
 </body>
 </html>

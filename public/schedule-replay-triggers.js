@@ -60,7 +60,7 @@
       name: typeof raw.name === "string" ? raw.name : "Untitled trigger",
       takeProfitCents: exits.takeProfitCents,
       stopLossCents: exits.stopLossCents,
-      // Explicit true only — older cards without the field stay Active on Run.
+      // Explicit true only — older cards without the field stay Test on Run.
       paused: raw.paused === true,
       priceSide: "buy",
       gapMode: raw.gapMode === "relative" ? "relative" : "fixed",
@@ -255,7 +255,7 @@
   }
 
   /**
-   * Zero in-run counters for Active triggers only.
+   * Zero in-run counters for Test triggers only.
    * Paused cards keep their stats: flush any leftover Run-buffer totals onto the card
    * first (e.g. after an early Stop), then leave them out of the new Run buffer.
    */
@@ -308,25 +308,6 @@
     }
     save();
     render();
-  }
-
-  function resetCardStats(triggerId) {
-    const id = String(triggerId || "");
-    const idx = replayTriggers.findIndex((t) => String(t?.id) === id);
-    if (idx < 0) return false;
-    const paused = replayTriggers[idx]?.paused === true;
-    // During a Run, only Paused cards may reset (Active stats are accumulating).
-    if (listLocked && !paused) return false;
-    replayTriggers[idx] = normalizeTrigger({
-      ...replayTriggers[idx],
-      replayStats: emptyStats(),
-    });
-    if (Object.prototype.hasOwnProperty.call(runStatsById, id)) {
-      runStatsById[id] = emptyStats();
-    }
-    save();
-    render();
-    return true;
   }
 
   function closeMenus() {
@@ -431,20 +412,20 @@
       const pauseWrap = document.createElement("div");
       pauseWrap.className = "trigger-run-mode trigger-pause-mode";
       pauseWrap.setAttribute("role", "group");
-      pauseWrap.setAttribute("aria-label", "Pause or Active");
-      for (const state of ["pause", "active"]) {
+      pauseWrap.setAttribute("aria-label", "Pause or Test");
+      for (const state of ["pause", "test"]) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "trigger-run-mode-btn";
         btn.dataset.pauseState = state;
-        btn.textContent = state === "pause" ? "Pause" : "Active";
+        btn.textContent = state === "pause" ? "Pause" : "Test";
         const isSelected = state === "pause" ? paused : !paused;
         if (isSelected) btn.classList.add("is-active");
         btn.disabled = listLocked;
         btn.title =
           state === "pause"
-            ? "Skip this trigger on Replay Run"
-            : "Include this trigger on Replay Run";
+            ? "Skip this trigger on Replay Run; keep last stats"
+            : "Include this trigger on Replay Run; stats start from zero";
         btn.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -454,20 +435,7 @@
       }
       controls.appendChild(pauseWrap);
 
-      const resetBtn = document.createElement("button");
-      resetBtn.type = "button";
-      resetBtn.className = "trigger-card-stats-reset";
-      resetBtn.title = "Reset Replay stats";
-      resetBtn.setAttribute("aria-label", "Reset Replay stats");
-      // Active cards lock during Run; Paused cards can still clear their stats.
-      resetBtn.disabled = listLocked && !paused;
-      resetBtn.innerHTML =
-        '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
-        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
-        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
-        "</svg>";
-
-      // Same row order as Live Schedule: dots → Stop Loss → right-aligned P/L.
+      // Same row order as Live Schedule: dots → right-aligned P/L.
       const main = document.createElement("div");
       main.className = "trigger-card-stats-main";
       main.innerHTML =
@@ -477,29 +445,22 @@
         '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         "</span>";
 
-      const exits = document.createElement("div");
-      exits.className = "trigger-card-stats-exits";
-      exits.innerHTML =
-        '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>';
-
       const pnlRow = document.createElement("div");
       pnlRow.className = "trigger-card-stats-pnl-row";
       pnlRow.innerHTML =
         '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>';
 
-      stack.append(controls, resetBtn, main, exits, pnlRow);
+      stack.append(controls, main, pnlRow);
 
       const applyStats = (next) => {
         const s = normalizeStats(next);
         const sellEl = stack.querySelector('[data-stat="takeProfit"]');
         const blueEl = stack.querySelector('[data-stat="blue"]');
         const failEl = stack.querySelector('[data-stat="fail"]');
-        const slEl = stack.querySelector('[data-stat="stopLoss"]');
         const pnlEl = stack.querySelector('[data-stat="pnl"]');
         if (sellEl) sellEl.textContent = String(s.takeProfit ?? 0);
         if (blueEl) blueEl.textContent = String(s.blue ?? 0);
         if (failEl) failEl.textContent = String(s.fail);
-        if (slEl) slEl.textContent = String(s.stopLoss);
         if (pnlEl) {
           pnlEl.textContent = formatPnl(s.pnlUsd);
           pnlEl.classList.toggle("is-positive", s.pnlUsd > 0);
@@ -508,14 +469,6 @@
         }
       };
       applyStats(stats);
-      resetBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (resetBtn.disabled) return;
-        const label = trigger.name || "Untitled trigger";
-        if (!window.confirm(`Reset Replay stats for "${label}"?`)) return;
-        resetCardStats(id);
-      });
 
       card.append(header, stack);
       list.appendChild(card);
@@ -561,7 +514,6 @@
     resetRunStats,
     accumulatePlacementTriggerStats,
     commitRunStatsToCards,
-    resetCardStats,
     setLocked,
   };
 })();

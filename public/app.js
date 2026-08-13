@@ -5393,7 +5393,7 @@ $("log-scroll-bottom").addEventListener("click", () => {
 });
 
 /** Draft fields for the Create Trigger dialog. */
-let triggerCreateDurationMs = 5000;
+let triggerCreateDurationMs = 0;
 let triggerCreateName = "";
 let triggerCreateColor = "#58a6ff";
 
@@ -5417,9 +5417,9 @@ window.randomTriggerColorHex = randomTriggerColorHex;
 /** Quotes always use Buy (Ask); Sell-side quote mode removed from the editor. */
 let triggerCreatePriceSide = "buy";
 /** Start bar mode: "range" | "price" (single Ask ¢ on 0–100 scale). */
-let triggerCreateStartMode = "range";
+let triggerCreateStartMode = "price";
 /** Start single price in ¢ when start mode is "price" (0–100; bottom=0, top=100). */
-let triggerCreateStartPriceCents = 50;
+let triggerCreateStartPriceCents = 40;
 /** End bar mode: "range" | "change-side" (signed ±100¢). */
 let triggerCreateEndMode = "range";
 /** End signed change in ¢ when mode is "change-side" (-100…+100). */
@@ -5492,6 +5492,8 @@ const triggerPersistGenById = Object.create(null);
 let triggerCreateEditingId = null;
 /** "market" | "replay" — where Create/Edit Trigger saves. */
 let triggerCreateHost = "market";
+/** Schedule Live eye icon: same dialog, all fields locked (view only). */
+let triggerCreateViewOnly = false;
 /** Open ⋮ menu trigger id (reuses schedule-setup-menu floating UI). */
 let openTriggerMenuId = null;
 
@@ -5558,6 +5560,7 @@ function syncTriggerZeroDurationUi() {
     .forEach((el) => {
       el.disabled = zero;
     });
+  applyTriggerCreateViewOnlyLock();
 }
 
 function syncTriggerDurationDraft() {
@@ -5565,7 +5568,7 @@ function syncTriggerDurationDraft() {
   syncTriggerZeroDurationUi();
   if (!triggerCreateHasActivePtbGap()) triggerCreateGapMode = "fixed";
   syncTriggerCreateBuyOrderTypeUi();
-  renderTriggerPtbGapUi();
+  renderAllTriggerPriceRanges();
 }
 
 function clampTriggerCents(raw) {
@@ -5837,13 +5840,13 @@ function triggerGapBiasOffset(kind, gapOffset) {
 
 function buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, gaps = {}, trendRaw = null) {
   const startCol = startScale.closest(".trigger-price-column");
-  const endCol = endScale.closest(".trigger-price-column");
   const startRect = (startCol || startScale).getBoundingClientRect();
-  const endRect = (endCol || endScale).getBoundingClientRect();
   const scaleRect = startScale.getBoundingClientRect();
-  // Span fully across both BUY/SELL price columns.
+  // Always span the same path: left edge of the left bar → matching inset
+  // on the right of the stage. Duration > 0 places the right bar on top of
+  // that same gold line (it must not shorten the line).
   const x0 = startRect.left - stageRect.left;
-  const x1 = endRect.right - stageRect.left;
+  const x1 = Math.max(x0 + 80, stageRect.width - x0);
   const ptbY = scaleRect.top + scaleRect.height / 2 - stageRect.top;
   const gapOffset = Math.max(40, scaleRect.height * 0.36);
   const amp = Math.max(14, scaleRect.height * 0.14);
@@ -6252,8 +6255,8 @@ function renderTriggerPtbGapUi() {
 
   let topBtnY = null;
   for (const edge of ["start", "end"]) {
-    const endDisabled = zeroDuration && edge === "end";
-    const selected = endDisabled ? null : triggerCreatePtbGap[edge];
+    if (zeroDuration && edge === "end") continue;
+    const selected = triggerCreatePtbGap[edge];
     const scale = getTriggerPriceScale(edge);
     const col = document.querySelector(`.trigger-price-column[data-edge="${edge}"]`);
     if (!scale || !col) continue;
@@ -6353,6 +6356,7 @@ function renderTriggerPtbGapUi() {
     },
     { relative },
   );
+  applyTriggerCreateViewOnlyLock();
 }
 
 function renderAllTriggerPriceRanges() {
@@ -6373,6 +6377,7 @@ function triggerCreateHasActivePtbGap() {
 }
 
 function toggleTriggerPtbGap(edge, kind) {
+  if (triggerCreateViewOnly) return;
   if (edge !== "start" && edge !== "end") return;
   if (kind !== "negative" && kind !== "positive") return;
   if (edge === "end" && isTriggerZeroDuration(triggerCreateDurationMs)) return;
@@ -6385,6 +6390,7 @@ function toggleTriggerPtbGap(edge, kind) {
 }
 
 function setTriggerCreateGapMode(mode) {
+  if (triggerCreateViewOnly) return;
   if (!triggerCreateHasActivePtbGap()) return;
   triggerCreateGapMode = normalizeTriggerGapMode(mode);
   renderTriggerPtbGapUi();
@@ -6392,6 +6398,7 @@ function setTriggerCreateGapMode(mode) {
 }
 
 function setTriggerCreatePriceTrendDollars(dollars) {
+  if (triggerCreateViewOnly) return;
   triggerCreatePriceTrend = normalizeTriggerPriceTrend({
     ...triggerCreatePriceTrend,
     dollars,
@@ -6469,6 +6476,7 @@ function bindTriggerPriceTrendControls() {
   };
 
   wrap.addEventListener("pointerdown", (e) => {
+    if (triggerCreateViewOnly) return;
     if (wrap.hidden) return;
     if (e.target?.closest?.("#trigger-price-trend-value, #trigger-price-trend-bound")) return;
     const arm = e.target?.closest?.("[data-trend-arm], .trigger-price-trend-wheel");
@@ -6592,6 +6600,7 @@ function bindTriggerPriceRangeDrag() {
 
   modal.querySelectorAll(".trigger-price-thumb").forEach((thumbEl) => {
     thumbEl.addEventListener("pointerdown", (e) => {
+      if (triggerCreateViewOnly) return;
       if (e.button !== 0) return;
       const edge = thumbEl.dataset.edge;
       const thumb = thumbEl.dataset.thumb;
@@ -6634,6 +6643,7 @@ function bindTriggerPriceRangeDrag() {
     });
 
     thumbEl.addEventListener("keydown", (e) => {
+      if (triggerCreateViewOnly) return;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       const edge = thumbEl.dataset.edge;
       const thumb = thumbEl.dataset.thumb;
@@ -6861,8 +6871,9 @@ function syncTriggerGtdPlaceOffsetUi() {
   const unitEl = $("trigger-gtd-place-offset-unit");
   const enabled = triggerCreateBuyOrderType === "GTD";
   wrap?.classList.toggle("is-disabled", !enabled);
-  if (valueEl) valueEl.disabled = !enabled;
-  if (unitEl) unitEl.disabled = !enabled;
+  if (valueEl) valueEl.disabled = triggerCreateViewOnly || !enabled;
+  if (unitEl) unitEl.disabled = triggerCreateViewOnly || !enabled;
+  applyTriggerCreateViewOnlyLock();
 }
 
 function syncTriggerCreateBuyOrderTypeDraft() {
@@ -7664,7 +7675,7 @@ function renderTriggersList() {
 
     const statsBody = document.createElement("div");
     statsBody.className = "trigger-card-stats-body";
-    // Stats dots: Sell (green) / Win (blue) / Loss (red); then Stop Loss + P/L.
+    // Stats dots: Sell (green) / Win (blue) / Loss (red); then P/L.
     statsBody.innerHTML =
       '<div class="trigger-card-stats-main">' +
       '<span class="trigger-card-stats-counts">' +
@@ -7674,7 +7685,6 @@ function renderTriggersList() {
       "</span>" +
       "</div>" +
       '<div class="trigger-card-stats-exits">' +
-      '<span class="trigger-card-stats-item"><span class="trigger-card-stats-label">Stop Loss</span><span class="trigger-card-stats-value" data-stat="stopLoss">0</span></span>' +
       '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>' +
       "</div>";
 
@@ -7738,12 +7748,10 @@ function fillTriggerCardStatsRow(statsRow, trigger) {
   const sellEl = statsRow.querySelector('[data-stat="takeProfit"]');
   const blueEl = statsRow.querySelector('[data-stat="blue"]');
   const failEl = statsRow.querySelector('[data-stat="fail"]');
-  const slEl = statsRow.querySelector('[data-stat="stopLoss"]');
   const pnlEl = statsRow.querySelector('[data-stat="pnl"]');
   if (sellEl) sellEl.textContent = stats.pending ? "…" : String(stats.takeProfit ?? 0);
   if (blueEl) blueEl.textContent = stats.pending ? "…" : String(stats.blue ?? 0);
   if (failEl) failEl.textContent = stats.pending ? "…" : String(stats.fail);
-  if (slEl) slEl.textContent = stats.pending ? "…" : String(stats.stopLoss);
   if (pnlEl) {
     pnlEl.textContent = stats.pending ? "…" : formatTriggerStatsPnl(stats.pnlUsd);
     const pos = !stats.pending && stats.pnlUsd > 0;
@@ -8020,6 +8028,7 @@ function bindTriggerWindowAreaSlider() {
   for (const thumb of track.querySelectorAll("[data-thumb]")) {
     thumb.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
+      if (triggerCreateViewOnly) return;
       event.preventDefault();
       triggerWindowAreaDrag = thumb.getAttribute("data-thumb") === "end" ? "end" : "start";
       try {
@@ -8038,9 +8047,53 @@ function bindTriggerWindowAreaSlider() {
 function syncTriggerCreateModalChrome() {
   const title = $("trigger-create-modal-title");
   const submit = $("trigger-create-submit");
+  const cancel = $("trigger-create-cancel");
+  const viewClose = $("trigger-create-view-close");
   const editing = Boolean(triggerCreateEditingId);
-  if (title) title.textContent = editing ? "Edit Trigger" : "Create Trigger";
-  if (submit) submit.textContent = editing ? "Save" : "Create";
+  const viewOnly = triggerCreateViewOnly === true;
+  if (title) {
+    title.textContent = viewOnly ? "View Trigger" : editing ? "Edit Trigger" : "Create Trigger";
+  }
+  if (submit) {
+    submit.hidden = viewOnly;
+    if (!viewOnly) submit.textContent = editing ? "Save" : "Create";
+  }
+  if (cancel) cancel.hidden = viewOnly;
+  if (viewClose) viewClose.hidden = !viewOnly;
+}
+
+function triggerCreateControlStaysEnabled(el) {
+  if (!el) return false;
+  if (el.id === "trigger-create-modal-close" || el.id === "trigger-create-view-close") return true;
+  if (el.classList.contains("trigger-create-tab")) return true;
+  if (el.hasAttribute("data-trigger-stats-sub")) return true;
+  if (el.classList.contains("trigger-order-type-info-toggle")) return true;
+  return false;
+}
+
+function applyTriggerCreateViewOnlyLock() {
+  const modal = $("trigger-create-modal");
+  if (!modal) return;
+  modal.classList.toggle("is-view-only", triggerCreateViewOnly);
+  if (!triggerCreateViewOnly) return;
+  modal.querySelectorAll("input, select, textarea, button").forEach((el) => {
+    if (triggerCreateControlStaysEnabled(el)) {
+      el.disabled = false;
+      return;
+    }
+    if (el.id === "trigger-create-cancel" || el.id === "trigger-create-submit") return;
+    el.disabled = true;
+  });
+}
+
+function exitTriggerCreateViewOnly() {
+  const modal = $("trigger-create-modal");
+  triggerCreateViewOnly = false;
+  modal?.classList.remove("is-view-only");
+  modal?.querySelectorAll("input, select, textarea, button").forEach((el) => {
+    if (el.id === "trigger-create-submit") return;
+    el.disabled = false;
+  });
 }
 
 function syncTriggerCreateBuySharesDraft() {
@@ -8445,6 +8498,7 @@ function setTriggerCreateActiveTab(tabId) {
       requestAnimationFrame(() => {
         renderAllTriggerPriceRanges();
         syncTriggerWindowAreaUi();
+        applyTriggerCreateViewOnlyLock();
       });
     });
   }
@@ -8521,6 +8575,7 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   if (triggerCreateHost !== "replay" && trigger?.id) {
     void fetchTriggerLiveStats(trigger.id).then(() => syncTriggerStatsPanel());
   }
+  applyTriggerCreateViewOnlyLock();
 }
 
 function buildTriggerFromCreateDraft() {
@@ -8601,6 +8656,7 @@ function buildTriggerFromCreateDraft() {
 }
 
 function submitTriggerCreate() {
+  if (triggerCreateViewOnly) return;
   const trigger = buildTriggerFromCreateDraft();
   if (!trigger) {
     syncTriggerCreateSubmitState();
@@ -8679,19 +8735,14 @@ function syncTriggerCreateEndModeDraft() {
 function resetTriggerCreateForm() {
   const nameEl = $("trigger-create-name");
   const colorEl = $("trigger-create-color");
-  const valueEl = $("trigger-duration-value");
-  const unitEl = $("trigger-duration-unit");
   const color = randomTriggerColorHex();
   if (nameEl) nameEl.value = "";
   if (colorEl) colorEl.value = color;
-  if (valueEl) valueEl.value = "5";
-  if (unitEl) unitEl.value = "s";
   triggerCreateName = "";
   triggerCreateColor = color;
-  triggerCreateDurationMs = 5000;
   triggerCreatePriceSide = "buy";
-  triggerCreateStartMode = "range";
-  triggerCreateStartPriceCents = 50;
+  triggerCreateStartMode = "price";
+  triggerCreateStartPriceCents = 40;
   triggerCreateEndMode = "range";
   triggerCreateEndChangeSideCents = 20;
   triggerCreatePriceRanges = {
@@ -8705,6 +8756,7 @@ function resetTriggerCreateForm() {
     end: { bound: "min", value: 0 },
   };
   triggerCreatePriceTrend = { dollars: 0, bound: "min" };
+  applyTriggerDurationToInputs(0);
   applyTriggerBuySharesToInput(10);
   applyTriggerBuyOrderTypeToInput("FOK");
   setTriggerCreateBuySidesMode("first");
@@ -8732,6 +8784,7 @@ function openTriggerCreateModal() {
 function openTriggerCreateModalForHost(host) {
   const modal = $("trigger-create-modal");
   if (!modal) return;
+  exitTriggerCreateViewOnly();
   triggerCreateHost = host === "replay" ? "replay" : "market";
   triggerCreateEditingId = null;
   resetTriggerCreateForm();
@@ -8751,21 +8804,29 @@ function openTriggerEditModal(trigger) {
   openTriggerEditModalForHost("market", trigger);
 }
 
-function openTriggerEditModalForHost(host, trigger) {
+function openTriggerViewModal(trigger) {
+  openTriggerEditModalForHost("market", trigger, { viewOnly: true });
+}
+
+function openTriggerEditModalForHost(host, trigger, options = {}) {
   const modal = $("trigger-create-modal");
   if (!modal || !trigger?.id) return;
   closeTriggerMenus();
+  exitTriggerCreateViewOnly();
   triggerCreateHost = host === "replay" ? "replay" : "market";
   triggerCreateEditingId = String(trigger.id);
+  triggerCreateViewOnly = options.viewOnly === true;
   fillTriggerCreateFormFromTrigger(trigger);
   closeTriggerOrderTypeInfoPanels();
   syncTriggerCreateModalChrome();
+  applyTriggerCreateViewOnlyLock();
   modal.hidden = false;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       renderAllTriggerPriceRanges();
       syncTriggerWindowAreaUi();
-      $("trigger-create-name")?.focus();
+      applyTriggerCreateViewOnlyLock();
+      if (!triggerCreateViewOnly) $("trigger-create-name")?.focus();
     });
   });
 }
@@ -8800,11 +8861,13 @@ function closeTriggerCreateModal() {
   modal.hidden = true;
   triggerCreateEditingId = null;
   triggerCreateHost = "market";
+  exitTriggerCreateViewOnly();
   syncTriggerCreateModalChrome();
 }
 
 window.openTriggerCreateModalForHost = openTriggerCreateModalForHost;
 window.openTriggerEditModalForHost = openTriggerEditModalForHost;
+window.openTriggerViewModal = openTriggerViewModal;
 window.findUserTrigger = findUserTrigger;
 window.listMarketTriggersForSchedule = () =>
   Array.isArray(userTriggers) ? userTriggers.slice() : [];
@@ -8826,6 +8889,9 @@ function bindTriggerCreateModal() {
     closeTriggerCreateModal();
   });
   $("trigger-create-cancel")?.addEventListener("click", () => {
+    closeTriggerCreateModal();
+  });
+  $("trigger-create-view-close")?.addEventListener("click", () => {
     closeTriggerCreateModal();
   });
   $("trigger-create-submit")?.addEventListener("click", () => {
@@ -8901,6 +8967,7 @@ function bindTriggerCreateModal() {
     const btn = e.target?.closest?.("[data-buy-sides]");
     if (!btn) return;
     e.preventDefault();
+    if (triggerCreateViewOnly) return;
     setTriggerCreateBuySidesMode(btn.getAttribute("data-buy-sides"));
   });
   $("trigger-gtd-place-offset-value")?.addEventListener("input", () => {
