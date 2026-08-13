@@ -35,7 +35,7 @@ Pure bugfixes that restore already-documented behavior do not need this permissi
 | Overview / concepts | `overview.md` |
 | Onboarding | `getting-started.md` |
 | Market | `market.md` |
-| Schedule / Heatmap | `schedule.md` |
+| Schedule | `schedule.md` |
 | Setup cards & phase inputs | `setups-phases.md` |
 | REST / SSE / trading flow | `data-flow.md` |
 | Settings / wallet | `settings.md` |

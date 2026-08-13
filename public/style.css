@@ -1220,7 +1220,7 @@ body {
 }
 
 /*
- * Mobile: same segmented Market / Schedule / Heatmap control as desktop,
+ * Mobile: same segmented Market / Schedule control as desktop,
  * full-width in the nav stack, with a gap above the header bottom border.
  */
 @media (max-width: 720px) {
@@ -1352,11 +1352,11 @@ body {
 }
 
 .app:has(#page-simulator:not([hidden])) .app-title-poly,
-.app:has(#page-schedule-heatmap:not([hidden]):not(.is-replay-workspace)) .app-title-poly {
+.app:has(#page-schedule:not([hidden]):not(.is-replay-workspace)) .app-title-poly {
   color: var(--down);
 }
 
-.app:has(#page-schedule-heatmap.is-replay-workspace:not([hidden])) .app-title-replay {
+.app:has(#page-schedule.is-replay-workspace:not([hidden])) .app-title-replay {
   color: var(--accent);
 }
 
@@ -1890,26 +1890,6 @@ body {
     display: inline-flex;
   }
 
-  /* Live/Replay moves into the bottom bar on mobile; right-aligned. */
-  .app-page-schedule .schedule-page-subheader .schedule-workspace-switcher-bar {
-    margin-left: auto;
-    border-top: none;
-    flex: 0 0 auto;
-    min-width: 0;
-  }
-
-  .app-page-schedule .schedule-page-subheader .schedule-workspace-switcher-toolbar {
-    height: 100%;
-    padding: 0;
-  }
-
-  .app-page-schedule .schedule-page-subheader .schedule-workspace-switcher {
-    width: auto;
-    min-width: 132px;
-    height: 100%;
-    min-height: 0;
-  }
-
   .app-page-schedule .schedule-setups-panel {
     flex: 0 0 213px;
     width: 213px;
@@ -1951,15 +1931,6 @@ body {
       transition: none;
     }
   }
-}
-
-.app-page-schedule.is-heatmap-view .schedule-setups-list,
-.app-page-schedule.is-heatmap-view .schedule-add-setup-wrap {
-  display: none !important;
-}
-
-.app-page-schedule:not(.is-heatmap-view) .schedule-heatmap-panel {
-  display: none !important;
 }
 
 .schedule-setups-header {
@@ -2057,35 +2028,11 @@ body {
   overflow: hidden;
 }
 
-.app-page-schedule:not(.is-heatmap-view) .schedule-workspace-footer {
+.app-page-schedule .schedule-workspace-footer {
   border-top: none;
 }
 
-.app-page-schedule.is-heatmap-view .schedule-workspace-footer {
-  display: none !important;
-}
-
-/* Live/Replay is Schedule-only (hidden on Heatmap, including mobile bottom bar). */
-.app-page-schedule.is-heatmap-view .schedule-workspace-switcher-bar {
-  display: none !important;
-}
-
-/* Mirror Schedule/Heatmap header: full-width bar with edge border (top vs bottom). */
-.schedule-workspace-switcher-bar {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border);
-  box-sizing: border-box;
-}
-
-.schedule-workspace-switcher-toolbar {
-  height: var(--schedule-toolbar-height);
-  padding: 8px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-}
-
-/* Collapses above the Live/Replay switcher; border rises with the panel. */
+/* Collapses when the other page’s left column is shown; border rises with the panel. */
 .schedule-replay-panel {
   display: flex;
   flex-direction: column;
@@ -2123,7 +2070,7 @@ body {
   transition: max-height 0.22s ease, opacity 0.18s ease, border-color 0.18s ease;
 }
 
-.app-page-schedule:not(.is-replay-workspace):not(.is-heatmap-view) .schedule-live-triggers {
+.app-page-schedule:not(.is-replay-workspace) .schedule-live-triggers {
   max-height: none;
   opacity: 1;
   pointer-events: auto;
@@ -2749,220 +2696,6 @@ body {
   }
 }
 
-.schedule-workspace-switcher {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  width: 100%;
-  min-height: 36px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 70%, #000);
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.schedule-workspace-switcher-handle {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: 3px;
-  width: calc(50% - 3px);
-  border-radius: 999px;
-  background: var(--down);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-  transition: transform 0.2s ease, background-color 0.2s ease;
-  z-index: 0;
-}
-
-.schedule-workspace-switcher.is-replay .schedule-workspace-switcher-handle {
-  transform: translateX(100%);
-  background: var(--accent);
-}
-
-.schedule-workspace-switcher-opt {
-  position: relative;
-  z-index: 1;
-  min-height: 30px;
-  padding: 0 10px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s ease;
-  outline: none;
-}
-
-.schedule-workspace-switcher:focus,
-.schedule-workspace-switcher:focus-visible,
-.schedule-workspace-switcher-opt:focus,
-.schedule-workspace-switcher-opt:focus-visible {
-  outline: none;
-}
-
-.schedule-workspace-switcher-opt:hover:not(.is-active) {
-  color: var(--text);
-}
-
-.schedule-workspace-switcher-opt.is-active {
-  color: #fff;
-}
-
-.schedule-heatmap-panel {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 8px;
-  background: var(--bg);
-  scrollbar-width: thin;
-  scrollbar-color: #484f58 transparent;
-}
-
-.schedule-heatmap-panel[hidden] {
-  display: none;
-}
-
-.heatmap-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-self: stretch;
-  flex: 0 0 auto;
-}
-
-.heatmap-legend-item {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: 0;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--panel);
-  overflow: hidden;
-}
-
-.heatmap-legend-drag-handle {
-  flex: 0 0 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #161b22;
-  color: var(--muted);
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-}
-
-.heatmap-legend-drag-handle:hover {
-  color: var(--text);
-  background: #21262d;
-}
-
-.heatmap-legend-drag-handle:active,
-.heatmap-legend-item.is-legend-reordering .heatmap-legend-drag-handle {
-  cursor: grabbing;
-}
-
-.heatmap-legend-drag-handle svg {
-  width: 8px;
-  height: 14px;
-  display: block;
-}
-
-.heatmap-legend-item-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-}
-
-.heatmap-legend-item.is-legend-reordering {
-  position: fixed;
-  pointer-events: none;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  z-index: 40;
-}
-
-.heatmap-legend-reorder-placeholder {
-  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  box-sizing: border-box;
-}
-
-body.is-heatmap-legend-reordering {
-  cursor: grabbing;
-  user-select: none;
-}
-
-body.is-heatmap-legend-reordering .heatmap-legend-drag-handle {
-  cursor: grabbing;
-}
-
-.heatmap-legend-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.heatmap-legend-swatch {
-  width: 28px;
-  height: 14px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.heatmap-legend-label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text);
-  line-height: 1.3;
-}
-
-.heatmap-legend-desc {
-  margin: 0;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  color: var(--muted);
-}
-
-.schedule-heatmap-panel::-webkit-scrollbar {
-  width: 6px;
-}
-
-.schedule-heatmap-panel::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.schedule-heatmap-panel::-webkit-scrollbar-thumb {
-  background: #484f58;
-  border-radius: 4px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-.schedule-heatmap-panel::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
 .schedule-setups-empty,
 .schedule-setups-error {
   padding: 12px 8px;
@@ -3252,10 +2985,6 @@ body.is-schedule-resizing {
   display: none; /* Phase placement cards removed — hour cells show Trigger stats. */
 }
 
-.app-page-schedule:not(.is-heatmap-view) .schedule-placements-layer {
-  pointer-events: none;
-}
-
 .schedule-hour-slot-stats {
   display: flex;
   flex-direction: row;
@@ -3303,19 +3032,6 @@ body.is-schedule-resizing {
   white-space: nowrap;
 }
 
-.schedule-hour-slot .schedule-heatmap-row[hidden] {
-  display: none !important;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-hour-slot-stats,
-.app-page-schedule.is-heatmap-view .schedule-hour-slot-loading {
-  display: none !important;
-}
-
-.app-page-schedule:not(.is-heatmap-view) .schedule-heatmap-row {
-  display: none !important;
-}
-
 .schedule-hour-slot.is-stats-loading {
   position: relative;
 }
@@ -3339,26 +3055,6 @@ body.is-schedule-resizing {
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: schedule-placement-spin 0.7s linear infinite;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-placements-layer {
-  display: block;
-  pointer-events: none;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-placement-card:not(.is-framed) {
-  display: none;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-placement-card.is-framed {
-  pointer-events: auto;
-  background: transparent;
-  border-color: transparent;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-placement-card.is-framed .schedule-placement-drag-handle,
-.app-page-schedule.is-heatmap-view .schedule-placement-card.is-framed .schedule-placement-card-body {
-  visibility: hidden;
 }
 
 .schedule-hour-slot.is-drop-target {
@@ -4334,11 +4030,11 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 }
 
 /* Schedule (Live + Replay): double-click opens Open Replay when the cell has windows. */
-.app-page-schedule:not(.is-heatmap-view) .schedule-hour-slot.has-slot-stats {
+.app-page-schedule .schedule-hour-slot.has-slot-stats {
   cursor: pointer;
 }
 
-.app-page-schedule:not(.is-heatmap-view) .schedule-hour-slot.has-slot-stats:hover {
+.app-page-schedule .schedule-hour-slot.has-slot-stats:hover {
   background: rgba(88, 166, 255, 0.1);
 }
 
@@ -4346,7 +4042,7 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   border-bottom: none;
 }
 
-/* Active day+hour heatmap/schedule slot — demo `history-hour-slot-recording`. */
+/* Active day+hour schedule slot. */
 .schedule-hour-slot.is-now {
   z-index: 3;
 }
@@ -4371,76 +4067,6 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   50% {
     border-color: rgba(239, 68, 68, 0.3);
   }
-}
-
-.schedule-heatmap-row {
-  position: relative;
-  z-index: 2;
-  display: none;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 3px;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-heatmap-row {
-  display: grid;
-}
-
-/* Empty heatmap slots: same "No Recordings" label as Schedule Replay. */
-.schedule-heatmap-no-recordings {
-  display: none;
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  height: 100%;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1.15;
-  color: var(--muted, #8b93a7);
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.app-page-schedule:not(.is-heatmap-view) .schedule-heatmap-no-recordings {
-  display: none !important;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-hour-slot.is-heatmap-empty .schedule-heatmap-row {
-  display: none !important;
-}
-
-.app-page-schedule.is-heatmap-view .schedule-hour-slot.is-heatmap-empty .schedule-heatmap-no-recordings {
-  display: flex;
-}
-
-.schedule-heatmap-cell {
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.62rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85);
-  border-radius: 2px;
-}
-
-.schedule-heatmap-value {
-  line-height: 1;
-  pointer-events: none;
-}
-
-.schedule-heatmap-value.is-empty {
-  color: #484f58;
-  text-shadow: none;
 }
 
 .header-settings-btn {

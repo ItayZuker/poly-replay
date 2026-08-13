@@ -15,7 +15,7 @@ export function buildPlacementCacheKey(input: {
   phaseSetup: TradingPhaseSetup | null | undefined;
   latencyMs: number;
   fillSuccessPct: number;
-  heatmapVersion: string;
+  recordingsVersion: string;
   cutoffDay: string;
   /** Replay Prediction settings (optional; omitted for non-prediction paths). */
   prediction?: {
@@ -37,7 +37,7 @@ export function buildPlacementCacheKey(input: {
     phaseSetup,
     latencyMs,
     fillSuccessPct,
-    heatmapVersion,
+    recordingsVersion,
     cutoffDay,
     prediction,
   } = input;
@@ -68,7 +68,7 @@ export function buildPlacementCacheKey(input: {
     latencyMs,
     fillSuccessPct,
     predSig,
-    heatmapVersion,
+    recordingsVersion,
     cutoffDay,
   ].join("|");
 }

@@ -28,7 +28,6 @@ function trimDemoTradePositionCards(cards) {
   });
 }
 const LOG_CLEARED_SESSION_KEY = "poly-real:log-cleared";
-const SCHEDULE_WORKSPACE_STORAGE_KEY = "poly-real:schedule-workspace-mode";
 
 /** @type {"live" | "replay"} */
 let scheduleWorkspaceMode = "live";
@@ -52,17 +51,9 @@ function withScheduleWorkspaceMode(url) {
 }
 
 function syncScheduleWorkspaceUi() {
-  const page = $("page-schedule-heatmap");
+  const page = $("page-schedule");
   const replayOpen = isReplayWorkspace();
   page?.classList.toggle("is-replay-workspace", replayOpen);
-  const switcher = $("schedule-workspace-switcher");
-  switcher?.classList.toggle("is-replay", replayOpen);
-  if (switcher) {
-    switcher.setAttribute("aria-checked", replayOpen ? "true" : "false");
-  }
-  document.querySelectorAll("[data-schedule-workspace]").forEach((btn) => {
-    btn.classList.toggle("is-active", btn.dataset.scheduleWorkspace === scheduleWorkspaceMode);
-  });
   const replayPanel = $("schedule-replay-panel");
   if (replayPanel) {
     replayPanel.setAttribute("aria-hidden", replayOpen ? "false" : "true");
@@ -79,6 +70,10 @@ function syncScheduleWorkspaceUi() {
   const fillInput = $("schedule-replay-fill-success-input");
   if (latencyInput) latencyInput.tabIndex = replayOpen ? 0 : -1;
   if (fillInput) fillInput.tabIndex = replayOpen ? 0 : -1;
+  const main = document.querySelector(".schedule-main-panel");
+  if (main) {
+    main.setAttribute("aria-label", replayOpen ? "Replay" : "Schedule");
+  }
   if (replayOpen) {
     window.SchedulePlacements?.syncReplayInputsFromLive?.();
   } else {
@@ -93,11 +88,6 @@ async function setScheduleWorkspaceMode(nextMode, options = {}) {
     return;
   }
   scheduleWorkspaceMode = mode;
-  try {
-    localStorage.setItem(SCHEDULE_WORKSPACE_STORAGE_KEY, mode);
-  } catch {
-    // ignore
-  }
   syncScheduleWorkspaceUi();
   // Swap hour-cell boards immediately (separate Live/Replay buffers) before any await.
   window.SchedulePlacements?.prepareWorkspaceHourSlots?.(mode);
@@ -122,19 +112,9 @@ async function setScheduleWorkspaceMode(nextMode, options = {}) {
 }
 
 function initScheduleWorkspaceMode() {
-  try {
-    scheduleWorkspaceMode = normalizeScheduleWorkspaceMode(
-      localStorage.getItem(SCHEDULE_WORKSPACE_STORAGE_KEY),
-    );
-  } catch {
-    scheduleWorkspaceMode = "live";
-  }
+  scheduleWorkspaceMode =
+    loadAppPagePref() === "replay" ? "replay" : "live";
   syncScheduleWorkspaceUi();
-  document.querySelectorAll("[data-schedule-workspace]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      void setScheduleWorkspaceMode(btn.dataset.scheduleWorkspace);
-    });
-  });
   $("schedule-replay-run-btn")?.addEventListener("click", () => {
     window.SchedulePlacements?.toggleReplay?.();
   });
@@ -1158,8 +1138,6 @@ async function saveWalletField(body) {
 
 let walletReady = false;
 let showAppPage = null;
-/** @type {(view: string, options?: { persist?: boolean }) => void} */
-let showScheduleView = () => {};
 /** @type {(page?: string) => void} */
 let syncPageToggleActive = () => {};
 
@@ -1180,7 +1158,8 @@ function applyWalletGate(ready) {
   for (const btn of buttons) {
     const page = btn.dataset.page;
     const locked =
-      !walletReady && (page === "simulator" || page === "schedule" || page === "heatmap");
+      !walletReady &&
+      (page === "simulator" || page === "schedule" || page === "replay");
     btn.disabled = locked;
     btn.classList.toggle("is-wallet-locked", locked);
     btn.title = locked
@@ -1649,206 +1628,6 @@ function bindWalletBalanceRefresh() {
     });
   }
 }
-
-const HEATMAP_METRIC_DEFS = [
-  {
-    key: "crossings",
-    label: "Crossings",
-    tip: "Average times price crossed the price-to-beat in that hour.",
-    rgb: "88, 166, 255",
-  },
-  {
-    key: "range",
-    label: "Range",
-    tip: "Average max up plus max down distance from price-to-beat.",
-    rgb: "63, 185, 80",
-  },
-  {
-    key: "wallets",
-    label: "Wallets",
-    tip: "Average unique traders across windows in that hour.",
-    rgb: "201, 209, 217",
-  },
-  {
-    key: "newWallets",
-    label: "New wallets",
-    tip: "Average wallets new to the registry in that hour.",
-    rgb: "188, 140, 255",
-  },
-];
-
-const HEATMAP_METRIC_ORDER_KEY = "poly-real:heatmap-metric-order";
-const HEATMAP_METRIC_BY_KEY = Object.fromEntries(HEATMAP_METRIC_DEFS.map((m) => [m.key, m]));
-
-function loadHeatmapMetricOrder() {
-  const defaults = HEATMAP_METRIC_DEFS.map((m) => m.key);
-  try {
-    const raw = localStorage.getItem(HEATMAP_METRIC_ORDER_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return defaults;
-    const seen = new Set();
-    const ordered = [];
-    for (const key of parsed) {
-      if (typeof key !== "string" || !HEATMAP_METRIC_BY_KEY[key] || seen.has(key)) continue;
-      seen.add(key);
-      ordered.push(key);
-    }
-    for (const key of defaults) {
-      if (!seen.has(key)) ordered.push(key);
-    }
-    return ordered;
-  } catch {
-    return defaults;
-  }
-}
-
-let heatmapMetricOrder = loadHeatmapMetricOrder();
-
-function getHeatmapMetrics() {
-  return heatmapMetricOrder
-    .map((key) => HEATMAP_METRIC_BY_KEY[key])
-    .filter(Boolean);
-}
-
-function persistHeatmapMetricOrder(order) {
-  heatmapMetricOrder = [...order];
-  try {
-    localStorage.setItem(HEATMAP_METRIC_ORDER_KEY, JSON.stringify(heatmapMetricOrder));
-  } catch {
-    // ignore
-  }
-}
-
-let heatmapCellEls = new Map();
-let lastHeatmapState = null;
-/** Soft full-refresh age for browser heatmap cache (ms). */
-const HEATMAP_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
-/** Retry delays when ended-window Mongo row is not ready yet. */
-const HEATMAP_WINDOW_PATCH_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
-let heatmapWindowPatchToken = 0;
-
-function heatmapCacheKey(series = selectedSeries) {
-  return `poly-real:heatmap-cache:${String(series || "").trim() || "btc-5m"}`;
-}
-
-function readHeatmapCache(series = selectedSeries) {
-  try {
-    const raw = localStorage.getItem(heatmapCacheKey(series));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || !parsed.state?.cells) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeHeatmapCache(state, series = selectedSeries) {
-  if (!state?.cells) return;
-  try {
-    localStorage.setItem(
-      heatmapCacheKey(series),
-      JSON.stringify({
-        fetchedAt: Date.now(),
-        series: String(series || "").trim() || "btc-5m",
-        state,
-      }),
-    );
-  } catch {
-    // quota / private mode
-  }
-}
-
-function recomputeHeatmapMax(state) {
-  const max = { crossings: 0, range: 0, wallets: 0, newWallets: 0 };
-  for (const cell of Object.values(state.cells || {})) {
-    if (!cell) continue;
-    max.crossings = Math.max(max.crossings, Number(cell.crossings) || 0);
-    max.range = Math.max(max.range, Number(cell.range) || 0);
-    max.wallets = Math.max(max.wallets, Number(cell.wallets) || 0);
-    max.newWallets = Math.max(max.newWallets, Number(cell.newWallets) || 0);
-  }
-  state.max = max;
-  return state;
-}
-
-/** Merge one finished window into the client heatmap grid. */
-function applyHeatmapWindowPatch(state, patch) {
-  if (!state || !patch) return state;
-  const day = patch.day;
-  const hour = Number(patch.hour);
-  if (!day || !Number.isFinite(hour)) return state;
-  const key = `${day}:${hour}`;
-  const meta = (state.slotMeta && state.slotMeta[key]) || null;
-  const ws = Number(patch.windowStart);
-  const savedAt = String(patch.savedAt || "");
-  if (meta) {
-    if (Number(meta.windowStart) > ws) return state;
-    if (Number(meta.windowStart) === ws && String(meta.savedAt || "") >= savedAt) return state;
-  }
-  if (!state.cells) state.cells = {};
-  if (!state.slotMeta) state.slotMeta = {};
-  if (!state.seriesDataVersions) state.seriesDataVersions = {};
-  state.cells[key] = {
-    crossings: Number(patch.metrics?.crossings) || 0,
-    range: Number(patch.metrics?.range) || 0,
-    wallets: Number(patch.metrics?.wallets) || 0,
-    newWallets: Number(patch.metrics?.newWallets) || 0,
-  };
-  state.slotMeta[key] = { windowStart: ws, savedAt };
-  const series = String(patch.series || selectedSeries || "").trim();
-  if (series) {
-    const ver = `${ws}:${savedAt}`;
-    const prev = String(state.seriesDataVersions[series] || "");
-    const prevWs = Number(String(prev).split(":")[0]) || 0;
-    if (ws >= prevWs) state.seriesDataVersions[series] = ver;
-  }
-  return recomputeHeatmapMax(state);
-}
-
-function onHeatmapMarketWindowRolled(prevWindowStart) {
-  const ws = Math.floor(Number(prevWindowStart));
-  if (!Number.isFinite(ws) || ws <= 0) return;
-  const series = selectedSeries;
-  const token = ++heatmapWindowPatchToken;
-  const attempt = async (retryIdx) => {
-    if (token !== heatmapWindowPatchToken) return;
-    try {
-      const res = await fetch(
-        `/api/heatmap/window?series=${encodeURIComponent(series)}&windowStart=${ws}`,
-      );
-      if (res.status === 404) {
-        const delay = HEATMAP_WINDOW_PATCH_RETRY_MS[retryIdx];
-        if (delay != null) {
-          setTimeout(() => void attempt(retryIdx + 1), delay);
-        }
-        return;
-      }
-      if (!res.ok) return;
-      const patch = await res.json();
-      if (token !== heatmapWindowPatchToken) return;
-      const base = lastHeatmapState || readHeatmapCache(series)?.state || {
-        cutoffUtc: 0,
-        cells: {},
-        max: { crossings: 0, range: 0, wallets: 0, newWallets: 0 },
-        seriesDataVersions: {},
-        slotMeta: {},
-      };
-      const next = applyHeatmapWindowPatch({ ...base, cells: { ...base.cells }, slotMeta: { ...(base.slotMeta || {}) }, seriesDataVersions: { ...(base.seriesDataVersions || {}) } }, patch);
-      renderHeatmap(next);
-      writeHeatmapCache(next, series);
-      window.SchedulePlacements?.onHeatmapUpdated?.(next);
-    } catch {
-      const delay = HEATMAP_WINDOW_PATCH_RETRY_MS[retryIdx];
-      if (delay != null) {
-        setTimeout(() => void attempt(retryIdx + 1), delay);
-      }
-    }
-  };
-  void attempt(0);
-}
-let heatmapLegendDrag = null;
 
 function formatLogTime(date = new Date()) {
   return date.toLocaleTimeString("en-GB", { hour12: false });
@@ -3554,23 +3333,11 @@ function initMarketMobileStack() {
   }
 }
 
-/** Keep Live/Replay switcher in the left column (desktop) or bottom bar (mobile). */
-function syncScheduleWorkspaceSwitcherHost() {
-  const bar = document.querySelector(".schedule-workspace-switcher-bar");
-  const mobileHost = document.querySelector(".schedule-page-subheader");
-  const desktopHost = $("schedule-workspace-footer");
-  if (!bar || !mobileHost || !desktopHost) return;
-  const host = isMarketMobileStack() ? mobileHost : desktopHost;
-  if (bar.parentElement !== host) host.appendChild(bar);
-}
-
 /** Sync Schedule left-panel collapse chrome for mobile (subheader toggle + aria). */
 function syncScheduleMobileSide() {
-  const page = $("page-schedule-heatmap");
+  const page = $("page-schedule");
   const toggleBtn = $("schedule-side-toggle");
   if (!page) return;
-
-  syncScheduleWorkspaceSwitcherHost();
 
   const mobile = isMarketMobileStack();
   if (!mobile) {
@@ -3593,7 +3360,7 @@ function syncScheduleMobileSide() {
 }
 
 function setScheduleSideCollapsed(collapsed) {
-  const page = $("page-schedule-heatmap");
+  const page = $("page-schedule");
   if (!page) return;
   page.classList.toggle("is-schedule-side-collapsed", Boolean(collapsed));
   syncScheduleMobileSide();
@@ -3603,7 +3370,7 @@ function initScheduleMobileSide() {
   const toggleBtn = $("schedule-side-toggle");
   toggleBtn?.addEventListener("click", () => {
     if (!isMarketMobileStack()) return;
-    const page = $("page-schedule-heatmap");
+    const page = $("page-schedule");
     const collapsed = page?.classList.contains("is-schedule-side-collapsed");
     setScheduleSideCollapsed(!collapsed);
   });
@@ -4278,7 +4045,6 @@ const POSITIONS_HIDDEN_IDS_KEY = "poly-real:positions-hidden-ids";
 const POSITIONS_FILTER_KEY = "poly-real:positions-filter";
 const SETTLED_POSITIONS_CACHE_PREFIX = "poly-real:settled-position-cards:";
 const APP_PAGE_KEY = "poly-real:app-page";
-const SCHEDULE_VIEW_KEY = "poly-real:schedule-view";
 
 /** @type {"demo" | "trade" | "all"} */
 let positionsFilter = "all";
@@ -4661,7 +4427,14 @@ function syncPredictionCardsFromRuntime() {
 function loadAppPagePref() {
   try {
     const saved = localStorage.getItem(APP_PAGE_KEY);
-    if (saved === "simulator" || saved === "schedule" || saved === "settings") return saved;
+    if (
+      saved === "simulator" ||
+      saved === "schedule" ||
+      saved === "replay" ||
+      saved === "settings"
+    ) {
+      return saved;
+    }
   } catch {
     // ignore
   }
@@ -4670,28 +4443,13 @@ function loadAppPagePref() {
 
 function saveAppPagePref(page) {
   try {
-    if (page === "simulator" || page === "schedule" || page === "settings") {
+    if (
+      page === "simulator" ||
+      page === "schedule" ||
+      page === "replay" ||
+      page === "settings"
+    ) {
       localStorage.setItem(APP_PAGE_KEY, page);
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function loadScheduleViewPref() {
-  try {
-    const saved = localStorage.getItem(SCHEDULE_VIEW_KEY);
-    if (saved === "schedule" || saved === "heatmap") return saved;
-  } catch {
-    // ignore
-  }
-  return "schedule";
-}
-
-function saveScheduleViewPref(view) {
-  try {
-    if (view === "schedule" || view === "heatmap") {
-      localStorage.setItem(SCHEDULE_VIEW_KEY, view);
     }
   } catch {
     // ignore
@@ -5383,9 +5141,8 @@ function updateWindowUI(state) {
     onLogWindowChanged(state.windowStart);
     // Past-window open Demo cards: keep trying Gamma settle across rolls / sessions.
     scanAndResumeStuckDemoOpenCards();
-    // Patch heatmap for the window that just ended (Mongo may lag a few seconds).
     if (prevWindowStart != null && Number.isFinite(prevWindowStart)) {
-      onHeatmapMarketWindowRolled(prevWindowStart);
+      void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries);
     }
   }
 
@@ -5778,11 +5535,6 @@ function connectSSE() {
     appendLogEntry(JSON.parse(e.data));
   });
 
-  es.addEventListener("heatmap", () => {
-    // Legacy SSE — prefer client cache + per-window patch; soft refresh only.
-    void loadHeatmap({ force: false });
-  });
-
   es.addEventListener("schedule-placements", (e) => {
     if (!window.SchedulePlacements) return;
     const data = JSON.parse(e.data);
@@ -5838,7 +5590,7 @@ async function onMarketSeriesChanged(nextSeries) {
   loadPredictionPositionCards(selectedSeries);
   if (isPredictionTriggerHost()) restorePredictionRuntime();
   else syncPredictionCardsFromRuntime();
-  void loadHeatmap({ force: true });
+  void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries);
   if (window.SchedulePlacements?.loadPlacements) {
     await window.SchedulePlacements.loadPlacements({ reloadStats: true });
   } else if (window.SchedulePlacements?.refreshAllPlacementStats) {
@@ -9519,7 +9271,7 @@ async function saveTradingSetup() {
       source: "sim",
       message: `Trading setup saved: "${title}"`,
     });
-    if (!$("page-schedule-heatmap")?.hidden) {
+    if (!$("page-schedule")?.hidden) {
       void loadScheduleSetups();
     }
   } catch (err) {
@@ -9998,375 +9750,19 @@ function initScheduleUtcColumn() {
   }
 }
 
-function ensureHeatmapNoRecordingsLabel(slot) {
-  if (!slot || slot.querySelector(".schedule-heatmap-no-recordings")) return;
-  const label = document.createElement("div");
-  label.className = "schedule-heatmap-no-recordings";
-  label.textContent = "No Recordings";
-  slot.appendChild(label);
-}
-
 function initScheduleDaySlots() {
   const bodies = document.querySelectorAll(".schedule-day-body");
   for (const body of bodies) {
-    const firstSlot = body.querySelector(".schedule-hour-slot");
-    if (firstSlot && !firstSlot.querySelector(".schedule-heatmap-row")) {
-      body.replaceChildren();
-    }
-    if (body.children.length > 0) {
-      body.querySelectorAll(".schedule-hour-slot").forEach(ensureHeatmapNoRecordingsLabel);
-      continue;
-    }
+    if (body.children.length > 0) continue;
     for (let hour = 0; hour < 24; hour++) {
       const slot = document.createElement("div");
       slot.className = "schedule-hour-slot";
       slot.dataset.hour = String(hour);
-
-      const row = document.createElement("div");
-      row.className = "schedule-heatmap-row";
-      for (const metric of getHeatmapMetrics()) {
-        const cell = document.createElement("div");
-        cell.className = "schedule-heatmap-cell";
-        cell.dataset.metric = metric.key;
-        const valueEl = document.createElement("span");
-        valueEl.className = "schedule-heatmap-value";
-        cell.appendChild(valueEl);
-        row.appendChild(cell);
-      }
-      slot.appendChild(row);
-      ensureHeatmapNoRecordingsLabel(slot);
       body.appendChild(slot);
     }
   }
-  initHeatmapCellIndex();
 }
 
-function isHeatmapViewActive() {
-  return $("page-schedule-heatmap")?.classList.contains("is-heatmap-view") ?? false;
-}
-
-function formatHeatmapValue(value, hasData) {
-  if (!hasData || !Number.isFinite(value)) return "—";
-  if (value === 0) return "0";
-  if (Math.abs(value - Math.round(value)) < 0.05) return String(Math.round(value));
-  return value.toFixed(1);
-}
-
-function clearHeatmapDisplay() {
-  for (const cell of heatmapCellEls.values()) {
-    cell.style.backgroundColor = "transparent";
-    const valueEl = cell.querySelector(".schedule-heatmap-value");
-    if (valueEl) {
-      valueEl.textContent = "";
-      valueEl.classList.remove("is-empty");
-    }
-  }
-  document.querySelectorAll(".schedule-hour-slot.is-heatmap-empty").forEach((slot) => {
-    slot.classList.remove("is-heatmap-empty");
-  });
-}
-
-function initHeatmapCellIndex() {
-  heatmapCellEls = new Map();
-  document.querySelectorAll(".schedule-day-column").forEach((col) => {
-    const day = col.dataset.day;
-    if (!day) return;
-    col.querySelectorAll(".schedule-hour-slot").forEach((slot) => {
-      const hour = slot.dataset.hour;
-      if (hour == null) return;
-      slot.querySelectorAll(".schedule-heatmap-cell").forEach((cell) => {
-        const metric = cell.dataset.metric;
-        if (!metric) return;
-        heatmapCellEls.set(`${day}:${hour}:${metric}`, cell);
-      });
-    });
-  });
-}
-
-function heatmapOpacity(value, max) {
-  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(max) || max <= 0) return 0;
-  return Math.min(1, value / max);
-}
-
-function renderHeatmap(state) {
-  if (!state?.cells || !state?.max) return;
-  lastHeatmapState = state;
-
-  document.querySelectorAll(".schedule-day-column").forEach((col) => {
-    const day = col.dataset.day;
-    if (!day) return;
-    for (let hour = 0; hour < 24; hour++) {
-      const slot = col.querySelector(`.schedule-hour-slot[data-hour="${hour}"]`);
-      if (!slot) continue;
-      ensureHeatmapNoRecordingsLabel(slot);
-      const hasData = Boolean(state.cells[`${day}:${hour}`]);
-      slot.classList.toggle("is-heatmap-empty", !hasData);
-    }
-  });
-
-  for (const metric of getHeatmapMetrics()) {
-    const max = state.max[metric.key] ?? 0;
-    const rgb = metric.rgb;
-
-    document.querySelectorAll(".schedule-day-column").forEach((col) => {
-      const day = col.dataset.day;
-      if (!day) return;
-      for (let hour = 0; hour < 24; hour++) {
-        const cell = heatmapCellEls.get(`${day}:${hour}:${metric.key}`);
-        if (!cell) continue;
-        const bucket = state.cells[`${day}:${hour}`];
-        const hasData = Boolean(bucket);
-        const value = bucket?.[metric.key] ?? 0;
-        const alpha = hasData ? heatmapOpacity(value, max) : 0;
-        cell.style.backgroundColor = alpha > 0 ? `rgba(${rgb}, ${alpha})` : "transparent";
-        const valueEl = cell.querySelector(".schedule-heatmap-value");
-        if (valueEl) {
-          valueEl.textContent = hasData ? formatHeatmapValue(value, true) : "";
-          valueEl.classList.toggle("is-empty", !hasData);
-        }
-      }
-    });
-  }
-}
-
-/**
- * Load heatmap: browser cache first, Mongo via server when missing/stale/forced.
- * @param {{ force?: boolean }} [opts]
- */
-async function loadHeatmap(opts = {}) {
-  const force = opts.force === true;
-  const series = selectedSeries;
-  const cached = readHeatmapCache(series);
-  const cacheAge = cached?.fetchedAt != null ? Date.now() - Number(cached.fetchedAt) : Infinity;
-  const cacheFresh =
-    cached?.state &&
-    Number.isFinite(cacheAge) &&
-    cacheAge >= 0 &&
-    cacheAge < HEATMAP_CACHE_MAX_AGE_MS;
-
-  if (!force && cached?.state) {
-    renderHeatmap(cached.state);
-    window.SchedulePlacements?.onHeatmapUpdated?.(cached.state);
-    if (cacheFresh) return;
-  }
-
-  try {
-    const res = await fetch(`/api/heatmap?series=${encodeURIComponent(series)}`);
-    if (!res.ok) return;
-    const state = await res.json();
-    if (!state.slotMeta) state.slotMeta = {};
-    renderHeatmap(state);
-    writeHeatmapCache(state, series);
-    window.SchedulePlacements?.onHeatmapUpdated?.(state);
-  } catch {
-    // ignore
-  }
-}
-
-function syncHeatmapColumnOrder() {
-  const metrics = getHeatmapMetrics();
-  document.querySelectorAll(".schedule-heatmap-row").forEach((row) => {
-    for (const metric of metrics) {
-      const cell = row.querySelector(
-        `.schedule-heatmap-cell[data-metric="${CSS.escape(metric.key)}"]`,
-      );
-      if (cell) row.appendChild(cell);
-    }
-  });
-}
-
-function applyHeatmapMetricOrderFromLegend(legend) {
-  if (!legend) return;
-  const next = [...legend.querySelectorAll(".heatmap-legend-item")]
-    .map((el) => el.dataset.metric)
-    .filter((key) => Boolean(HEATMAP_METRIC_BY_KEY[key]));
-  if (next.length === 0) return;
-  persistHeatmapMetricOrder(next);
-  syncHeatmapColumnOrder();
-  if (lastHeatmapState) renderHeatmap(lastHeatmapState);
-}
-
-function endHeatmapLegendDrag(commit) {
-  if (!heatmapLegendDrag) return;
-  const { item, legend, placeholder, originOrder } = heatmapLegendDrag;
-  heatmapLegendDrag = null;
-  document.body.classList.remove("is-heatmap-legend-reordering");
-  window.removeEventListener("pointermove", onHeatmapLegendPointerMove);
-  window.removeEventListener("pointerup", onHeatmapLegendPointerUp);
-  window.removeEventListener("pointercancel", onHeatmapLegendPointerUp);
-
-  item.classList.remove("is-legend-reordering");
-  item.style.width = "";
-  item.style.left = "";
-  item.style.top = "";
-  item.style.zIndex = "";
-
-  if (placeholder?.parentNode) {
-    placeholder.parentNode.insertBefore(item, placeholder);
-    placeholder.remove();
-  } else if (item.parentNode !== legend) {
-    legend.appendChild(item);
-  }
-
-  if (commit) {
-    applyHeatmapMetricOrderFromLegend(legend);
-  } else {
-    // Restore original DOM order.
-    const byKey = new Map(
-      [...legend.querySelectorAll(".heatmap-legend-item")].map((el) => [el.dataset.metric, el]),
-    );
-    for (const key of originOrder) {
-      const el = byKey.get(key);
-      if (el) legend.appendChild(el);
-    }
-  }
-}
-
-function onHeatmapLegendPointerMove(e) {
-  if (!heatmapLegendDrag) return;
-  const { item, legend, placeholder, offsetX, offsetY } = heatmapLegendDrag;
-  item.style.left = `${e.clientX - offsetX}px`;
-  item.style.top = `${e.clientY - offsetY}px`;
-
-  const siblings = [...legend.querySelectorAll(".heatmap-legend-item")].filter((el) => el !== item);
-  let inserted = false;
-  for (const sibling of siblings) {
-    const rect = sibling.getBoundingClientRect();
-    const mid = rect.top + rect.height / 2;
-    if (e.clientY < mid) {
-      if (placeholder.nextElementSibling !== sibling) {
-        legend.insertBefore(placeholder, sibling);
-      }
-      inserted = true;
-      break;
-    }
-  }
-  if (!inserted && placeholder.parentNode === legend) {
-    legend.appendChild(placeholder);
-  }
-}
-
-function onHeatmapLegendPointerUp() {
-  endHeatmapLegendDrag(true);
-}
-
-function startHeatmapLegendDrag(e, item, legend) {
-  if (e.button != null && e.button !== 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (heatmapLegendDrag) endHeatmapLegendDrag(false);
-
-  const rect = item.getBoundingClientRect();
-  const placeholder = document.createElement("div");
-  placeholder.className = "heatmap-legend-reorder-placeholder";
-  placeholder.style.height = `${rect.height}px`;
-  legend.insertBefore(placeholder, item);
-
-  heatmapLegendDrag = {
-    item,
-    legend,
-    placeholder,
-    offsetX: e.clientX - rect.left,
-    offsetY: e.clientY - rect.top,
-    originOrder: [...legend.querySelectorAll(".heatmap-legend-item")]
-      .map((el) => el.dataset.metric)
-      .filter(Boolean),
-  };
-
-  item.classList.add("is-legend-reordering");
-  item.style.width = `${rect.width}px`;
-  item.style.left = `${rect.left}px`;
-  item.style.top = `${rect.top}px`;
-  item.style.zIndex = "40";
-  document.body.appendChild(item);
-  document.body.classList.add("is-heatmap-legend-reordering");
-
-  window.addEventListener("pointermove", onHeatmapLegendPointerMove);
-  window.addEventListener("pointerup", onHeatmapLegendPointerUp);
-  window.addEventListener("pointercancel", onHeatmapLegendPointerUp);
-}
-
-function initHeatmapLegend() {
-  const panel = $("schedule-heatmap-panel");
-  if (!panel) return;
-  panel.replaceChildren();
-
-  const legend = document.createElement("div");
-  legend.className = "heatmap-legend";
-  legend.setAttribute("aria-label", "Heatmap color index");
-
-  for (const metric of getHeatmapMetrics()) {
-    const item = document.createElement("div");
-    item.className = "heatmap-legend-item";
-    item.dataset.metric = metric.key;
-
-    const handle = document.createElement("div");
-    handle.className = "heatmap-legend-drag-handle";
-    handle.setAttribute("aria-label", `Drag to reorder ${metric.label}`);
-    handle.title = "Drag to reorder color columns";
-    handle.innerHTML =
-      '<svg viewBox="0 0 8 14" aria-hidden="true"><circle cx="2" cy="2" r="1.2" fill="currentColor"/><circle cx="6" cy="2" r="1.2" fill="currentColor"/><circle cx="2" cy="7" r="1.2" fill="currentColor"/><circle cx="6" cy="7" r="1.2" fill="currentColor"/><circle cx="2" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/></svg>';
-    handle.addEventListener("pointerdown", (e) => startHeatmapLegendDrag(e, item, legend));
-
-    const body = document.createElement("div");
-    body.className = "heatmap-legend-item-body";
-
-    const head = document.createElement("div");
-    head.className = "heatmap-legend-head";
-
-    const swatch = document.createElement("span");
-    swatch.className = "heatmap-legend-swatch";
-    swatch.style.backgroundColor = `rgba(${metric.rgb}, 0.85)`;
-    swatch.setAttribute("aria-hidden", "true");
-
-    const label = document.createElement("span");
-    label.className = "heatmap-legend-label";
-    label.textContent = metric.label;
-
-    head.append(swatch, label);
-
-    const desc = document.createElement("p");
-    desc.className = "heatmap-legend-desc";
-    desc.textContent = metric.tip;
-
-    body.append(head, desc);
-    item.append(handle, body);
-    legend.appendChild(item);
-  }
-
-  panel.appendChild(legend);
-  syncHeatmapColumnOrder();
-}
-
-function bindScheduleViewToggle() {
-  const list = $("schedule-setups-list");
-  const heatmapPanel = $("schedule-heatmap-panel");
-  if (!heatmapPanel) return;
-
-  const showView = (view, options = {}) => {
-    const next = view === "heatmap" ? "heatmap" : "schedule";
-    const isSchedule = next === "schedule";
-    const page = $("page-schedule-heatmap");
-    page?.classList.toggle("is-heatmap-view", !isSchedule);
-    // Setups list is retired — keep it hidden in both views.
-    if (list) {
-      list.hidden = true;
-      list.setAttribute("aria-hidden", "true");
-    }
-    heatmapPanel.hidden = isSchedule;
-    if (options.persist !== false) saveScheduleViewPref(next);
-    // Keep both UIs mounted. Heatmap uses browser cache; soft-refresh from Mongo if stale.
-    if (!isSchedule) {
-      void loadHeatmap({ force: false });
-    }
-    if (window.SchedulePlacements) window.SchedulePlacements.onViewChange();
-    else window.ScheduleHourSlots?.syncView?.();
-    syncPageToggleActive();
-  };
-
-  showScheduleView = showView;
-  showView(loadScheduleViewPref(), { persist: false });
-}
 
 function syncTradeToggleLabel(labelId, name, on) {
   const el = $(labelId);
@@ -14436,7 +13832,7 @@ window.getTradingUiState = () => windowState?.trading ?? null;
 
 function bindPageToggle() {
   const simulatorPage = $("page-simulator");
-  const schedulePage = $("page-schedule-heatmap");
+  const schedulePage = $("page-schedule");
   const settingsPage = $("page-settings");
   const buttons = document.querySelectorAll(".page-toggle-btn");
   const settingsBtn = $("settings-page-btn");
@@ -14444,46 +13840,35 @@ function bindPageToggle() {
 
   const currentAppPage = () => {
     if (!settingsPage.hidden) return "settings";
-    if (!schedulePage.hidden) return "schedule";
+    if (!schedulePage.hidden) return isReplayWorkspace() ? "replay" : "schedule";
     return "simulator";
   };
 
   const syncActive = (page = currentAppPage()) => {
-    const isSimulator = page === "simulator";
-    const isSchedule = page === "schedule";
     const isSettings = page === "settings";
-    const scheduleView = schedulePage.classList.contains("is-heatmap-view")
-      ? "heatmap"
-      : "schedule";
     for (const btn of buttons) {
-      const btnPage = btn.dataset.page;
-      const scheduleTab = btn.dataset.scheduleTab;
-      let active = false;
-      if (btnPage === "simulator") active = isSimulator;
-      else if (btnPage === "heatmap" || scheduleTab === "heatmap") {
-        active = isSchedule && scheduleView === "heatmap";
-      } else if (btnPage === "schedule" || scheduleTab === "schedule") {
-        active = isSchedule && scheduleView === "schedule";
-      }
-      btn.classList.toggle("is-active", active);
+      btn.classList.toggle("is-active", btn.dataset.page === page);
     }
     if (settingsBtn) settingsBtn.classList.toggle("is-active", isSettings);
   };
   syncPageToggleActive = syncActive;
 
   const showPage = (page, options = {}) => {
-    let next = page === "heatmap" ? "schedule" : page;
-    if (!walletReady && (next === "simulator" || next === "schedule")) {
+    let next = page;
+    if (!walletReady && (next === "simulator" || next === "schedule" || next === "replay")) {
       next = "settings";
     } else if (options.persist !== false) {
       saveAppPagePref(next);
     }
     const isSimulator = next === "simulator";
-    const isSchedule = next === "schedule";
+    const isScheduleBoard = next === "schedule" || next === "replay";
     const isSettings = next === "settings";
     simulatorPage.hidden = !isSimulator;
-    schedulePage.hidden = !isSchedule;
+    schedulePage.hidden = !isScheduleBoard;
     settingsPage.hidden = !isSettings;
+    if (isScheduleBoard) {
+      void setScheduleWorkspaceMode(next === "replay" ? "replay" : "live");
+    }
     syncActive(next);
 
     if (isSimulator) {
@@ -14510,11 +13895,6 @@ function bindPageToggle() {
           syncMarketColumnRail();
         });
       });
-    } else if (isSchedule) {
-      // Setups + placement cards stay mounted across page toggles; they load once
-      // at boot and refresh only on create/edit/delete (see afterTradingSetupChange).
-      if (lastHeatmapState) renderHeatmap(lastHeatmapState);
-      else void loadHeatmap();
     } else if (isSettings) {
       void loadSettingsUser();
       void loadWalletAccount();
@@ -14532,17 +13912,6 @@ function bindPageToggle() {
     btn.addEventListener("click", () => {
       if (btn.disabled || btn.classList.contains("is-active")) return;
       const page = btn.dataset.page;
-      const scheduleTab = btn.dataset.scheduleTab;
-      if (page === "heatmap" || scheduleTab === "heatmap") {
-        showPage("schedule");
-        showScheduleView("heatmap");
-        return;
-      }
-      if (scheduleTab === "schedule") {
-        showPage("schedule");
-        showScheduleView("schedule");
-        return;
-      }
       if (!page) return;
       showPage(page);
     });
@@ -14559,7 +13928,6 @@ function bindPageToggle() {
   applyWalletGate(walletReady);
   showPage(loadAppPagePref(), { persist: false });
   delete document.documentElement.dataset.initialPage;
-  delete document.documentElement.dataset.initialScheduleView;
 }
 
 function sumHeaderWidths(widths, gap) {
@@ -14756,7 +14124,6 @@ async function init() {
   bindSettingsEditors();
   initScheduleDaySlots();
   initScheduleUtcColumn();
-  initHeatmapLegend();
   initScheduleWorkspaceMode();
   if (window.SchedulePlacements) window.SchedulePlacements.init();
   if (window.SetupEditor) window.SetupEditor.init();
@@ -14764,12 +14131,10 @@ async function init() {
   bindTradeToggles();
   bindQuoteBoxes();
   bindPredictionStatusBuyButton();
-  bindScheduleViewToggle();
   bindSetupSaveModal();
   bindModalKeyboardShortcuts();
   bindSetupListMenus();
   initAppHeaderLayout();
-  void loadHeatmap();
   await loadScheduleSetups();
   if (window.SchedulePlacements) void window.SchedulePlacements.loadPlacements();
   await loadMarkets();

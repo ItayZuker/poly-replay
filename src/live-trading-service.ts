@@ -71,6 +71,7 @@ import {
 } from "./db/position-card-repository.js";
 import {
   closeFillAttempt,
+  getRollingCutoffUtcSec,
   markFillAttemptSuccess,
   markFillAttemptTouched,
   recordFillAttempt,
@@ -97,7 +98,6 @@ import {
 } from "./db/trigger-demo-stats-repository.js";
 import { getMongoClient, getMongoDbName } from "./db/mongo-client.js";
 import { computeScheduleHourSlotStats } from "./schedule-hour-stats.js";
-import { getRollingCutoffUtcSec } from "./heatmap-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
 import {
   getUserById,

@@ -22,11 +22,6 @@ export function marketsFilePath(): string {
   return path.join(getDataDir(), "markets.json");
 }
 
-/** Legacy path — read once to migrate into Mongo `trader_wallets`. */
-export function walletsFilePath(): string {
-  return path.join(getDataDir(), "wallets.json");
-}
-
 export function marketDir(series: string): string {
   return path.join(getDataDir(), series.replace(/-/g, "_"));
 }
@@ -53,11 +48,6 @@ export function chainlinkTicksPath(series: string, windowStart: number): string 
 
 export function marketWindowsDir(series: string): string {
   return path.join(marketDir(series), "windows");
-}
-
-/** @deprecated Heatmap JSON is no longer written; kept for one-time migration reads. */
-export function marketHeatmapDir(series: string): string {
-  return path.join(marketDir(series), "heatmap");
 }
 
 /** Legacy zip folder — no longer created; retention deletes it if present. */

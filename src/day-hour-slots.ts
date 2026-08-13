@@ -7,7 +7,7 @@ export type WeekDayId = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
 const UTC_DAY_TO_ID: WeekDayId[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-/** Floor for loading heatmap/Replay history (~2 weeks of weekday hours). */
+/** Floor for loading Replay history (~2 weeks of weekday hours). */
 export function getWeekHistoryCutoffUtcSec(now = new Date()): number {
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();

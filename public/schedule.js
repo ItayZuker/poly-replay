@@ -42,8 +42,6 @@
   let statsFetchSetupId = null;
   /** When true, the active stats fetch skips the header progress bar (single-card incremental refresh). */
   let statsFetchQuiet = false;
-  /** Per-series heatmap data version (`windowStart:savedAt`) for stats cache invalidation. */
-  let heatmapSeriesVersions = {};
   let dragState = null;
   /** Pending/active drag from the setups list: reorder in-column or place on grid. */
   let listDragState = null;
@@ -92,12 +90,12 @@
   }
 
   function isSchedulePage() {
-    const page = document.getElementById("page-schedule-heatmap");
+    const page = document.getElementById("page-schedule");
     return page && !page.hidden;
   }
 
   function isScheduleView() {
-    return isSchedulePage() && !document.getElementById("page-schedule-heatmap")?.classList.contains("is-heatmap-view");
+    return isSchedulePage();
   }
 
   /** Current UTC weekday key + fractional hour for the schedule grid. */
@@ -117,7 +115,7 @@
   /**
    * Now highlights:
    * - UTC hour label
-   * - Current day×hour cell (Schedule stats + Heatmap) — pulsing red frame
+   * - Current day×hour cell — pulsing red frame
    * Animations share one wall-clock phase via --schedule-pulse-delay on :root.
    */
   function syncNowHighlights() {
@@ -784,28 +782,11 @@
     return new Date().toISOString().slice(0, 10);
   }
 
-  function heatmapVersionForSeries(series) {
-    return heatmapSeriesVersions[series] ?? "0";
-  }
+  /** Latest recorded window version (`windowStart:savedAt`) for Replay cache keys. */
+  let recordingsSeriesVersion = "0";
 
-  function syncHeatmapSeriesVersions(state) {
-    if (!state?.seriesDataVersions) return false;
-    const series = selectedSeries();
-    const prev = heatmapVersionForSeries(series);
-    heatmapSeriesVersions = { ...state.seriesDataVersions };
-    const next = heatmapVersionForSeries(series);
-    return next !== prev;
-  }
-
-  function onHeatmapUpdated(state) {
-    // Placement card stats are live trade counters (not heatmap backtests).
-    // Only track heatmap versions for any future cache keys — do not refetch
-    // the active card on every heatmap ingest (that caused stats flicker).
-    syncHeatmapSeriesVersions(state);
-    // Replay idle board: keep gray = recorded window counts in sync with Heatmap.
-    if (isReplayWorkspace() && !replayRunning) {
-      void window.ScheduleHourSlots?.refreshReplayBaseline?.(selectedSeries());
-    }
+  function onRecordingsUpdated(version) {
+    if (typeof version === "string" && version) recordingsSeriesVersion = version;
   }
 
   function placementCacheKey(placement) {
@@ -820,7 +801,7 @@
       setupFingerprint(placement.setupId),
       simLatencyMs(),
       simFillSuccessPct(),
-      heatmapVersionForSeries(selectedSeries()),
+      recordingsSeriesVersion,
       rollingCutoffDayUtc(),
     ].join("|");
   }
@@ -1046,7 +1027,7 @@
   }
 
   function applyCardStatsVisualState(card, placementId) {
-    // Quiet refreshes (e.g. heatmap version bump) keep existing numbers visible —
+    // Quiet refreshes keep existing numbers visible —
     // showing a loading state on the live card makes the red border flicker.
     card.classList.toggle("is-stats-loading", cardStatsShowLoading(placementId));
     card.classList.toggle("is-stats-waiting", false);
@@ -2340,7 +2321,6 @@
 
       const dayPlacements = placements.filter((x) => x.day === day);
       // Always mount every placement (even if the schedule page is hidden).
-      // View visibility is CSS-driven so Schedule ↔ Heatmap does not rebuild cards.
       for (const p of dayPlacements) {
         layer.appendChild(buildPlacementCard(p));
       }
@@ -3433,8 +3413,8 @@
   }
 
   /**
-   * Paint the correct hour-cell board immediately after the Live/Replay CSS class
-   * flips — before async setup loads — so Live never flashes Replay (and vice versa).
+   * Paint the correct hour-cell board immediately after the Schedule/Replay CSS class
+   * flips — before async setup loads — so Schedule never flashes Replay (and vice versa).
    */
   function prepareWorkspaceHourSlots(mode) {
     const expectedMode = mode || workspaceMode();
@@ -3458,7 +3438,7 @@
   }
 
   async function onWorkspaceModeChanged(mode) {
-    // Keep a running Replay alive across Live ↔ Simulator toggles.
+    // Keep a running Replay alive across Schedule ↔ Replay page switches.
     const expectedMode = mode || workspaceMode();
     clearWorkspaceBoard();
     placements = [];
@@ -4385,7 +4365,7 @@
 
   function interruptReplayIfRunning(reason = "schedule changed") {
     if (!replayRunning) return;
-    // Workspace toggles must not abort Replay — only schedule/trigger edits / explicit Stop.
+    // Workspace page switches must not abort Replay — only schedule/trigger edits / explicit Stop.
     if (reason === "workspace changed") return;
     stopReplay(reason);
     const message =
@@ -4579,7 +4559,7 @@
             level: "warn",
             source: "client",
             message:
-              "Replay finished with no card stats — tick files are missing on disk (heatmap alone is not enough). Check DATA_DIR / Dropbox sync; keep Recording on to rebuild history.",
+              "Replay finished with no card stats — tick files are missing on disk. Check DATA_DIR / Dropbox sync; keep Recording on to rebuild history.",
           });
         } else {
           window.appendLogEntry?.({
@@ -4652,7 +4632,6 @@
     clearHeaderFillPreview();
     moveDragState = null;
     document.body.classList.remove("is-schedule-moving");
-    // Toggle hour-slot Trigger stats vs heatmap metric cells.
     window.ScheduleHourSlots?.syncView?.();
     updateDayHeaderPnls();
     updateHighlightedHeaderSummary();
@@ -4689,7 +4668,7 @@
   }
 
   function bindHourSlotOpenReplay() {
-    const page = document.getElementById("page-schedule-heatmap");
+    const page = document.getElementById("page-schedule");
     if (!page || page.dataset.hourOpenBound === "1") return;
     page.dataset.hourOpenBound = "1";
     page.addEventListener("dblclick", (event) => {
@@ -4751,7 +4730,7 @@
     interruptReplayIfRunning,
     toggleReplay,
     isReplayRunning: () => replayRunning,
-    onHeatmapUpdated,
+    onRecordingsUpdated,
     applyLivePlacementStats,
     scheduleLiveStatsRestRefresh,
     fetchLiveSessionMemoryTotals,

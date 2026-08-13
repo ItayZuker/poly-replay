@@ -7,8 +7,7 @@ import {
   listChainlinkTicks,
   windowsHavingReplayTickFiles,
 } from "./db/tick-repository.js";
-import { getWeekHistoryCutoffUtcSec } from "./heatmap-service.js";
-import { selectLatestDayHourWindows } from "./day-hour-slots.js";
+import { getWeekHistoryCutoffUtcSec, selectLatestDayHourWindows } from "./day-hour-slots.js";
 import { defaultPhaseConfig, recordAskSamples } from "./phase-config.js";
 import { SimulatorEngine } from "./simulator-engine.js";
 import { phaseSetupToSimSetup } from "./simulator-service.js";
@@ -709,7 +708,7 @@ export async function simulateRecordedWindow(
 
     for (const tick of ticks) {
       if (tick.tMs >= windowEnd * 1000) break;
-      // Same series as live heatmap: append on each Chainlink sample (incl. same $).
+      // Same series as live recordings: append on each Chainlink sample (incl. same $).
       if (
         tick.source === "chainlink-tick" &&
         tick.assetPrice != null &&
@@ -927,7 +926,7 @@ async function buildPlacementPlan(
     phaseSetup: TradingPhaseSetup | null;
     latencyMs: number;
     fillSuccessPct: number;
-    heatmapVersion: string;
+    recordingsVersion: string;
     cutoffDay: string;
     cutoffUtc: number;
     allWindows: RecordedWindowDocument[];
@@ -940,7 +939,7 @@ async function buildPlacementPlan(
     phaseSetup,
     latencyMs,
     fillSuccessPct,
-    heatmapVersion,
+    recordingsVersion,
     cutoffDay,
     cutoffUtc,
     allWindows,
@@ -953,7 +952,7 @@ async function buildPlacementPlan(
     phaseSetup,
     latencyMs,
     fillSuccessPct,
-    heatmapVersion,
+    recordingsVersion,
     cutoffDay,
     prediction,
   });
@@ -1021,7 +1020,7 @@ export async function backtestSchedulePlacements(
   const series = market._id;
   const cutoffUtc = getWeekHistoryCutoffUtcSec();
   const cutoffDay = rollingCutoffDayUtc();
-  // Same Mongo window index as the heatmap — keep ~2 weeks, then for each
+  // Same Mongo window index as Replay — keep ~2 weeks, then for each
   // weekday×hour keep only the latest calendar day (missed hours keep last week).
   const listed = await listRecordedWindowsSince(cutoffUtc, series);
   const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
@@ -1045,7 +1044,7 @@ export async function backtestSchedulePlacements(
     assetRange: w.assetRange,
     tickCount: 0,
   }));
-  const heatmapVersion = await getWindowDataVersion(market, allWindows);
+  const recordingsVersion = await getWindowDataVersion(market, allWindows);
   const livePlacementIds = placements.map((p) => p._id);
   const tickCache = options.tickCache ?? new Map<number, ReplayTickDocument[]>();
   const recomputeSetupId = options.recomputeSetupId;
@@ -1094,7 +1093,7 @@ export async function backtestSchedulePlacements(
         phaseSetup,
         latencyMs,
         fillSuccessPct,
-        heatmapVersion,
+        recordingsVersion,
         cutoffDay,
         prediction,
       });
@@ -1113,7 +1112,7 @@ export async function backtestSchedulePlacements(
     series,
     latencyMs,
     fillSuccessPct,
-    heatmapVersion,
+    recordingsVersion,
     cutoffDay,
     cutoffUtc,
     allWindows,

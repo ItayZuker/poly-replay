@@ -12,7 +12,7 @@ import path from "path";
 
 /**
  * Local JSON window files under data/{series}/windows — legacy offline helpers.
- * Live heatmap uses Mongo (`recorded-window-mongo-repository`).
+ * Replay slot counts use Mongo (`recorded-window-mongo-repository`).
  * Prefer Mongo for any new code paths.
  */
 

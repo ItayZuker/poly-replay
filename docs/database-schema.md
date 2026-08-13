@@ -75,8 +75,8 @@ Logical names in this doc map to those keys. When reading raw JSON files, transl
 
 - A window spans `[windowStart, windowEnd)` in unix seconds (`windowEnd - windowStart` = 300 for 5m, 900 for 15m).
 - Ticks are recorded only while the window is active.
-- On window end: ticks are flushed, trader stats fetched, `windows/{windowStart}.json` written, `wallets.json` updated.
-- Files older than **14 days** (hardcoded) are **deleted** (ticks, local window JSON, and Mongo heatmap summaries). No zip archive. Pruning runs every hour on the recorder process and after each window finalizes. Heatmap/Replay then keep the **latest** UTC weekday×hour only (new hour overrides that slot; missing hours keep the prior week).
+- On window end: ticks are flushed and `windows/{windowStart}.json` is written (Mongo `recorded_windows` is upserted).
+- Files older than **14 days** (hardcoded) are **deleted** (ticks, local window JSON, and Mongo recorded_windows summaries). No zip archive. Pruning runs every hour on the recorder process and after each window finalizes. Replay then keeps the **latest** UTC weekday×hour only (new hour overrides that slot; missing hours keep the prior week).
 
 ---
 
@@ -94,17 +94,14 @@ data/
         chainlink.jsonl
     windows/
       {windowStart}.json       # full window summary
-    heatmap/
-      {windowStart}.json       # slim stats for heatmap / bulk scan (legacy)
 ```
 
 | Path | Purpose | Use in simulator |
 |------|---------|------------------|
 | `markets.json` | Which markets exist, retention, recording flags | Market selection |
 | `{market}/ticks/*.jsonl` | Time-series replay source | **Primary input** for stepping through a window |
-| `{market}/windows/*.json` | Full per-window summary + stats | Window metadata, settlement, heatmap metrics, trader counts |
-| `{market}/heatmap/*.json` | **Legacy** — no longer written | Use `windows/`; run `npm run migrate:heatmap-to-windows` to merge old files |
-| `wallets.json` | Global wallet registry | Optional; not needed for price replay |
+| `{market}/windows/*.json` | Full per-window summary + stats | Window metadata, settlement, Replay |
+| `wallets.json` | Legacy trader-registry file (unused) | Not needed for Replay |
 
 ---
 
@@ -386,7 +383,7 @@ Full summary written once when a window completes. Primary metadata source for a
 
 ## `heatmap` — legacy (deprecated)
 
-**No longer written.** The heatmap UI and schedule backtest read from `windows/` only. Merge old files with `npm run migrate:heatmap-to-windows`, then delete `data/*/heatmap/`.
+**No longer written.** Replay and recorded-window summaries read from `windows/` / Mongo `recorded_windows` only. Leftover `data/*/heatmap/` folders can be deleted.
 
 Legacy key layout (archives may still contain these files):
 
@@ -424,7 +421,7 @@ For offline simulation, read files directly under `DATA_DIR`. The API expands co
 
 ## Legacy formats
 
-Older data from the MongoDB era may use **named fields** (`windowStart`, `yesBid`, …) instead of numeric keys. Reader code in `src/tick-compact.ts`, `src/window-compact.ts`, and `src/heatmap-compact.ts` accepts both. New recordings always use compact numeric keys.
+Older data from the MongoDB era may use **named fields** (`windowStart`, `yesBid`, …) instead of numeric keys. Reader code in `src/tick-compact.ts` and `src/window-compact.ts` accepts both. New recordings always use compact numeric keys.
 
 ---
 
@@ -435,7 +432,6 @@ Older data from the MongoDB era may use **named fields** (`windowStart`, `yesBid
 | Tick type + book keys | `src/tick-compact.ts` | `TK`, `TickType`, `BK` |
 | Chainlink tick keys | `src/tick-compact.ts` | `CK`, `CK_LEGACY` |
 | Recorded window keys | `src/window-compact.ts` | `WK`, `WindowOutcomeCode` |
-| Heatmap keys | `src/heatmap-compact.ts` | `HK` |
 | Replay merge | `src/db/replay-tick-repository.ts` | `mergeReplayTicks`, `listReplayTicks` |
 | File paths | `src/db/data-dir.ts` | `marketDir`, `marketTicksDir`, … |
 

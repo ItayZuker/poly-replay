@@ -1,7 +1,7 @@
 /**
  * Schedule week grid: every UTC weekday×hour cell shows Trigger Trade stats + P/L.
- * Live and Replay keep separate in-memory boards so workspace toggles paint instantly
- * without flashing the other mode’s stats.
+ * Live and Replay keep separate in-memory boards so Schedule/Replay page
+ * switches paint instantly without flashing the other mode’s stats.
  * Live: GET /api/schedule-hour-stats (last occurrence per slot, zeros included).
  * Replay: baseline gray = recorded window counts; Run SSE fills green/red/blue/gray.
  */
@@ -69,14 +69,8 @@
 
   function isReplayWorkspace() {
     return (
-      document.getElementById("page-schedule-heatmap")?.classList.contains("is-replay-workspace") ??
+      document.getElementById("page-schedule")?.classList.contains("is-replay-workspace") ??
       false
-    );
-  }
-
-  function isHeatmapView() {
-    return (
-      document.getElementById("page-schedule-heatmap")?.classList.contains("is-heatmap-view") ?? false
     );
   }
 
@@ -205,41 +199,12 @@
     }
   }
 
-  /** Strip Schedule Trigger stats / spinners from hour cells (Heatmap must stay untouched). */
-  function clearScheduleChromeFromSlots() {
-    for (const day of DAYS) {
-      const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
-      if (!col) continue;
-      for (const el of col.querySelectorAll(".schedule-hour-slot")) {
-        el.querySelector(".schedule-hour-slot-stats")?.remove();
-        el.querySelector(".schedule-hour-slot-loading")?.remove();
-        el.classList.remove("has-slot-stats", "is-stats-loading", "is-no-recordings");
-        const heatRow = el.querySelector(".schedule-heatmap-row");
-        if (heatRow) heatRow.hidden = false;
-      }
-    }
-  }
-
-  /** Show Trigger stats (Schedule) or heatmap metric cells (Heatmap). */
   function syncView() {
-    const heatmap = isHeatmapView();
-    if (heatmap) {
-      clearScheduleChromeFromSlots();
-      return;
-    }
-    for (const day of DAYS) {
-      const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
-      if (!col) continue;
-      for (const el of col.querySelectorAll(".schedule-hour-slot")) {
-        const heatRow = el.querySelector(".schedule-heatmap-row");
-        if (heatRow) heatRow.hidden = true;
-      }
-    }
     paint();
   }
 
   function slotShowsReplaySpinner(day, hour) {
-    if (!replayRunning || !isReplayWorkspace() || isHeatmapView()) return false;
+    if (!replayRunning || !isReplayWorkspace()) return false;
     if (replayResolvedKeys.has(slotKey(day, hour))) return false;
     // No Recordings cells never spin — nothing to simulate.
     if (recordingCountFor(day, hour) <= 0) return false;
@@ -281,15 +246,10 @@
   }
 
   function paintSlotElement(el, day, hour) {
-    // Replay / Live Schedule paints must never mutate Heatmap cells.
-    if (isHeatmapView()) return;
-
     const map = activeSlotStats();
     const stats = map.get(slotKey(day, hour)) || emptySlot(day, hour);
     el.querySelector(".schedule-hour-slot-stats")?.remove();
     el.querySelector(".schedule-hour-slot-loading")?.remove();
-    const heatRow = el.querySelector(".schedule-heatmap-row");
-    if (heatRow) heatRow.hidden = true;
 
     const loading = slotShowsReplaySpinner(day, hour);
     el.classList.toggle("is-stats-loading", loading);
@@ -328,7 +288,6 @@
   }
 
   function paint() {
-    if (isHeatmapView()) return;
     ensureAllEmpty();
     for (const day of DAYS) {
       const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
@@ -351,7 +310,7 @@
     if (isReplayWorkspace() && !replayRunning) {
       applyBaselineToUnresolved();
     }
-    if (!isHeatmapView()) paint();
+    paint();
     notifyDayHeaders();
     window.SchedulePlacements?.syncHeaderSummaryControls?.();
   }
@@ -367,7 +326,7 @@
     } else {
       applyBaselineToUnresolved();
     }
-    if (!isHeatmapView()) paint();
+    paint();
     notifyDayHeaders();
   }
 
@@ -383,7 +342,7 @@
       }
     }
     // Only repaint when Live is the visible workspace.
-    if (!isReplayWorkspace() && !isHeatmapView()) {
+    if (!isReplayWorkspace()) {
       paint();
       notifyDayHeaders();
       window.SchedulePlacements?.syncHeaderSummaryControls?.();
@@ -404,7 +363,7 @@
       liveSlotStats = new Map();
       ensureMapFilled(liveSlotStats);
     }
-    if (!isHeatmapView()) paint();
+    paint();
     notifyDayHeaders();
   }
 
@@ -417,7 +376,7 @@
     ensureMapFilled(liveSlotStats);
     ensureMapFilled(replaySlotStats);
     if (isReplayWorkspace() && !replayRunning) applyBaselineToUnresolved();
-    if (!isHeatmapView()) paint();
+    paint();
     notifyDayHeaders();
   }
 
@@ -455,7 +414,7 @@
     replaySlotStats.set(key, next);
     replayResolvedKeys.add(key);
     // Paint only when Replay is visible (Run can finish while user is on Live).
-    if (isReplayWorkspace() && !isHeatmapView()) {
+    if (isReplayWorkspace()) {
       const col = document.querySelector(`.schedule-day-column[data-day="${day}"]`);
       const el = col?.querySelector(`.schedule-hour-slot[data-hour="${hour}"]`);
       if (el) paintSlotElement(el, day, hour);
@@ -553,7 +512,10 @@
       }
       recordingCounts = next;
       applyBaselineToUnresolved();
-      if (isReplayWorkspace() && !isHeatmapView()) {
+      if (typeof body?.recordingsVersion === "string" && body.recordingsVersion) {
+        window.SchedulePlacements?.onRecordingsUpdated?.(body.recordingsVersion);
+      }
+      if (isReplayWorkspace()) {
         paint();
         notifyDayHeaders();
         window.SchedulePlacements?.syncHeaderSummaryControls?.();
