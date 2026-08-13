@@ -555,6 +555,34 @@ export async function listActiveDemoTriggersForSeries(
   return out;
 }
 
+/** Active Trade + GTD triggers for executor-side place/poll (no browser required). */
+export async function listActiveTradeGtdTriggersForSeries(
+  series: string,
+): Promise<Array<UserTriggerRecord & { userId: string }>> {
+  await ensureIndexes();
+  const seriesKey = normalizeSeriesKey(series);
+  if (!seriesKey) return [];
+  const c = await col();
+  const docs = await c
+    .find({
+      paused: false,
+      runMode: "trade",
+      buyOrderType: "GTD",
+      ...seriesMatchFilter(seriesKey),
+    })
+    .toArray();
+  const out: Array<UserTriggerRecord & { userId: string }> = [];
+  for (const doc of docs) {
+    const rec = toClient(doc);
+    if (!rec) continue;
+    const userId = String(doc.userId || "").trim();
+    if (!userId) continue;
+    if (!rec.series) rec.series = seriesKey;
+    out.push({ ...rec, userId });
+  }
+  return out;
+}
+
 /** All Active+Demo triggers (any series) — keep executor feeds / engines warm. */
 export async function listAllActiveDemoTriggers(): Promise<
   Array<UserTriggerRecord & { userId: string }>

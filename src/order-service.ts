@@ -724,3 +724,30 @@ export async function fetchOpenOrder(
     return null;
   }
 }
+
+/** Live CLOB rests for this user (source of truth after a dyno restart). */
+export async function listOpenOrders(userId: string): Promise<OpenOrderSnapshot[]> {
+  const client = getTradingClient(userId);
+  if (!client) return [];
+  try {
+    const raw = (await client.getOpenOrders()) as unknown;
+    const rows = Array.isArray(raw)
+      ? raw
+      : raw && typeof raw === "object"
+        ? ((raw as { data?: unknown; orders?: unknown }).data ??
+            (raw as { data?: unknown; orders?: unknown }).orders ??
+            [])
+        : [];
+    if (!Array.isArray(rows)) return [];
+    const out: OpenOrderSnapshot[] = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const snap = parseOpenOrder(row as Record<string, unknown>);
+      if (snap) out.push(snap);
+    }
+    return out;
+  } catch (err) {
+    logService.warn("trading", `getOpenOrders failed: ${String(err)}`);
+    return [];
+  }
+}

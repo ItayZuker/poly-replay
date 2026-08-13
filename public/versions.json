@@ -1,6 +1,11 @@
 {
-    "current": "1.68.19",
+    "current": "1.68.20",
     "releases": [
+        {
+            "version": "1.68.20",
+            "releasedAt": "2026-08-13T05:21:17.973Z",
+            "notes": "Trigger Trade GTD: place/poll on the executor without the browser; reattach live CLOB rests after dyno restart; backoff insufficient-balance retries. Docs updated."
+        },
         {
             "version": "1.68.19",
             "releasedAt": "2026-08-12T13:59:04.603Z",
