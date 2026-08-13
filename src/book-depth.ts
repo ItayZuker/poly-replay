@@ -6,6 +6,8 @@ import {
 } from "./taker-fee.js";
 
 export const BOOK_DEPTH_LEVELS = 10;
+/** Levels written into new recordings and kept in the live CLOB cache. */
+export const RECORDING_BOOK_DEPTH = 5;
 
 export interface FillLeg {
   price: number;

@@ -3,7 +3,10 @@ import type { BookLevel } from "./clob-service.js";
 export type WindowOutcome = "up" | "down";
 export type TickSource = "clob-book" | "chainlink-tick";
 
+/** Max levels kept when reading historical book ticks (older files may have 10). */
 export const BOOK_DEPTH_LEVELS = 10;
+/** Levels stored in new recordings and in the live CLOB cache. */
+export const RECORDING_BOOK_DEPTH = 5;
 
 export interface MarketDocument {
   _id: string;
@@ -58,7 +61,7 @@ export interface ClobRawTickDocument {
   payload: unknown;
 }
 
-/** Parsed top-of-book depth snapshot after each raw WS message. */
+/** Parsed 5-level book snapshot after each raw WS message. */
 export interface ClobBookTickDocument {
   _id: string;
   windowStart: number;

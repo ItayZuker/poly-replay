@@ -9,6 +9,7 @@ import {
   type MarketInfo,
 } from "./clob-service.js";
 import { logService } from "./log-service.js";
+import { RECORDING_BOOK_DEPTH, takeLevels } from "./book-depth.js";
 
 const CLOB_MARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 const PING_INTERVAL_MS = 10_000;
@@ -46,6 +47,16 @@ export interface BookDepth {
   bestAsk?: number;
   bestBidSize?: number;
   bestAskSize?: number;
+}
+
+function trimCachedBook(bids: BookLevel[] | undefined, asks: BookLevel[] | undefined): {
+  bids: BookLevel[];
+  asks: BookLevel[];
+} {
+  return {
+    bids: takeLevels(bids, RECORDING_BOOK_DEPTH),
+    asks: takeLevels(asks, RECORDING_BOOK_DEPTH),
+  };
 }
 
 function booksEqual(a: BookLevel[], b: BookLevel[]): boolean {
@@ -222,8 +233,12 @@ export class ClobMarketFeed {
 
     state.tickSize = info.tickSize || state.tickSize;
     state.negRisk = Boolean(info.negRisk);
-    state.bids = Array.isArray(info.bids) ? info.bids : [];
-    state.asks = Array.isArray(info.asks) ? info.asks : [];
+    const trimmed = trimCachedBook(
+      Array.isArray(info.bids) ? info.bids : [],
+      Array.isArray(info.asks) ? info.asks : [],
+    );
+    state.bids = trimmed.bids;
+    state.asks = trimmed.asks;
     state.bestBid = info.bestBid;
     state.bestAsk = info.bestAsk;
     state.bestBidSize = info.bestBidSize;
@@ -243,7 +258,7 @@ export class ClobMarketFeed {
   getCachedBookDepth(tokenId: string): BookDepth | undefined {
     const state = this.tokens.get(tokenId);
     if (!state) return undefined;
-    return mergeBestLevelsIntoDepth({
+    const merged = mergeBestLevelsIntoDepth({
       bids: state.bids,
       asks: state.asks,
       bestBid: state.bestBid,
@@ -251,6 +266,12 @@ export class ClobMarketFeed {
       bestBidSize: state.bestBidSize,
       bestAskSize: state.bestAskSize,
     });
+    const trimmed = trimCachedBook(merged.bids, merged.asks);
+    return {
+      ...merged,
+      bids: trimmed.bids,
+      asks: trimmed.asks,
+    };
   }
 
   /** Subscribe tokens on the market WS (does not fetch REST books). */
@@ -531,7 +552,7 @@ export class ClobMarketFeed {
     if (bids) {
       const parsedBids = parseBookSide(bids, "bid");
       if (parsedBids.length > 0) {
-        state.bids = parsedBids;
+        state.bids = takeLevels(parsedBids, RECORDING_BOOK_DEPTH);
         const bidLevel = state.bids[0];
         state.bestBid = bidLevel.price;
         state.bestBidSize = bidLevel.size;
@@ -540,7 +561,7 @@ export class ClobMarketFeed {
     if (asks) {
       const parsedAsks = parseBookSide(asks, "ask");
       if (parsedAsks.length > 0) {
-        state.asks = parsedAsks;
+        state.asks = takeLevels(parsedAsks, RECORDING_BOOK_DEPTH);
         const askLevel = state.asks[0];
         state.bestAsk = askLevel.price;
         state.bestAskSize = askLevel.size;
@@ -583,8 +604,9 @@ export class ClobMarketFeed {
       bestBidSize: state.bestBidSize,
       bestAskSize: state.bestAskSize,
     });
-    state.bids = merged.bids;
-    state.asks = merged.asks;
+    const trimmed = trimCachedBook(merged.bids, merged.asks);
+    state.bids = trimmed.bids;
+    state.asks = trimmed.asks;
 
     if (
       before.bestBid === state.bestBid &&
