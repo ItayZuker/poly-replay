@@ -89,8 +89,8 @@ export async function getTriggerLiveStats(
  * Credit rules (Stats tab / card):
  * - blue (Win): held to window end and won
  * - fail (Loss): held to window end and lost
- * - takeProfit (Sell): early sell with profit
- * - stopLoss: early sell in losing conditions (P/L ≤ 0)
+ * - takeProfit (Sell): early sell with profit (Take Profit path)
+ * - stopLoss: Stop Loss exit, or any other early sell in losing conditions (P/L ≤ 0)
  * - success: legacy field, no longer incremented
  */
 export async function recordTriggerLiveStatsEvent(
@@ -107,11 +107,12 @@ export async function recordTriggerLiveStatsEvent(
   const now = new Date().toISOString();
   const heldWin = result === "blue";
   const heldLoss = result === "fail" && exitReason === "window-end";
+  const stopLossExit = !heldWin && !heldLoss && exitReason === "sl";
   const earlySell =
     !heldWin &&
     !heldLoss &&
+    !stopLossExit &&
     (exitReason === "tp" ||
-      exitReason === "sl" ||
       result === "success" ||
       (result === "fail" && exitReason !== "window-end"));
   const inc = {
@@ -119,7 +120,7 @@ export async function recordTriggerLiveStatsEvent(
     fail: heldLoss ? 1 : 0,
     blue: heldWin ? 1 : 0,
     takeProfit: earlySell && pnl > 0 ? 1 : 0,
-    stopLoss: earlySell && pnl <= 0 ? 1 : 0,
+    stopLoss: stopLossExit || (earlySell && pnl <= 0) ? 1 : 0,
     pnlUsd: pnl,
   };
   // Do not put `blue` (or any $inc field) in $setOnInsert — Mongo rejects path conflicts

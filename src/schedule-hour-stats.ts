@@ -189,8 +189,8 @@ function contribFromCard(card: TradingPositionCard): SlotContrib | null {
   let red = 0;
   let blue = 0;
   if (card.status === "sold") {
-    if (pl > 0) green = 1;
-    else red = 1;
+    if (card.triggerExitReason === "sl" || pl <= 0) red = 1;
+    else green = 1;
   } else if (card.status === "win" || card.status === "loss") {
     if (pl > 1e-9) blue = 1;
     else red = 1;
@@ -209,8 +209,8 @@ function contribFromEvent(event: TradingStatEvent): SlotContrib | null {
   let red = 0;
   let blue = 0;
   if (event.status === "sold") {
-    if (pl > 0) green = 1;
-    else red = 1;
+    if (event.card?.triggerExitReason === "sl" || pl <= 0) red = 1;
+    else green = 1;
   } else if (event.status === "win" || event.status === "loss") {
     if (pl > 1e-9) blue = 1;
     else red = 1;

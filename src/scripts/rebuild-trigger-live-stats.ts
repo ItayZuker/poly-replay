@@ -267,7 +267,10 @@ async function main(): Promise<void> {
     } else if (exitReason === "window-end") {
       result = "fail";
       row.after.fail += 1;
-    } else if (green > 0 || exitReason === "tp" || exitReason === "sl") {
+    } else if (exitReason === "sl") {
+      result = "fail";
+      row.after.stopLoss += 1;
+    } else if (green > 0 || exitReason === "tp") {
       result = green > 0 ? "success" : "fail";
       if (pnlN > 0) row.after.takeProfit += 1;
       else row.after.stopLoss += 1;

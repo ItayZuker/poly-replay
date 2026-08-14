@@ -390,8 +390,8 @@ function contributionFromCard(card: TradingPositionCard): SettledStatContributio
   let blue = 0;
   let status = card.status;
   if (card.status === "sold") {
-    if (pl > 0) green = 1;
-    else red = 1;
+    if (card.triggerExitReason === "sl" || pl <= 0) red = 1;
+    else green = 1;
   } else if (card.status === "win" || card.status === "loss") {
     // Never trust a stale status that disagrees with settled P/L.
     if (pl > 1e-9) {
@@ -417,8 +417,8 @@ function eventStatContribution(event: TradingStatEvent): SettledStatContribution
   let blue = 0;
   let status = event.status;
   if (event.status === "sold") {
-    if (pl > 0) green = 1;
-    else red = 1;
+    if (event.card?.triggerExitReason === "sl" || pl <= 0) red = 1;
+    else green = 1;
   } else if (event.status === "win" || event.status === "loss") {
     if (pl > 1e-9) {
       blue = 1;

@@ -66,7 +66,7 @@ function emptyDemoStats(): TriggerDemoStats {
 
 /** Map a settled Demo Positions card to a Demo stats bucket. */
 export function classifyDemoStatKind(
-  card: Pick<TradingPositionCard, "status" | "pl">,
+  card: Pick<TradingPositionCard, "status" | "pl" | "triggerExitReason">,
 ): { kind: TriggerDemoStatKind; pnlUsd: number } | null {
   if (String(card.status || "").toLowerCase() === "open") return null;
   const pl = Number(card.pl);
@@ -74,8 +74,8 @@ export function classifyDemoStatKind(
   if (card.status === "win") return { kind: "blue", pnlUsd: pl };
   if (card.status === "loss") return { kind: "fail", pnlUsd: pl };
   if (card.status === "sold") {
-    if (pl > 0) return { kind: "takeProfit", pnlUsd: pl };
-    return { kind: "stopLoss", pnlUsd: pl };
+    if (card.triggerExitReason === "sl" || pl <= 0) return { kind: "stopLoss", pnlUsd: pl };
+    return { kind: "takeProfit", pnlUsd: pl };
   }
   return null;
 }

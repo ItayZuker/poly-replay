@@ -7723,7 +7723,7 @@ function renderTriggersList() {
       '<span class="trigger-card-stats-counts">' +
       '<span class="trigger-card-stats-item is-count" title="Sell (profitable early exit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
       '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
-      '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+      '<span class="trigger-card-stats-item is-count" title="Loss (held or stop loss)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
       "</span>" +
       "</div>" +
       '<div class="trigger-card-stats-exits">' +
@@ -7791,9 +7791,10 @@ function fillTriggerCardStatsRow(statsRow, trigger) {
   const blueEl = statsRow.querySelector('[data-stat="blue"]');
   const failEl = statsRow.querySelector('[data-stat="fail"]');
   const pnlEl = statsRow.querySelector('[data-stat="pnl"]');
+  const lossCount = (stats.fail ?? 0) + (stats.stopLoss ?? 0);
   if (sellEl) sellEl.textContent = stats.pending ? "…" : String(stats.takeProfit ?? 0);
   if (blueEl) blueEl.textContent = stats.pending ? "…" : String(stats.blue ?? 0);
-  if (failEl) failEl.textContent = stats.pending ? "…" : String(stats.fail);
+  if (failEl) failEl.textContent = stats.pending ? "…" : String(lossCount);
   if (pnlEl) {
     pnlEl.textContent = stats.pending ? "…" : formatTriggerStatsPnl(stats.pnlUsd);
     const pos = !stats.pending && stats.pnlUsd > 0;
@@ -12000,18 +12001,19 @@ function recordTriggerDemoStats(triggerId, result, pnlUsd, exitReason) {
   const pnl = Number.isFinite(pnlUsd) ? pnlUsd : 0;
   const heldWin = result === "blue";
   const heldLoss = result === "fail" && exitReason === "window-end";
+  const stopLossExit = !heldWin && !heldLoss && exitReason === "sl";
   const earlySell =
     !heldWin &&
     !heldLoss &&
+    !stopLossExit &&
     (exitReason === "tp" ||
-      exitReason === "sl" ||
       result === "success" ||
       (result === "fail" && exitReason !== "window-end"));
   // success is legacy (removed from Stats); Win/Loss/Sell/Stop Loss below.
   if (heldWin) demo.blue += 1;
   else if (heldLoss) demo.fail += 1;
-  if (earlySell && pnl > 0) demo.takeProfit += 1;
-  else if (earlySell && pnl <= 0) demo.stopLoss += 1;
+  if (stopLossExit || (earlySell && pnl <= 0)) demo.stopLoss += 1;
+  else if (earlySell && pnl > 0) demo.takeProfit += 1;
   demo.pnlUsd += pnl;
   patchUserTrigger(triggerId, { demoStats: demo });
   updateTriggerCardStats(triggerId);
