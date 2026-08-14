@@ -1141,11 +1141,13 @@ export class TriggerReplayRaceSession {
       // Win / Loss — held to settlement only.
       if (heldWon === true) rt.stats.blue += 1;
       else rt.stats.fail += 1;
+    } else if (reason === "sl") {
+      rt.stats.stopLoss += 1;
     } else if (pnl > 0) {
-      // Sell — early exit with profit.
+      // Sell — Take Profit / other early exit with profit.
       rt.stats.takeProfit += 1;
     } else {
-      // Stop Loss — early exit in losing conditions.
+      // Fee-losing early sell.
       rt.stats.stopLoss += 1;
     }
     rt.stats.pnlUsd += pnl;

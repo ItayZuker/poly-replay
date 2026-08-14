@@ -452,7 +452,7 @@
         '<span class="trigger-card-stats-counts">' +
         '<span class="trigger-card-stats-item is-count" title="Sell (profitable early exit)"><span class="trigger-card-stats-dot is-success" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="takeProfit">0</span></span>' +
         '<span class="trigger-card-stats-item is-count" title="Win (held)"><span class="trigger-card-stats-dot is-held" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="blue">0</span></span>' +
-        '<span class="trigger-card-stats-item is-count" title="Loss (held)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
+        '<span class="trigger-card-stats-item is-count" title="Loss (held or stop loss)"><span class="trigger-card-stats-dot is-fail" aria-hidden="true"></span><span class="trigger-card-stats-value" data-stat="fail">0</span></span>' +
         "</span>";
 
       const pnlRow = document.createElement("div");
@@ -470,7 +470,7 @@
         const pnlEl = stack.querySelector('[data-stat="pnl"]');
         if (sellEl) sellEl.textContent = String(s.takeProfit ?? 0);
         if (blueEl) blueEl.textContent = String(s.blue ?? 0);
-        if (failEl) failEl.textContent = String(s.fail);
+        if (failEl) failEl.textContent = String((s.fail ?? 0) + (s.stopLoss ?? 0));
         if (pnlEl) {
           pnlEl.textContent = formatPnl(s.pnlUsd);
           pnlEl.classList.toggle("is-positive", s.pnlUsd > 0);

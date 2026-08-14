@@ -1,6 +1,11 @@
 {
-    "current": "1.72.0",
+    "current": "1.72.1",
     "releases": [
+        {
+            "version": "1.72.1",
+            "releasedAt": "2026-08-14T10:02:19.732Z",
+            "notes": "Trigger card Stop Loss counts as the red Loss dot (not green Sell). Docs updated."
+        },
         {
             "version": "1.72.0",
             "releasedAt": "2026-08-13T13:01:31.089Z",
