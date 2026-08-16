@@ -86,7 +86,6 @@ export interface UserTriggerRecord {
   /** Ms before Apply start to place Buy GTD (0 = at Apply start). */
   gtdPlaceOffsetMs: number;
   runMode: "demo" | "trade";
-  paused: boolean;
   demoStats: TriggerDemoStats;
   /** Live BUY/SELL highlight — patched by trading engine; omitted from full editor saves. */
   liveUi?: TriggerLiveUiState | null;
@@ -96,7 +95,12 @@ export interface UserTriggerRecord {
   updatedAt: string;
 }
 
-type UserTriggerDoc = UserTriggerRecord & { userId: string; _id?: unknown };
+type UserTriggerDoc = UserTriggerRecord & {
+  userId: string;
+  _id?: unknown;
+  /** Legacy Market Pause flag — stripped on read/write. */
+  paused?: boolean;
+};
 
 let indexesPromise: Promise<void> | null = null;
 
@@ -111,7 +115,7 @@ async function ensureIndexes(): Promise<void> {
       const c = await col();
       await c.createIndex({ userId: 1, id: 1 }, { unique: true });
       await c.createIndex({ userId: 1, series: 1, sortOrder: 1 });
-      await c.createIndex({ userId: 1, series: 1, paused: 1, runMode: 1 });
+      await c.createIndex({ userId: 1, series: 1, runMode: 1 });
       await c.createIndex({ userId: 1, updatedAt: -1 });
       await c.createIndex({ userId: 1, sortOrder: 1 });
     })().catch((err) => {
@@ -344,7 +348,6 @@ export function normalizeUserTriggerInput(
       return Number.isFinite(prev) && prev >= 0 ? Math.min(prev, 1_000_000_000) : 0;
     })(),
     runMode: o.runMode === "trade" ? "trade" : "demo",
-    paused: o.paused !== false,
     demoStats: normalizeDemoStats(o.demoStats ?? existing?.demoStats),
     // Full editor saves omit liveUi — keep existing highlight unless explicitly patched.
     liveUi:
@@ -476,8 +479,44 @@ function compareTriggerDisplayOrder(a: UserTriggerRecord, b: UserTriggerRecord):
 }
 
 function toClient(doc: UserTriggerDoc): UserTriggerRecord {
-  const { userId: _u, _id: _id, ...rest } = doc;
+  const { userId: _u, _id: _id, paused: _paused, ...rest } = doc;
   return normalizeUserTriggerInput(rest, null) as UserTriggerRecord;
+}
+
+function createdAtMsFromDoc(doc: UserTriggerDoc): number {
+  const ms = Date.parse(String(doc.createdAt || ""));
+  return Number.isFinite(ms) ? ms : Date.now();
+}
+
+/**
+ * Drop legacy Market `paused` from Mongo. Previously paused cards wake in their
+ * current runMode and get a timeline event so Schedule history is not rewritten.
+ */
+async function wakeLegacyPausedDocs(docs: UserTriggerDoc[]): Promise<void> {
+  const stale = docs.filter((d) => d.paused !== undefined);
+  if (!stale.length) return;
+  const c = await col();
+  await Promise.all(
+    stale.map(async (doc) => {
+      const userId = String(doc.userId || "").trim();
+      const id = String(doc.id || "").trim();
+      if (!userId || !id) return;
+      const wasPaused = doc.paused === true;
+      const runMode: "demo" | "trade" = doc.runMode === "trade" ? "trade" : "demo";
+      await c.updateOne({ userId, id }, { $unset: { paused: "" } });
+      delete doc.paused;
+      if (!wasPaused) return;
+      await seedTriggerModeTimelineIfEmpty(userId, id, {
+        paused: true,
+        runMode,
+        createdAtMs: createdAtMsFromDoc(doc),
+      }).catch(() => undefined);
+      await appendTriggerModeEvent(userId, id, {
+        paused: false,
+        runMode,
+      }).catch(() => undefined);
+    }),
+  );
 }
 
 export async function listUserTriggers(
@@ -489,6 +528,7 @@ export async function listUserTriggers(
   const seriesKey = normalizeSeriesKey(series);
   const query: Record<string, unknown> = { userId, ...seriesMatchFilter(seriesKey) };
   const docs = await c.find(query).toArray();
+  await wakeLegacyPausedDocs(docs);
   const list = docs.map(toClient).filter(Boolean) as UserTriggerRecord[];
   list.sort(compareTriggerDisplayOrder);
   // Backfill sortOrder for legacy docs (and keep 0..n-1 dense after first load).
@@ -516,11 +556,11 @@ export async function listUserTriggers(
         ),
     );
   }
-  // Backfill Active/Paused timeline for triggers created before timeline existed.
+  // Backfill Demo/Trade timeline for triggers created before timeline existed.
   await Promise.all(
     list.map((t) =>
       seedTriggerModeTimelineIfEmpty(userId, t.id, {
-        paused: t.paused,
+        paused: false,
         runMode: t.runMode,
         createdAtMs: createdAtMs(t),
       }).catch(() => undefined),
@@ -529,7 +569,7 @@ export async function listUserTriggers(
   return list;
 }
 
-/** Active Demo triggers for server-side scoring (executor only). */
+/** Demo triggers for server-side scoring (executor only). Always on. */
 export async function listActiveDemoTriggersForSeries(
   series: string,
 ): Promise<Array<UserTriggerRecord & { userId: string }>> {
@@ -539,11 +579,11 @@ export async function listActiveDemoTriggersForSeries(
   const c = await col();
   const docs = await c
     .find({
-      paused: false,
       runMode: "demo",
       ...seriesMatchFilter(seriesKey),
     })
     .toArray();
+  await wakeLegacyPausedDocs(docs);
   const out: Array<UserTriggerRecord & { userId: string }> = [];
   for (const doc of docs) {
     const rec = toClient(doc);
@@ -556,7 +596,7 @@ export async function listActiveDemoTriggersForSeries(
   return out;
 }
 
-/** Active Trade + GTD triggers for executor-side place/poll (no browser required). */
+/** Trade + GTD triggers for executor-side place/poll (no browser required). */
 export async function listActiveTradeGtdTriggersForSeries(
   series: string,
 ): Promise<Array<UserTriggerRecord & { userId: string }>> {
@@ -566,12 +606,12 @@ export async function listActiveTradeGtdTriggersForSeries(
   const c = await col();
   const docs = await c
     .find({
-      paused: false,
       runMode: "trade",
       buyOrderType: "GTD",
       ...seriesMatchFilter(seriesKey),
     })
     .toArray();
+  await wakeLegacyPausedDocs(docs);
   const out: Array<UserTriggerRecord & { userId: string }> = [];
   for (const doc of docs) {
     const rec = toClient(doc);
@@ -584,13 +624,14 @@ export async function listActiveTradeGtdTriggersForSeries(
   return out;
 }
 
-/** All Active+Demo triggers (any series) — keep executor feeds / engines warm. */
+/** All Demo triggers (any series) — keep executor feeds / engines warm. */
 export async function listAllActiveDemoTriggers(): Promise<
   Array<UserTriggerRecord & { userId: string }>
 > {
   await ensureIndexes();
   const c = await col();
-  const docs = await c.find({ paused: false, runMode: "demo" }).toArray();
+  const docs = await c.find({ runMode: "demo" }).toArray();
+  await wakeLegacyPausedDocs(docs);
   const out: Array<UserTriggerRecord & { userId: string }> = [];
   for (const doc of docs) {
     const rec = toClient(doc);
@@ -609,7 +650,9 @@ export async function getUserTrigger(
   await ensureIndexes();
   const c = await col();
   const doc = await c.findOne({ userId, id: String(triggerId) });
-  return doc ? toClient(doc) : null;
+  if (!doc) return null;
+  await wakeLegacyPausedDocs([doc]);
+  return toClient(doc);
 }
 
 function createdAtMs(record: UserTriggerRecord): number {
@@ -624,15 +667,15 @@ async function syncTriggerModeTimeline(
 ): Promise<void> {
   if (!existing) {
     await seedTriggerModeTimelineIfEmpty(userId, next.id, {
-      paused: next.paused,
+      paused: false,
       runMode: next.runMode,
       createdAtMs: createdAtMs(next),
     });
     return;
   }
-  if (existing.paused !== next.paused || existing.runMode !== next.runMode) {
+  if (existing.runMode !== next.runMode) {
     await appendTriggerModeEvent(userId, next.id, {
-      paused: next.paused,
+      paused: false,
       runMode: next.runMode,
     });
   }
@@ -680,7 +723,7 @@ export async function upsertUserTrigger(
   }
   await c.updateOne(
     { userId, id: next.id },
-    { $set: { ...next, userId } },
+    { $set: { ...next, userId }, $unset: { paused: "" } },
     { upsert: true },
   );
   await syncTriggerModeTimeline(userId, next, existing).catch(() => undefined);

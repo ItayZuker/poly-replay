@@ -1,6 +1,6 @@
 /**
- * Schedule Live workspace: Trade + Active Market Triggers only.
- * No Demo/Pause badges (membership implies Trade + Active).
+ * Schedule Live workspace: Trade Market Triggers only.
+ * No Demo badges (membership implies Trade).
  * Eye icon opens the trigger dialog in view-only mode.
  */
 (function () {
@@ -15,7 +15,7 @@
         ? window.listMarketTriggersForSchedule()
         : [];
     if (!Array.isArray(list)) return [];
-    return list.filter((t) => t && t.runMode === "trade" && t.paused === false);
+    return list.filter((t) => t && t.runMode === "trade");
   }
 
   function render() {
@@ -27,7 +27,7 @@
       const empty = document.createElement("div");
       empty.className = "schedule-live-triggers-note";
       empty.textContent =
-        "No Trade + Active Market Triggers. Arm a trigger on Market (Trade + Active) to show it here.";
+        "No Trade Market Triggers. Arm a trigger on Market (Trade) to show it here.";
       listEl.appendChild(empty);
       return;
     }
@@ -110,8 +110,8 @@
         ? window.findUserTrigger(id)
         : listTradeActive().find((t) => String(t.id) === id);
     if (!trigger || typeof window.fillTriggerCardStatsRow !== "function") return;
-    // Drop from list if no longer Trade + Active.
-    if (trigger.runMode !== "trade" || trigger.paused !== false) {
+    // Drop from list if no longer Trade.
+    if (trigger.runMode !== "trade") {
       render();
       return;
     }

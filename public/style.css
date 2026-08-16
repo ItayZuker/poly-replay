@@ -6253,7 +6253,7 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 }
 
 /* Visual-only BUY / SELL live status (not clickable).
-   Same ~120px basis as Demo/Trade & Pause/Active so they wrap to a column together. */
+   Same ~120px basis as Demo/Trade so they wrap to a column together. */
 .trigger-card-live {
   display: flex;
   flex-wrap: wrap;

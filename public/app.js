@@ -2092,7 +2092,7 @@ async function clickQuoteBox(_side, _leg) {
   appendLogEntry({
     level: "warn",
     source: "trading",
-    message: "Manual quote orders removed — use Trigger cards (Trade + Active)",
+    message: "Manual quote orders removed — use Trigger cards (Trade)",
   });
 }
 
@@ -7007,7 +7007,6 @@ function normalizeTriggerRecord(raw) {
     endMode: normalizeTriggerEndMode(raw.endMode),
     endChangeSideCents: clampTriggerSignedCents(raw.endChangeSideCents ?? 20),
     runMode: raw.runMode === "trade" ? "trade" : "demo",
-    paused: raw.paused !== false,
     demoStats: normalizeTriggerDemoStats(raw.demoStats),
     series:
       typeof raw.series === "string" && raw.series.trim()
@@ -7344,7 +7343,7 @@ function patchUserTrigger(id, patch) {
   return userTriggers[idx];
 }
 
-/** Reconcile resting Buy GTDs after delete / pause / Demo (cancels unddesired rests). */
+/** Reconcile resting Buy GTDs after delete / Demo (cancels undesired rests). */
 function resyncTriggerGtdAfterCardChange() {
   invalidateTriggerGtdArmKeys();
   if (!windowState) {
@@ -7364,6 +7363,7 @@ function setTriggerRunMode(triggerId, mode) {
   const next = mode === "trade" ? "trade" : "demo";
   const trigger = patchUserTrigger(triggerId, { runMode: next });
   if (!trigger) return;
+  if (next === "demo") clearTriggerRuntime(triggerId);
   renderTriggersList();
   if (next === "trade") {
     void fetchTriggerLiveStats(triggerId).then(() => updateTriggerCardStats(triggerId));
@@ -7398,20 +7398,6 @@ function forceTradeTriggersToDemo(reason = "Allow trade off") {
   });
   resyncTriggerGtdAfterCardChange();
   return ids.length;
-}
-
-function setTriggerPaused(triggerId, paused) {
-  const patch = { paused: Boolean(paused) };
-  const current = findUserTrigger(triggerId);
-  if (paused && current?.runMode === "trade") patch.runMode = "demo";
-  const trigger = patchUserTrigger(triggerId, patch);
-  if (!trigger) return;
-  if (paused) clearTriggerRuntime(triggerId);
-  renderTriggersList();
-  if (triggerCreateEditingId && String(triggerCreateEditingId) === String(triggerId)) {
-    syncTriggerStatsPanel();
-  }
-  resyncTriggerGtdAfterCardChange();
 }
 
 function emptyTriggerDemoStats() {
@@ -7489,7 +7475,7 @@ function openTriggerDemoWindowsReplay(trigger) {
   });
 }
 
-/** Deep-copy a Market Trigger; always starts Paused / Demo with empty Demo stats. */
+/** Deep-copy a Market Trigger; always starts Demo with empty Demo stats. */
 function duplicateUserTrigger(trigger) {
   closeTriggerMenus();
   const srcId = trigger?.id != null ? String(trigger.id) : "";
@@ -7507,7 +7493,6 @@ function duplicateUserTrigger(trigger) {
     id: newUserTriggerId(),
     color: randomTriggerColorHex(),
     runMode: "demo",
-    paused: true,
     demoStats: emptyTriggerDemoStats(),
     createdAt: now,
     updatedAt: now,
@@ -7541,11 +7526,9 @@ function renderTriggersList() {
   window.ScheduleLiveTriggers?.render?.();
   for (const trigger of list) {
     const triggerId = String(trigger.id || "");
-    const paused = trigger.paused !== false;
     const runMode = trigger.runMode === "trade" ? "trade" : "demo";
     const card = document.createElement("article");
     card.className = "trigger-card";
-    if (paused) card.classList.add("is-paused");
     card.dataset.triggerId = triggerId;
     const color = typeof trigger.color === "string" ? trigger.color : "#58a6ff";
     card.style.setProperty("--trigger-card-color", color);
@@ -7671,31 +7654,7 @@ function renderTriggersList() {
       modeWrap.appendChild(btn);
     }
 
-    const pauseWrap = document.createElement("div");
-    pauseWrap.className = "trigger-run-mode trigger-pause-mode";
-    pauseWrap.setAttribute("role", "group");
-    pauseWrap.setAttribute("aria-label", "Pause or Active");
-    for (const state of ["pause", "active"]) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "trigger-run-mode-btn";
-      btn.dataset.pauseState = state;
-      btn.textContent = state === "pause" ? "Pause" : "Active";
-      const isSelected = state === "pause" ? paused : !paused;
-      if (isSelected) btn.classList.add("is-active");
-      btn.title =
-        state === "pause"
-          ? "Pause trigger (forces Demo if Trade was on)"
-          : "Run trigger evaluation";
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setTriggerPaused(triggerId, state === "pause");
-      });
-      pauseWrap.appendChild(btn);
-    }
-
-    controls.append(modeWrap, pauseWrap);
+    controls.append(modeWrap);
 
     const liveRow = document.createElement("div");
     liveRow.className = "trigger-card-live";
@@ -7817,9 +7776,9 @@ function updateTriggerCardStats(triggerId) {
   const card = document.querySelector(`.trigger-card[data-trigger-id="${CSS.escape(id)}"]`);
   const statsRow = card?.querySelector(".trigger-card-stats");
   if (trigger && statsRow) fillTriggerCardStatsRow(statsRow, trigger);
-  // Keep Schedule Live Trade+Active list in sync (membership + counters).
+  // Keep Schedule Live Trade list in sync (membership + counters).
   window.ScheduleLiveTriggers?.updateStats?.(id);
-  const tradeActive = trigger?.runMode === "trade" && trigger?.paused === false;
+  const tradeActive = trigger?.runMode === "trade";
   const liveCard = document.querySelector(
     `.schedule-live-trigger-card[data-trigger-id="${CSS.escape(id)}"]`,
   );
@@ -8379,10 +8338,7 @@ function fillTriggerStatsCountRows(stats, pending) {
 }
 
 function resolveTriggerStatsDefaultSubTab(trigger) {
-  // Pause → Live; Active Demo → Demo; Active Trade → Live.
   if (!trigger) return "live";
-  const paused = trigger.paused !== false;
-  if (paused) return "live";
   return trigger.runMode === "trade" ? "live" : "demo";
 }
 
@@ -8709,7 +8665,9 @@ function buildTriggerFromCreateDraft() {
     ),
     gtdPlaceOffsetMs: normalizeTriggerGtdPlaceOffsetMs(triggerCreateGtdPlaceOffsetMs, 0),
     runMode: existing?.runMode === "trade" ? "trade" : "demo",
-    paused: existing ? existing.paused !== false : true,
+    ...(triggerCreateHost === "replay"
+      ? { paused: existing ? existing.paused === true : true }
+      : {}),
     demoStats: normalizeTriggerDemoStats(existing?.demoStats),
     createdAt:
       typeof existing?.createdAt === "string" ? existing.createdAt : new Date().toISOString(),
@@ -11513,7 +11471,6 @@ function isTradeTriggerSlotBusy(exceptTriggerId = null) {
   if (!Array.isArray(userTriggers)) return false;
   for (const trigger of userTriggers) {
     if (trigger?.runMode !== "trade") continue;
-    if (trigger.paused !== false) continue;
     const id = String(trigger.id || "");
     if (!id || (except && id === except)) continue;
     if (isTradeTriggerRuntimeBusy(id)) return true;
@@ -11996,7 +11953,7 @@ async function postTriggerLiveStatsEvent(triggerId, result, pnlUsd, exitReason) 
 
 function recordTriggerDemoStats(triggerId, result, pnlUsd, exitReason) {
   const trigger = findUserTrigger(triggerId);
-  if (!trigger || trigger.paused !== false || trigger.runMode === "trade") return;
+  if (!trigger || trigger.runMode === "trade") return;
   const demo = normalizeTriggerDemoStats(trigger.demoStats);
   const pnl = Number.isFinite(pnlUsd) ? pnlUsd : 0;
   const heldWin = result === "blue";
@@ -12777,7 +12734,6 @@ function collectTradeGtdDesires(state) {
   for (const trigger of userTriggers) {
     const id = String(trigger?.id || "");
     if (!id) continue;
-    if (trigger.paused !== false) continue;
     if (trigger.runMode !== "trade") continue;
     if (!triggerUsesBuyGtd(trigger)) continue;
     const both = triggerBuySidesModeOf(trigger) === "both";
@@ -12820,7 +12776,6 @@ function scheduleTriggerGtdArming(state = windowState) {
 
   const nextState = nextMarketWindowState(state);
   for (const trigger of userTriggers) {
-    if (trigger.paused !== false) continue;
     if (trigger.runMode !== "trade") continue;
     if (!triggerUsesBuyGtd(trigger)) continue;
     anyTradeGtd = true;
@@ -12976,20 +12931,6 @@ function tickUserTriggers(state) {
           rt.entryPrice = null;
         }
       }
-      continue;
-    }
-
-    if (trigger.paused !== false) {
-      for (const lockedSide of lockedSides) {
-        const rt = getOrCreateTriggerRuntime(id, lockedSide);
-        if (rt.phase !== "idle") {
-          rt.phase = "idle";
-          rt.side = null;
-          rt.watchStartedAtMs = null;
-          rt.startPriceCents = null;
-        }
-      }
-      setTriggerCardLiveUi(id, null);
       continue;
     }
 

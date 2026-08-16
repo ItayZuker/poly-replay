@@ -55,8 +55,9 @@ async function latestEventForTrigger(
 }
 
 /**
- * Append a mode/pause change. Skips insert when identical to the latest state
- * for that trigger (paused + runMode).
+ * Append a Demo/Trade change. New events always use paused: false.
+ * Skips insert when identical to the latest state (paused + runMode).
+ * Historical Pause rows stay so past Schedule attribution is not rewritten.
  */
 export async function appendTriggerModeEvent(
   userId: string,
@@ -110,10 +111,10 @@ export async function listTriggerModeEvents(
 }
 
 /**
- * Total milliseconds the trigger was Active in `mode` (not paused).
- * Default `trade` = Trade + Active only (Demo Active excluded).
- * Pass `demo` for Demo + Active. An open matching interval continues
- * through `untilMs` (default now).
+ * Total milliseconds the trigger was in `mode` and not paused.
+ * New events are never paused; historical Pause gaps still exclude time.
+ * Default `trade` = Trade intervals. Pass `demo` for Demo intervals.
+ * An open matching interval continues through `untilMs` (default now).
  */
 export function sumTriggerActiveMs(
   eventsForTrigger: TriggerModeTimelineEvent[],
@@ -143,7 +144,7 @@ export function sumTriggerActiveMs(
 }
 
 /**
- * True when the latest timeline event at or before `atMs` has Trade mode and is not paused.
+ * True when the latest timeline event at or before `atMs` is Trade and not paused.
  * No events → false (callers may treat empty timelines as legacy separately).
  */
 export function wasTriggerTradingActive(

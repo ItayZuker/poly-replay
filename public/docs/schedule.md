@@ -11,7 +11,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 | | **Schedule** | **Replay** |
 |---|----------|------------|
 | Purpose | Real Trigger Trade schedule | What-if board over recent history |
-| List | **Trade + Active** Market Triggers only (full height; eye icon opens **View Trigger**, read-only) | Local **Replay Triggers** + **+ New** |
+| List | **Trade** Market Triggers only (full height; eye icon opens **View Trigger**, read-only) | Local **Replay Triggers** + **+ New** |
 | Stats on cards | All-time Trade (or Demo) on each trigger card | From last **Run** |
 
 ## Schedule grid
@@ -20,7 +20,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 - Each **Live** cell shows Trigger (and legacy) trade outcomes for that UTC weekday×hour:
   - Each cell always shows the **last occurrence** of that UTC weekday×hour (~**1 week** lookback): **this week’s** day once that hour arrives; otherwise the **same weekday last week** — including days with **zero** buys (gray `$0`). An empty last occurrence is kept; the cell does **not** skip it to show an older week that had trades.
   - **When** that weekday×hour arrives (UTC hour start — same moment recording for the slot begins), the cell **resets** to **this week’s** calendar day. If there are no buys yet, it shows **zero** dots and a **gray** `$0` P/L.
-  - **Trigger Trade** when the trigger was **Trade + Active** at the window time (full Active/Paused + Demo/Trade **timeline**). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade+Active (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
+  - **Trigger Trade** when the trigger was on **Trade** at the window time (Demo/Trade **timeline**; historical Pause gaps still exclude that window). Fills from before the first timeline row still count when that trigger has only ever been recorded as Trade (late timeline seed). Legacy fills with a trigger id and no timeline rows also count. Settled fills with `source: trigger` but a missing trigger id still count on the hour grid
   - **Legacy phase / schedule-placement** fills still in the ledger (from before Trigger-only Schedule) follow the same arrival/reset rule
 - **Replay** recordings still use the **latest calendar day with usable recordings** per weekday×hour (independent of Live trade resets)
 - Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). The header’s bottom border is **green** when that day’s total P/L is positive and **red** when negative (default border when flat / no data). There is no per-day Clear control
@@ -28,7 +28,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 - Current UTC cell is highlighted
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. Manual quote-box buys are removed (legacy manual fills still count in Market/Live only — not on Schedule hour cells)
 
-Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on (Settings → **User**) and a trigger on **Trade** + **Active**.
+Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on (Settings → **User**) and a trigger on **Trade**.
 
 ## Live vs Replay
 
@@ -39,7 +39,7 @@ Replay placements never send live orders. Live Trigger Trade requires **Allow tr
 | Hour cells | Live Trigger Trade (timeline-gated) | Before **Run**: gray = usable recorded window count (CLOB + Chainlink + official Gamma) or **No Recordings**; after **Run**: green/red/blue + gray = windows that did not trigger |
 | Header total | Same summary chrome | Totals update as replay results arrive |
 
-In **Schedule**, the left column lists **Trade + Active** Market Triggers only (no Demo/Pause badges). Each Live trigger card shows (under the title) two equally spaced rows: green/blue/red stats (**Sell** / **Win** / **Loss**), then right-aligned **P/L** — no Reset/Refresh control (Trade stats update from the server automatically). The ⋮ menu is replaced by an **eye** icon: it opens the trigger dialog as **View Trigger** (all inputs locked with lock-state colors; **BUY** / **SELL** / **Stats** tabs stay clickable so you can inspect every tab; footer is **Close** only — no Cancel/Save). Edit these triggers on **Market**. On **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Triggers**, then **Settings** (Latency / Fill Success). The header title’s **Poly** is red on Market and on Schedule; **Replay** is blue on the Replay page. Switching Schedule ↔ Replay paints each page’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
+In **Schedule**, the left column lists **Trade** Market Triggers only (no Demo badges). Each Live trigger card shows (under the title) two equally spaced rows: green/blue/red stats (**Sell** / **Win** / **Loss**), then right-aligned **P/L** — no Reset/Refresh control (Trade stats update from the server automatically). The ⋮ menu is replaced by an **eye** icon: it opens the trigger dialog as **View Trigger** (all inputs locked with lock-state colors; **BUY** / **SELL** / **Stats** tabs stay clickable so you can inspect every tab; footer is **Close** only — no Cancel/Save). Edit these triggers on **Market**. On **Replay**, that list hides and the Replay panel expands — order top→bottom: **Run**, then **Triggers**, then **Settings** (Latency / Fill Success). The header title’s **Poly** is red on Market and on Schedule; **Replay** is blue on the Replay page. Switching Schedule ↔ Replay paints each page’s hour-cell board immediately from its own in-memory buffer (no cross-flash); Live keeps updating in the background while you are on Replay.
 
 | Control | Meaning |
 |---------|---------|
