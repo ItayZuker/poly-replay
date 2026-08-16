@@ -101,6 +101,7 @@ export function mergeReplayTicks(
       noAsks: bookState.noAsks,
       assetPrice: assetState.assetPrice,
       prevCloseAsset: assetState.prevCloseAsset,
+      priceToBeatSource: assetState.priceToBeatSource,
       assetGap:
         assetState.assetGap ??
         (assetState.assetPrice != null &&

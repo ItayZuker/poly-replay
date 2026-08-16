@@ -1,4 +1,7 @@
 import type { BookLevel } from "./clob-service.js";
+import type { PtbHistoryEntry } from "./ptb-history.js";
+
+export type { PtbHistoryEntry, PtbHistorySource } from "./ptb-history.js";
 
 export type WindowOutcome = "up" | "down";
 export type TickSource = "clob-book" | "chainlink-tick";
@@ -33,6 +36,10 @@ export interface RecordedWindowDocument {
   conditionId?: string;
   assetPrice?: number;
   prevCloseAsset?: number;
+  /** Append-only REST openPrice changes, plus Gamma at windowEnd. */
+  ptbHistory?: PtbHistoryEntry[];
+  /** Official Gamma eventMetadata.priceToBeat (separate from REST history). */
+  gammaPtb?: number;
   assetGap?: number;
   windowOutcome?: WindowOutcome;
   yesPrice?: number;
@@ -86,6 +93,8 @@ export interface ChainlinkTickDocument {
   tMs: number;
   assetPrice?: number;
   prevCloseAsset?: number;
+  /** rest = live crypto-price open; gamma = official tip at windowEnd. */
+  priceToBeatSource?: "rest" | "gamma";
   assetGap?: number;
   ptbCrossings?: number;
   minAssetPrice?: number;
@@ -117,6 +126,7 @@ export interface ReplayTickDocument {
   noAsks?: BookLevel[];
   assetPrice?: number;
   prevCloseAsset?: number;
+  priceToBeatSource?: "rest" | "gamma";
   assetGap?: number;
   ptbCrossings?: number;
   minAssetPrice?: number;
@@ -137,6 +147,8 @@ export interface WindowHitRecord {
   conditionId?: string;
   assetPrice?: number;
   prevCloseAsset?: number;
+  ptbHistory?: PtbHistoryEntry[];
+  gammaPtb?: number;
   assetGap?: number;
   windowOutcome?: WindowOutcome;
   yesPrice?: number;

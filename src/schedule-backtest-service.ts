@@ -19,6 +19,7 @@ import {
 } from "./schedule-backtest-cache.js";
 import { discardBadRecording } from "./bad-recording-cleanup.js";
 import { logService } from "./log-service.js";
+import { recordingPtbFields } from "./ptb-history.js";
 import { isFlatPriceFromTicks, isFlatPriceWindow } from "./window-dynamics.js";
 import {
   evaluateWindowPredictions,
@@ -39,6 +40,7 @@ import type {
   ChainlinkTickDocument,
   LiveWindowState,
   MarketDocument,
+  PtbHistoryEntry,
   RecordedWindowDocument,
   ReplayTickDocument,
   ScheduleDayId,
@@ -1033,6 +1035,7 @@ export async function backtestSchedulePlacements(
     updatedAt: w.savedAt,
     windowOutcome: w.windowOutcome,
     prevCloseAsset: w.prevCloseAsset,
+    ...recordingPtbFields(w),
     assetPrice: w.assetPrice,
     ptbCrossings: w.ptbCrossings,
     rangeTop: w.rangeTop,
@@ -1317,6 +1320,8 @@ export interface PlacementPlayWindowItem {
   windowStart: number;
   windowEnd: number;
   prevCloseAsset?: number;
+  ptbHistory?: PtbHistoryEntry[];
+  gammaPtb?: number;
   /** Official market close (Gamma / window JSON) for Open Replay graph anchoring. */
   finalPrice?: number;
   /** Official Polymarket up/down for this window (Settlement source). */
@@ -1462,6 +1467,8 @@ async function playSettlementFields(
   windowOutcome?: WindowOutcome;
   finalPrice?: number;
   prevCloseAsset?: number;
+  ptbHistory?: PtbHistoryEntry[];
+  gammaPtb?: number;
 }> {
   const local =
     window != null ? await getRecordedWindow(market, window.windowStart).catch(() => null) : null;
@@ -1490,6 +1497,7 @@ async function playSettlementFields(
     windowOutcome,
     finalPrice,
     prevCloseAsset,
+    ...recordingPtbFields(local ?? window ?? {}),
   };
 }
 
@@ -1520,6 +1528,7 @@ async function playWindowsFromSims(
       windowStart: sim.windowStart,
       windowEnd: sim.windowEnd,
       prevCloseAsset: settlement.prevCloseAsset,
+      ...recordingPtbFields(settlement),
       finalPrice: settlement.finalPrice,
       windowOutcome: settlement.windowOutcome,
       bucket: trade.bucket,
@@ -1635,6 +1644,7 @@ async function listSlotRecordedWindows(
     updatedAt: w.savedAt,
     windowOutcome: w.windowOutcome,
     prevCloseAsset: w.prevCloseAsset,
+    ...recordingPtbFields(w),
     assetPrice: w.assetPrice,
     ptbCrossings: w.ptbCrossings,
     rangeTop: w.rangeTop,
@@ -1704,6 +1714,7 @@ async function buildRecordingsOnlyPlayPayload(
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
       prevCloseAsset: settlement.prevCloseAsset,
+      ...recordingPtbFields(settlement),
       finalPrice: settlement.finalPrice,
       windowOutcome: settlement.windowOutcome,
       bucket: "none",
@@ -1798,6 +1809,10 @@ export async function buildPlacementPlayPayload(
             windowOutcome: w.windowOutcome ?? settlement.windowOutcome,
             finalPrice: w.finalPrice ?? settlement.finalPrice,
             prevCloseAsset: w.prevCloseAsset ?? settlement.prevCloseAsset,
+            ...recordingPtbFields({
+              ptbHistory: w.ptbHistory ?? settlement.ptbHistory,
+              gammaPtb: w.gammaPtb ?? settlement.gammaPtb,
+            }),
           };
         }),
       );
@@ -1904,6 +1919,7 @@ export async function buildPlacementPlayPayload(
       windowStart: window.windowStart,
       windowEnd: window.windowEnd,
       prevCloseAsset: settlement.prevCloseAsset,
+      ...recordingPtbFields(settlement),
       finalPrice: settlement.finalPrice,
       windowOutcome: settlement.windowOutcome,
       bucket: trade.bucket,

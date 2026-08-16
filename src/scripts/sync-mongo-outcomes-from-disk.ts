@@ -11,6 +11,7 @@ import { getMarket, listMarkets } from "../db/market-repository.js";
 import { initStorage } from "../db/data-dir.js";
 import { listRecordedWindows } from "../db/recorded-window-repository.js";
 import { upsertRecordedWindowSummary } from "../db/recorded-window-mongo-repository.js";
+import { recordingPtbFields } from "../ptb-history.js";
 import { closeMongoClient } from "../db/mongo-client.js";
 import type { MarketDocument } from "../types.js";
 
@@ -46,6 +47,7 @@ async function syncMarket(market: MarketDocument): Promise<void> {
         assetRange: window.assetRange,
         prevCloseAsset: window.prevCloseAsset,
         assetPrice: window.assetPrice,
+        ...recordingPtbFields(window),
       });
       updated += 1;
       if (updated <= 5 || updated % 250 === 0 || i + 1 === windows.length) {

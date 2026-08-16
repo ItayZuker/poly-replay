@@ -3216,6 +3216,12 @@ function buildChartLayout(state, width, height) {
   if (points.length > 0) {
     const prices = points.map((p) => p.price);
     if (ptb != null && Number.isFinite(ptb)) prices.push(ptb);
+    if (Array.isArray(state?.ptbHistory)) {
+      for (const entry of state.ptbHistory) {
+        const histPtb = Number(entry?.ptb);
+        if (Number.isFinite(histPtb)) prices.push(histPtb);
+      }
+    }
     minP = Math.min(...prices);
     maxP = Math.max(...prices);
     const spread = maxP - minP || Math.max(minP * 0.001, 1);

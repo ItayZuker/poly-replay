@@ -172,6 +172,7 @@ export async function stampOfficialChainlinkCloseTip(
     tMs: endMs,
     assetPrice: close,
     prevCloseAsset: ptb,
+    priceToBeatSource: "gamma",
     ptbCrossings: lastMid.ptbCrossings,
     minAssetPrice: lastMid.minAssetPrice,
     maxAssetPrice: lastMid.maxAssetPrice,

@@ -9,6 +9,7 @@
  * empty recorded windows with no trade are omitted.
  */
 import { listRecordedWindowsSince } from "./db/recorded-window-mongo-repository.js";
+import { recordingPtbFields } from "./ptb-history.js";
 import {
   listTriggerModeEvents,
   wasTriggerTradingActive,
@@ -471,6 +472,7 @@ export async function buildLiveHourPlayPayload(
       windowEnd,
       windowOutcome,
       prevCloseAsset,
+      ...recordingPtbFields(meta ?? {}),
       finalPrice,
       bucket,
       tradeDots,
@@ -677,6 +679,7 @@ export async function buildDemoTriggerPlayPayload(
       windowEnd,
       windowOutcome,
       prevCloseAsset,
+      ...recordingPtbFields(meta ?? {}),
       finalPrice,
       bucket,
       tradeDots,

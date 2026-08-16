@@ -19,6 +19,7 @@ import { closeMongoClient } from "../db/mongo-client.js";
 import { initStorage } from "../db/data-dir.js";
 import { fetchOfficialWindowResolution } from "../official-window-resolution.js";
 import { buildUpDownSlug, parseMarketSeries } from "../market-pair.js";
+import { appendPtbHistory, recordingPtbFields } from "../ptb-history.js";
 import { roundTo4 } from "../tick-compact.js";
 import type { MarketDocument } from "../types.js";
 
@@ -100,6 +101,15 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         continue;
       }
 
+      const ptbHistory =
+        nextPtb != null && Number.isFinite(nextPtb)
+          ? appendPtbHistory(window.ptbHistory, {
+              t: window.windowEnd,
+              ptb: nextPtb,
+              source: "gamma",
+            })
+          : window.ptbHistory;
+
       const nextDoc = {
         windowStart: window.windowStart,
         windowEnd: window.windowEnd,
@@ -109,6 +119,10 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         conditionId: window.conditionId,
         assetPrice: nextAsset,
         prevCloseAsset: nextPtb,
+        ...recordingPtbFields({
+          ptbHistory,
+          gammaPtb: nextPtb ?? window.gammaPtb,
+        }),
         assetGap: nextGap,
         windowOutcome: outcome,
         yesPrice: yesPrice ?? window.yesPrice,
@@ -143,6 +157,7 @@ async function backfillMarket(market: MarketDocument): Promise<void> {
         maxAssetPrice: nextDoc.maxAssetPrice,
         assetRange: nextDoc.assetRange,
         prevCloseAsset: nextDoc.prevCloseAsset,
+        ...recordingPtbFields(nextDoc),
         assetPrice: nextDoc.assetPrice,
       });
 
