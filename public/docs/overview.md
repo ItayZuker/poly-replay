@@ -16,7 +16,7 @@ Poly Replay is Trigger-driven Polymarket **up/down** trading: define Market Trig
 | Page | Purpose |
 |------|---------|
 | **Market** | Live window, Triggers, trades, positions — [Market](doc:market) |
-| **Schedule** | Live hour-slot Trigger stats and Trade + Active triggers — [Schedule](doc:schedule) |
+| **Schedule** | Live hour-slot Trigger stats and Trade triggers — [Schedule](doc:schedule) |
 | **Replay** | Historical what-if board (Run, Replay Triggers, recordings) — [Schedule](doc:schedule) |
 | **Settings** | Profile and wallet — [Settings & wallet](doc:settings) |
 
@@ -28,4 +28,4 @@ Poly Replay is Trigger-driven Polymarket **up/down** trading: define Market Trig
 | **Window** | One timed up/down market until expiry |
 | **Trigger** | Detector rule (Duration / Price / gaps / exits) — Market Triggers trade live; Replay Triggers are local to the Replay page |
 | **Schedule** | 7×24 UTC hour cells showing Trigger Trade aggregates (**Live**). **Replay** is a separate header page for historical what-if runs |
-| **Demo vs live** | Demo simulates on the trigger card; live sends CLOB orders when **Allow trade** is on, the wallet is set, and the trigger is **Trade** + **Active** |
+| **Demo vs live** | Demo simulates on the trigger card; live sends CLOB orders when **Allow trade** is on, the wallet is set, and the trigger is on **Trade** |

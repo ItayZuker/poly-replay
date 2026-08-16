@@ -19,7 +19,7 @@ Pick a series in the header (e.g. BTC/ETH 5m or 15m).
 
 ## 4. Preview
 
-Keep **Allow trade** off under Settings → **User**. Create a **Trigger**, leave it on **Demo** + **Active**, and watch the log / Demo stats. More: [Market](doc:market).
+Keep **Allow trade** off under Settings → **User**. Create a **Trigger**, leave it on **Demo**, and watch the log / Demo stats. More: [Market](doc:market).
 
 ## 5. Schedule and Replay
 
@@ -31,5 +31,5 @@ Open **Replay** to add local Replay Triggers, set Latency / Fill Success, and pr
 
 1. Confirm credentials and balance
 2. Turn **Allow trade** on (Settings → **User**)
-3. Set the trigger to **Trade** + **Active**
+3. Set the trigger to **Trade**
 4. Start small; watch the log, positions, and Schedule hour cells

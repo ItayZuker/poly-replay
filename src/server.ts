@@ -891,7 +891,7 @@ app.post("/api/trading/order", async (req, res) => {
           : "manual";
     if (source === "manual" || source === "prediction") {
       res.status(400).json({
-        error: "Only Trigger Trade places orders (Trade + Active)",
+        error: "Only Trigger Trade places orders (Trade)",
       });
       return;
     }
