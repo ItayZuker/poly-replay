@@ -234,7 +234,7 @@ Underlying asset (BTC, ETH, etc.) spot price and running window dynamics.
 |-----|-------|------|-------------|
 | `3` | assetPrice | number | Chainlink spot price (USD) |
 | `4` | prevCloseAsset | number | Price to beat (PTB) at this tick — REST open during the window; Gamma on the official close tip |
-| `priceToBeatSource` | priceToBeatSource | `"rest"` \| `"gamma"` | Optional named field on expanded JSONL ticks |
+| `priceToBeatSource` | priceToBeatSource | `"chainlink"` \| `"rest"` \| `"gamma"` | Optional named field on expanded JSONL ticks |
 | `5` | ptbCrossings | number | PTB crossings so far — **only if > 0** |
 | `6` | minAssetPrice | number | Running minimum asset price this window |
 | `7` | maxAssetPrice | number | Running maximum asset price this window |
@@ -350,7 +350,7 @@ Full summary written once when a window completes. Primary metadata source for a
 | `7` | conditionId | string | if empty | On-chain condition id (`0x…`) |
 | `8` | assetPrice | number | if null | Final Chainlink asset price |
 | `9` | prevCloseAsset | number | if null | Official PTB after Gamma (settlement); REST history is `ptbHistory` |
-| `22` | ptbHistory | array | if empty | Append-only PTB changes: `[tSec, ptb, source]` where source `1` = REST `openPrice`, `2` = Gamma |
+| `22` | ptbHistory | array | if empty | Append-only PTB changes: `[tSec, ptb, source]` where source `3` = first Chainlink tick, `1` = REST `openPrice`, `2` = Gamma |
 | `23` | gammaPtb | number | if null | Official Gamma `eventMetadata.priceToBeat` (also last `ptbHistory` Gamma row) |
 | `10` | windowOutcome | number | if unknown | **`1`** = up, **`2`** = down |
 | `11` | yesPrice | number | if null | Final YES contract price |

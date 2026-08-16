@@ -33,9 +33,9 @@ Server -> SSE -> Browser
 | Window / tokens | Polymarket REST; full SSE `window` (history + trading) on connect, market-window roll, and rare REST-driven pushes — not every tick |
 | Positions (open / pending) / markers / phases | SSE `trading` (~250ms coalesce) — settled Positions via REST + browser cache |
 | Settled Positions (last 24h) | `GET /api/trading/positions` → browser `localStorage`; refresh on `statsRevision` |
-| PTB | Live Market: Polymarket crypto-price `openPrice` only — label **PTB (REST)** (follow updates until they freeze it; unset until it arrives; never prior-window / invented; never Gamma). Recordings append each REST change to `ptbHistory` and store Gamma `eventMetadata.priceToBeat` separately (`gammaPtb`). Open Replay uses REST history during the window, then Gamma on the last tick (**PTB (GAMMA)**) |
+| PTB | Live Market: first in-window Chainlink tick — label **PTB (Chainlink)** — then Polymarket crypto-price `openPrice` — **PTB (REST)** (follow updates until they freeze it; never prior-window; never Gamma). Recordings append Chainlink → REST changes to `ptbHistory` and store Gamma `eventMetadata.priceToBeat` separately (`gammaPtb`). Open Replay scrubs that history, then Gamma on the last tick (**PTB (GAMMA)**) |
 | Asset price / Current | Live Market: Chainlink RTDS (`btc/usd` / `eth/usd` / `sol/usd`), rounded like Polymarket’s page (2 decimals for BTC ≥ 1000) — not replaced by Gamma. Open Replay last tick: Gamma `eventMetadata.finalPrice` |
-| Gap / crossings | Server: Current − PTB — **no gap** (and gap-based triggers do not fire) until published open is present |
+| Gap / crossings | Server: Current − PTB — **no gap** (and gap-based triggers do not fire) until the first in-window Chainlink PTB is present |
 
 ## Trading
 

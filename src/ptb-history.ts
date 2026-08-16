@@ -1,6 +1,6 @@
-/** Recorded PTB timeline: REST openPrice changes, plus Gamma at window end. */
+/** Recorded PTB timeline: first Chainlink tick, REST openPrice changes, Gamma at window end. */
 
-export type PtbHistorySource = "rest" | "gamma";
+export type PtbHistorySource = "chainlink" | "rest" | "gamma";
 
 export interface PtbHistoryEntry {
   /** Unix seconds when this PTB became active. Gamma uses windowEnd. */
@@ -12,7 +12,22 @@ export interface PtbHistoryEntry {
 const SOURCE_CODE = {
   rest: 1,
   gamma: 2,
+  chainlink: 3,
 } as const;
+
+export function normalizePtbHistorySource(value: unknown): PtbHistorySource {
+  if (value === "gamma") return "gamma";
+  if (value === "chainlink" || value === "chainlink-rtds") return "chainlink";
+  return "rest";
+}
+
+export function isRestPtbSource(source?: string): boolean {
+  return source === "rest" || source === "polymarket-openPrice";
+}
+
+export function isGammaPtbSource(source?: string): boolean {
+  return source === "gamma";
+}
 
 export function appendPtbHistory(
   history: PtbHistoryEntry[] | undefined,
@@ -23,10 +38,11 @@ export function appendPtbHistory(
   if (!Number.isFinite(ptb) || !Number.isFinite(t)) {
     return history ? [...history] : [];
   }
+  const source = normalizePtbHistorySource(entry.source);
   const next = history ? [...history] : [];
   const last = next[next.length - 1];
-  if (last && last.ptb === ptb && last.source === entry.source) return next;
-  next.push({ t, ptb, source: entry.source });
+  if (last && last.ptb === ptb && last.source === source) return next;
+  next.push({ t, ptb, source });
   return next;
 }
 
@@ -61,9 +77,22 @@ export function encodePtbHistory(
     const t = Number(entry.t);
     const ptb = Number(entry.ptb);
     if (!Number.isFinite(t) || !Number.isFinite(ptb)) continue;
-    rows.push([t, ptb, entry.source === "gamma" ? SOURCE_CODE.gamma : SOURCE_CODE.rest]);
+    const source = normalizePtbHistorySource(entry.source);
+    const code =
+      source === "gamma"
+        ? SOURCE_CODE.gamma
+        : source === "chainlink"
+          ? SOURCE_CODE.chainlink
+          : SOURCE_CODE.rest;
+    rows.push([t, ptb, code]);
   }
   return rows.length ? rows : undefined;
+}
+
+function sourceFromCode(code: number): PtbHistorySource {
+  if (code === SOURCE_CODE.gamma) return "gamma";
+  if (code === SOURCE_CODE.chainlink) return "chainlink";
+  return "rest";
 }
 
 export function decodePtbHistory(raw: unknown): PtbHistoryEntry[] | undefined {
@@ -74,14 +103,15 @@ export function decodePtbHistory(raw: unknown): PtbHistoryEntry[] | undefined {
       const rec = row as { t?: unknown; ptb?: unknown; source?: unknown };
       const t = Number(rec.t);
       const ptb = Number(rec.ptb);
-      const source: PtbHistorySource = rec.source === "gamma" ? "gamma" : "rest";
-      if (Number.isFinite(t) && Number.isFinite(ptb)) out.push({ t, ptb, source });
+      if (Number.isFinite(t) && Number.isFinite(ptb)) {
+        out.push({ t, ptb, source: normalizePtbHistorySource(rec.source) });
+      }
       continue;
     }
     if (!Array.isArray(row) || row.length < 2) continue;
     const t = Number(row[0]);
     const ptb = Number(row[1]);
-    const source: PtbHistorySource = Number(row[2]) === SOURCE_CODE.gamma ? "gamma" : "rest";
+    const source = sourceFromCode(Number(row[2]));
     if (Number.isFinite(t) && Number.isFinite(ptb)) out.push({ t, ptb, source });
   }
   return out.length ? out : undefined;

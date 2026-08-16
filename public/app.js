@@ -3493,8 +3493,34 @@ function drawPriceChart(state, options = {}) {
   return layout;
 }
 
+function setLivePtbSourceLabel(source) {
+  const el = $("graph-ptb-source");
+  if (!el) return;
+  el.classList.remove("is-gamma", "is-chainlink");
+  if (source === "gamma") {
+    el.hidden = false;
+    el.textContent = "(GAMMA)";
+    el.classList.add("is-gamma");
+    return;
+  }
+  if (source === "polymarket-openPrice" || source === "rest") {
+    el.hidden = false;
+    el.textContent = "(REST)";
+    return;
+  }
+  if (source === "chainlink-rtds" || source === "chainlink") {
+    el.hidden = false;
+    el.textContent = "(Chainlink)";
+    el.classList.add("is-chainlink");
+    return;
+  }
+  el.hidden = true;
+  el.textContent = "";
+}
+
 function updateGraphPanel(state) {
   $("graph-ptb").textContent = fmtPrice(state.prevCloseAsset);
+  setLivePtbSourceLabel(state.priceToBeatSource);
   $("graph-current").textContent = fmtPrice(state.assetPrice);
 
   const gapEl = $("graph-gap");
@@ -5051,6 +5077,7 @@ function applyQuotesUpdate(quotes) {
   if (quotes.series && selectedSeries && quotes.series !== selectedSeries) return;
 
   const prevPtb = windowState?.prevCloseAsset;
+  const prevPtbSource = windowState?.priceToBeatSource;
   const wasSettled = windowState?.officialSettled === true;
   const settledIncoming = quotes.officialSettled === true;
 
@@ -5084,8 +5111,10 @@ function applyQuotesUpdate(quotes) {
   tickManipulationDetector(windowState);
 
   const ptbChanged = quotes.prevCloseAsset !== undefined && quotes.prevCloseAsset !== prevPtb;
+  const ptbSourceChanged =
+    quotes.priceToBeatSource !== undefined && quotes.priceToBeatSource !== prevPtbSource;
   const settledNow = windowState.officialSettled === true && !wasSettled;
-  if (ptbChanged || settledNow) {
+  if (ptbChanged || ptbSourceChanged || settledNow) {
     updateGraphPanel(windowState);
   }
 }

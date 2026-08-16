@@ -107,6 +107,15 @@ class SeriesFeed {
         const current = roundPolymarketAssetPriceMaybe(live.value);
         if (current != null) {
           this.state.assetPrice = current;
+          const nowSec = Date.now() / 1000;
+          if (
+            this.state.prevCloseAsset == null &&
+            nowSec >= this.state.windowStart &&
+            nowSec < this.state.windowEnd
+          ) {
+            this.state.prevCloseAsset = current;
+            this.state.priceToBeatSource = "chainlink-rtds";
+          }
           this.state.assetGap = assetGapOrUnset(current, this.state.prevCloseAsset);
           if (this.state.prevCloseAsset != null) {
             const ptbSide = getPtbSide(current, this.state.prevCloseAsset);
@@ -153,6 +162,13 @@ class SeriesFeed {
         this.state.priceToBeatSource = undefined;
         this.state.officialSettled = false;
         this.officialSettled = false;
+        const { asset } = parseMarketSeries(this.series);
+        const liveOpen = chainlinkPriceFeed.getLivePrice(asset);
+        const openPtb = roundPolymarketAssetPriceMaybe(liveOpen?.value);
+        if (openPtb != null) {
+          this.state.prevCloseAsset = openPtb;
+          this.state.priceToBeatSource = "chainlink-rtds";
+        }
       }
 
       this.state.series = this.series;

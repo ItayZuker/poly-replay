@@ -202,6 +202,15 @@ export class DisplayService {
     const current = roundPolymarketAssetPriceMaybe(live.value);
     if (current == null) return;
     this.state.assetPrice = current;
+    const nowSec = Date.now() / 1000;
+    if (
+      this.state.prevCloseAsset == null &&
+      nowSec >= this.state.windowStart &&
+      nowSec < this.state.windowEnd
+    ) {
+      this.state.prevCloseAsset = current;
+      this.state.priceToBeatSource = "chainlink-rtds";
+    }
     this.state.assetGap = assetGapOrUnset(current, this.state.prevCloseAsset);
     if (this.state.prevCloseAsset != null) {
       const ptbSide = getPtbSide(current, this.state.prevCloseAsset);
@@ -212,7 +221,6 @@ export class DisplayService {
         this.lastPtbSide = ptbSide;
       }
     } else {
-      // No published open yet — never invent a gap from a stale prior window.
       this.lastPtbSide = null;
     }
     // Phase / GTD scheduling must follow wall clock, not oracle stamp (which can lag
@@ -282,6 +290,13 @@ export class DisplayService {
         this.state.priceToBeatSource = undefined;
         this.state.officialSettled = false;
         this.officialSettled = false;
+        const { asset } = parseMarketSeries(this.series);
+        const liveOpen = chainlinkPriceFeed.getLivePrice(asset);
+        const openPtb = roundPolymarketAssetPriceMaybe(liveOpen?.value);
+        if (openPtb != null) {
+          this.state.prevCloseAsset = openPtb;
+          this.state.priceToBeatSource = "chainlink-rtds";
+        }
         logService.setActiveWindow(pair.windowStart);
         this.prefetchedNextWindowStart = null;
         this.prefetchedYesTokenId = null;

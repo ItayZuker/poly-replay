@@ -10,7 +10,7 @@ export type OfficialDisplayState = {
   prevCloseAsset?: number;
   assetPrice?: number;
   assetGap?: number;
-  priceToBeatSource?: "polymarket-openPrice" | "gamma";
+  priceToBeatSource?: "chainlink-rtds" | "polymarket-openPrice" | "gamma";
   officialSettled?: boolean;
 };
 

@@ -424,7 +424,7 @@ function gapMatches(
   side: "up" | "down" | null = null,
 ): boolean {
   if (kind !== "positive" && kind !== "negative") return true;
-  // Gap triggers require official open (PTB) on the tick — never fire without it.
+  // Gap triggers require a PTB on the tick (first Chainlink, then REST).
   if (tick.prevCloseAsset == null || !Number.isFinite(Number(tick.prevCloseAsset))) {
     return false;
   }

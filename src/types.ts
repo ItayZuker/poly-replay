@@ -36,7 +36,7 @@ export interface RecordedWindowDocument {
   conditionId?: string;
   assetPrice?: number;
   prevCloseAsset?: number;
-  /** Append-only REST openPrice changes, plus Gamma at windowEnd. */
+  /** Append-only PTB changes: first Chainlink, REST openPrice, Gamma at windowEnd. */
   ptbHistory?: PtbHistoryEntry[];
   /** Official Gamma eventMetadata.priceToBeat (separate from REST history). */
   gammaPtb?: number;
@@ -93,8 +93,8 @@ export interface ChainlinkTickDocument {
   tMs: number;
   assetPrice?: number;
   prevCloseAsset?: number;
-  /** rest = live crypto-price open; gamma = official tip at windowEnd. */
-  priceToBeatSource?: "rest" | "gamma";
+  /** chainlink = first RTDS tick; rest = crypto-price open; gamma = official tip. */
+  priceToBeatSource?: "chainlink" | "rest" | "gamma";
   assetGap?: number;
   ptbCrossings?: number;
   minAssetPrice?: number;
@@ -126,7 +126,7 @@ export interface ReplayTickDocument {
   noAsks?: BookLevel[];
   assetPrice?: number;
   prevCloseAsset?: number;
-  priceToBeatSource?: "rest" | "gamma";
+  priceToBeatSource?: "chainlink" | "rest" | "gamma";
   assetGap?: number;
   ptbCrossings?: number;
   minAssetPrice?: number;
@@ -174,8 +174,8 @@ export interface LiveWindowState {
   prevCloseAsset?: number;
   assetPrice?: number;
   assetGap?: number;
-  /** Where prevCloseAsset (PTB) came from — published crypto-price open, or Gamma after settle. */
-  priceToBeatSource?: "polymarket-openPrice" | "gamma";
+  /** Where prevCloseAsset (PTB) came from — first Chainlink tick, published open, or Gamma. */
+  priceToBeatSource?: "chainlink-rtds" | "polymarket-openPrice" | "gamma";
   /** True once Gamma eventMetadata PTB/close were applied for this window. */
   officialSettled?: boolean;
   yesBid?: number;
