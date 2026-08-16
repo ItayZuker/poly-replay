@@ -5277,6 +5277,18 @@ body.is-row-resizing .panel-header-drag-handle {
   color: var(--text);
 }
 
+.positions-panel-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.positions-panel-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
 .trade-panel-header {
   display: flex;
   flex-direction: column;
@@ -6397,10 +6409,20 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   margin-left: auto;
 }
 
-/* Demo reset sits on the stats (dots) row, right-aligned. */
+/* Demo reset sits on the stats (dots) row, right-aligned.
+   Trade keeps the same 20×20 slot so the row (and P/L below) does not jump. */
+.trigger-card .trigger-card-stats-main {
+  min-height: 20px;
+}
+
 .trigger-card .trigger-card-stats-main > .trigger-card-stats-reset {
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+.trigger-card-stats-reset.is-slot {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .trigger-card-stats-counts {
