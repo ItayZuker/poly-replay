@@ -4773,6 +4773,23 @@ function refreshTradeTriggerStatsFromPositions(state, cardsOverride) {
   }
 }
 
+function updatePositionsCount(count) {
+  const el = $("positions-count");
+  if (!el) return;
+  if (count == null) {
+    el.hidden = true;
+    el.textContent = "";
+    el.removeAttribute("aria-label");
+    return;
+  }
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const mode = normalizePositionsFilter(positionsFilter);
+  const kind = mode === "demo" ? "demo " : mode === "trade" ? "trade " : "";
+  el.hidden = false;
+  el.textContent = String(n);
+  el.setAttribute("aria-label", `${n} ${kind}position${n === 1 ? "" : "s"}`);
+}
+
 function setPositionsLoading(isLoading) {
   const loading = $("positions-loading");
   const list = $("positions-cards");
@@ -4795,6 +4812,7 @@ function updatePositionsPanel(state) {
   if (state == null || (trading != null && trading.positionCardsReady === false)) {
     lastPositionsFingerprint = "";
     setPositionsLoading(true);
+    updatePositionsCount(null);
     syncPositionsScrollable();
     return;
   }
@@ -4809,6 +4827,7 @@ function updatePositionsPanel(state) {
     list.innerHTML = "";
     empty.hidden = false;
     empty.textContent = "No positions yet";
+    updatePositionsCount(0);
     syncPositionsScrollable();
     return;
   }
@@ -4843,12 +4862,14 @@ function updatePositionsPanel(state) {
         : mode === "trade"
           ? "No trade positions"
           : "No positions yet";
+    updatePositionsCount(0);
     syncPositionsScrollable();
     return;
   }
 
   empty.hidden = true;
   list.innerHTML = cards.map(renderPositionCard).join("");
+  updatePositionsCount(cards.length);
   syncPositionsScrollable();
 }
 
@@ -7689,24 +7710,27 @@ function renderTriggersList() {
       '<span class="trigger-card-stats-pnl" data-stat="pnl" title="P/L">$0.00</span>' +
       "</div>";
 
+    const resetSlot = document.createElement(runMode === "demo" ? "button" : "span");
+    resetSlot.className = "trigger-card-stats-reset";
+    resetSlot.innerHTML =
+      '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
+      '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
+      '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
+      "</svg>";
     if (runMode === "demo") {
-      const resetBtn = document.createElement("button");
-      resetBtn.type = "button";
-      resetBtn.className = "trigger-card-stats-reset";
-      resetBtn.title = "Reset Demo stats";
-      resetBtn.setAttribute("aria-label", "Reset Demo stats");
-      resetBtn.innerHTML =
-        '<svg class="schedule-summary-reset-icon" viewBox="0 0 16 16" aria-hidden="true">' +
-        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2.5 3.5v3h3M13.5 12.5v-3h-3" />' +
-        '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.2 9.2A5 5 0 0 0 12.5 11M12.8 6.8A5 5 0 0 0 3.5 5" />' +
-        "</svg>";
-      resetBtn.addEventListener("click", (e) => {
+      resetSlot.type = "button";
+      resetSlot.title = "Reset Demo stats";
+      resetSlot.setAttribute("aria-label", "Reset Demo stats");
+      resetSlot.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         resetTriggerDemoStats(triggerId);
       });
-      statsBody.querySelector(".trigger-card-stats-main")?.appendChild(resetBtn);
+    } else {
+      resetSlot.classList.add("is-slot");
+      resetSlot.setAttribute("aria-hidden", "true");
     }
+    statsBody.querySelector(".trigger-card-stats-main")?.appendChild(resetSlot);
 
     statsRow.appendChild(statsBody);
 
@@ -8672,6 +8696,14 @@ function buildTriggerFromCreateDraft() {
     createdAt:
       typeof existing?.createdAt === "string" ? existing.createdAt : new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    sortOrder: (() => {
+      if (existing && Number.isFinite(Number(existing.sortOrder))) {
+        return Math.floor(Number(existing.sortOrder));
+      }
+      if (!existing || triggerCreateHost === "replay") return existing?.sortOrder;
+      const idx = userTriggers.findIndex((t) => String(t?.id) === String(existing.id));
+      return idx >= 0 ? idx : existing.sortOrder;
+    })(),
   });
 }
 

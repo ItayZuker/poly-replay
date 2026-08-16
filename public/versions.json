@@ -1,6 +1,11 @@
 {
-    "current": "1.73.0",
+    "current": "1.73.1",
     "releases": [
+        {
+            "version": "1.73.1",
+            "releasedAt": "2026-08-16T07:09:42.598Z",
+            "notes": "Positions title shows the card count for the current Demo/Trade/All filter. Editing a trigger keeps its list order. Demo/Trade toggle no longer shifts trigger-card P/L. Docs updated."
+        },
         {
             "version": "1.73.0",
             "releasedAt": "2026-08-16T06:50:03.218Z",
