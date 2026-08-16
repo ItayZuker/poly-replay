@@ -76,7 +76,7 @@ Logical names in this doc map to those keys. When reading raw JSON files, transl
 - A window spans `[windowStart, windowEnd)` in unix seconds (`windowEnd - windowStart` = 300 for 5m, 900 for 15m).
 - Ticks are recorded only while the window is active.
 - On window end: ticks are flushed and `windows/{windowStart}.json` is written (Mongo `recorded_windows` is upserted).
-- Files older than **14 days** (hardcoded) are **deleted** (ticks, local window JSON, and Mongo recorded_windows summaries). No zip archive. Pruning runs every hour on the recorder process and after each window finalizes. Replay then keeps the **latest** UTC weekday×hour only (new hour overrides that slot; missing hours keep the prior week).
+- Files older than the series **retention** (default **7 days**, Admin CRM) are **deleted** (ticks, local window JSON, and Mongo recorded_windows summaries). No zip archive. Pruning runs every hour on the recorder process and after each window finalizes. Replay then keeps the **latest** UTC weekday×hour only (new hour overrides that slot; missing hours keep the prior week).
 
 ---
 
@@ -88,7 +88,7 @@ data/
   wallets.json                 # global wallet registry (normal field names)
   btc_5m/
     ticks/
-      {windowStart}/          # last ~14 days only
+      {windowStart}/          # last ~7 days only
         clob-raw.jsonl
         clob-book.jsonl
         chainlink.jsonl
@@ -148,7 +148,7 @@ Object keyed by market series id. Uses **normal field names** (not compact keys)
 | `timeframeMinutes` | number | `5` or `15` |
 | `available` | boolean | Shown in trader app / allowed for trading (Admin CRM) |
 | `recordingEnabled` | boolean | Whether recorder should run for this market (Admin CRM) |
-| `retentionDays` | number | Days of tick/window data to keep (default `14`; Admin CRM) |
+| `retentionDays` | number | Days of tick/window data to keep (default `7`; Admin CRM) |
 | `createdAt` | string | ISO timestamp |
 | `updatedAt` | string | ISO timestamp |
 

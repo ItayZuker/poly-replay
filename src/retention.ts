@@ -1,9 +1,9 @@
 /**
  * Tick/window data kept on disk + Mongo summaries.
- * Default ~14 days so previous weekday hours remain until the same hour is re-recorded.
+ * Default ~7 days so previous weekday hours remain until the same hour is re-recorded.
  * Per-market override via MarketDocument.retentionDays.
  */
-export const HOT_RETENTION_DAYS = 14;
+export const HOT_RETENTION_DAYS = 7;
 export const MIN_RETENTION_DAYS = 1;
 export const MAX_RETENTION_DAYS = 365;
 

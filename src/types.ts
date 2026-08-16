@@ -19,7 +19,7 @@ export interface MarketDocument {
   available: boolean;
   /** When true, a non-executor process captures ticks/windows for this series. */
   recordingEnabled: boolean;
-  /** Hot tick/window retention for this series (days). Default 14. */
+  /** Hot tick/window retention for this series (days). Default 7. */
   retentionDays: number;
   createdAt: string;
   updatedAt: string;

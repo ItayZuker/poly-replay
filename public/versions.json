@@ -1,6 +1,11 @@
 {
-    "current": "1.74.0",
+    "current": "1.75.0",
     "releases": [
+        {
+            "version": "1.75.0",
+            "releasedAt": "2026-08-16T09:49:14.734Z",
+            "notes": "Open Replay Play tab: green/red/blue dots left of the controls filter the window list (none = all, including gray; multiple = OR). Recording retention default is 7 days. Docs updated."
+        },
         {
             "version": "1.74.0",
             "releasedAt": "2026-08-16T08:08:31.331Z",

@@ -10235,26 +10235,35 @@ body.is-column-resizing * {
   cursor: default;
 }
 
+.schedule-play-window-filter {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+
 .schedule-play-hits-stat:not(:disabled):hover,
-.schedule-play-hits-stat.is-hits-highlight-pinned {
+.schedule-play-hits-stat.is-hits-highlight-pinned,
+.schedule-play-hits-stat.is-play-filter-pinned {
   border-color: color-mix(in srgb, currentColor 35%, var(--border));
   background: color-mix(in srgb, var(--panel) 55%, transparent);
 }
 
 .schedule-play-hits-stat[data-bucket="green"]:not(:disabled):hover,
-.schedule-play-hits-stat[data-bucket="green"].is-hits-highlight-pinned {
+.schedule-play-hits-stat[data-bucket="green"].is-hits-highlight-pinned,
+.schedule-play-hits-stat[data-bucket="green"].is-play-filter-pinned {
   border-color: color-mix(in srgb, var(--up) 70%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--up) 35%, transparent);
 }
 
 .schedule-play-hits-stat[data-bucket="red"]:not(:disabled):hover,
-.schedule-play-hits-stat[data-bucket="red"].is-hits-highlight-pinned {
+.schedule-play-hits-stat[data-bucket="red"].is-hits-highlight-pinned,
+.schedule-play-hits-stat[data-bucket="red"].is-play-filter-pinned {
   border-color: color-mix(in srgb, var(--down) 70%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--down) 35%, transparent);
 }
 
 .schedule-play-hits-stat[data-bucket="blue"]:not(:disabled):hover,
-.schedule-play-hits-stat[data-bucket="blue"].is-hits-highlight-pinned {
+.schedule-play-hits-stat[data-bucket="blue"].is-hits-highlight-pinned,
+.schedule-play-hits-stat[data-bucket="blue"].is-play-filter-pinned {
   border-color: color-mix(in srgb, var(--accent) 70%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
@@ -10556,6 +10565,10 @@ body.is-column-resizing * {
 
 .schedule-play-transport-panel.is-disabled {
   pointer-events: none;
+}
+
+.schedule-play-transport-panel.is-disabled .schedule-play-window-filter {
+  pointer-events: auto;
 }
 
 @media (max-width: 820px) {

@@ -58,7 +58,7 @@ async function removeArchiveDir(series: string): Promise<boolean> {
 }
 
 /**
- * Permanently delete tick/window data older than the hot retention window (~14 days).
+ * Permanently delete tick/window data older than the hot retention window (default 7 days).
  * No zip archive — cold data is discarded.
  */
 export async function pruneColdMarketData(
