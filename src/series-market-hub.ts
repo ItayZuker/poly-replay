@@ -17,10 +17,7 @@ import { getPtbSide, type PtbSide } from "./window-dynamics.js";
 import { resolveTakerFeeParams } from "./taker-fee.js";
 import { logService } from "./log-service.js";
 import { createCoalescer } from "./coalesce-async.js";
-import {
-  applyOfficialDisplayToState,
-  fetchOfficialWindowResolution,
-} from "./official-window-resolution.js";
+import { fetchOfficialWindowResolution } from "./official-window-resolution.js";
 import {
   assetGapOrUnset,
   roundPolymarketAssetPriceMaybe,
@@ -176,14 +173,9 @@ class SeriesFeed {
         try {
           const official = await fetchOfficialWindowResolution(pair.slug);
           if (official) {
-            applyOfficialDisplayToState(this.state, official);
+            // Live trading/display keep REST PTB. Gamma is recording/replay only.
             this.officialSettled = true;
-            if (this.state.assetPrice != null) {
-              this.state.priceHistory.push({
-                t: pair.windowEnd,
-                price: this.state.assetPrice,
-              });
-            }
+            this.state.officialSettled = true;
             this.updateQuotesFromCache();
             return;
           }

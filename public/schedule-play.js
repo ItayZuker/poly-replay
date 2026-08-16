@@ -468,7 +468,99 @@
       el.textContent = "—";
       el.className = "sim-value";
     }
+    setPlayPtbSourceLabel(null);
     clearPlayQuoteBoxes();
+  }
+
+  function setPlayPtbSourceLabel(source) {
+    const el = $("play-graph-ptb-source");
+    if (!el) return;
+    if (source === "gamma") {
+      el.hidden = false;
+      el.textContent = "(GAMMA)";
+      el.classList.add("is-gamma");
+      return;
+    }
+    if (source === "rest") {
+      el.hidden = false;
+      el.textContent = "(REST)";
+      el.classList.remove("is-gamma");
+      return;
+    }
+    el.hidden = true;
+    el.textContent = "";
+    el.classList.remove("is-gamma");
+  }
+
+  function appendPlayPtbHistory(history, entry) {
+    const ptb = Number(entry?.ptb);
+    const t = Number(entry?.t);
+    if (!Number.isFinite(ptb) || !Number.isFinite(t)) return history;
+    const source = entry.source === "gamma" ? "gamma" : "rest";
+    const last = history[history.length - 1];
+    if (last && last.ptb === ptb && last.source === source) return history;
+    history.push({ t, ptb, source });
+    return history;
+  }
+
+  function resolvePlayPtbAt(history, atSec, windowEnd) {
+    if (!Array.isArray(history) || !history.length || !Number.isFinite(atSec)) return null;
+    const atEnd =
+      windowEnd != null && Number.isFinite(windowEnd) && atSec >= windowEnd - 1e-9;
+    if (atEnd) {
+      for (let i = history.length - 1; i >= 0; i -= 1) {
+        if (history[i].source === "gamma") return history[i];
+      }
+    }
+    let found = null;
+    for (const entry of history) {
+      if (entry.source === "gamma") continue;
+      if (entry.t <= atSec + 1e-9) found = entry;
+    }
+    return found;
+  }
+
+  function reconstructPtbHistoryFromTicks(win, ticks) {
+    const history = [];
+    const endT = Number(win?.windowEnd);
+    const sorted = [...(ticks || [])].sort((a, b) => Number(a?.tMs) - Number(b?.tMs));
+    for (const tick of sorted) {
+      const ptb = Number(tick?.prevCloseAsset);
+      if (!Number.isFinite(ptb) || tick?.tMs == null || !Number.isFinite(tick.tMs)) continue;
+      const t = tick.tMs / 1000;
+      const atEnd = Number.isFinite(endT) && t >= endT - 1e-6;
+      const source =
+        tick.priceToBeatSource === "gamma" || atEnd ? "gamma" : "rest";
+      appendPlayPtbHistory(history, { t: atEnd && Number.isFinite(endT) ? endT : t, ptb, source });
+    }
+    return history;
+  }
+
+  function ensureGammaPtbAtEnd(history, win) {
+    const endT = Number(win?.windowEnd);
+    if (!Number.isFinite(endT)) return history;
+    const gamma = Number(win?.gammaPtb);
+    const official = Number(win?.prevCloseAsset);
+    const ptb = Number.isFinite(gamma) ? gamma : official;
+    if (!Number.isFinite(ptb)) return history;
+    return appendPlayPtbHistory(history, { t: endT, ptb, source: "gamma" });
+  }
+
+  function playPtbHistoryForWindow(win, ticks) {
+    let history = [];
+    if (Array.isArray(win?.ptbHistory) && win.ptbHistory.length) {
+      for (const entry of win.ptbHistory) {
+        appendPlayPtbHistory(history, entry);
+      }
+    } else {
+      history = reconstructPtbHistoryFromTicks(win, ticks);
+    }
+    return ensureGammaPtbAtEnd(history, win);
+  }
+
+  function playheadPtb(win) {
+    const history = win?.ptbHistory;
+    return resolvePlayPtbAt(history, playheadSec, win?.windowEnd);
   }
 
   function fmtPlayQuote(v) {
@@ -702,7 +794,8 @@
     const until = playheadSec;
     const visible = priceHistory.filter((p) => p.t <= until);
     const last = visible[visible.length - 1];
-    const ptb = win.prevCloseAsset;
+    const resolved = playheadPtb(win);
+    const ptb = resolved?.ptb;
     const current = last?.price;
     const gap =
       current != null && Number.isFinite(current) && ptb != null && Number.isFinite(ptb)
@@ -713,6 +806,7 @@
     const curEl = $("play-graph-current");
     const gapEl = $("play-graph-gap");
     if (ptbEl) ptbEl.textContent = fmtPlayPrice(ptb);
+    setPlayPtbSourceLabel(resolved?.source || null);
     if (curEl) curEl.textContent = fmtPlayPrice(current);
     if (gap != null && Number.isFinite(gap)) {
       setPlaySignedValue(gapEl, fmtPlayGap(gap), gap);
@@ -1711,11 +1805,13 @@
     const until = playheadSec;
     const visible = priceHistory.filter((p) => p.t <= until);
     const last = visible[visible.length - 1];
+    const resolved = playheadPtb(win);
     const state = {
       series: currentSeries(),
       windowStart: win.windowStart,
       windowEnd: win.windowEnd,
-      prevCloseAsset: win.prevCloseAsset,
+      prevCloseAsset: resolved?.ptb,
+      ptbHistory: win.ptbHistory,
       assetPrice: last?.price,
       // Full history — drawPriceChart clips the line with revealUntil.
       priceHistory,
@@ -2049,6 +2145,15 @@
     }
   }
 
+  function applyPlayPtbHistory(win, ticks) {
+    if (!win) return;
+    win.ptbHistory = playPtbHistoryForWindow(win, ticks);
+    if (win.gammaPtb == null || !Number.isFinite(Number(win.gammaPtb))) {
+      const lastGamma = [...(win.ptbHistory || [])].reverse().find((e) => e.source === "gamma");
+      if (lastGamma) win.gammaPtb = lastGamma.ptb;
+    }
+  }
+
   /** Chainlink path + official close tip at windowEnd (when settlement fields exist). */
   async function loadTicks(windowStart, win) {
     const cacheKey = String(windowStart);
@@ -2064,6 +2169,12 @@
       if (Number.isFinite(officialPtb)) win.prevCloseAsset = officialPtb;
       if (officialClose != null) win.finalPrice = officialClose;
       applyCachedSettlement(win, cached);
+      if (Array.isArray(cached.ptbHistory) && cached.ptbHistory.length) {
+        win.ptbHistory = cached.ptbHistory;
+        if (cached.gammaPtb != null) win.gammaPtb = cached.gammaPtb;
+      } else {
+        applyPlayPtbHistory(win, cached.ticks || []);
+      }
       // Rebuild tip if this session's official close differs from cached history tip.
       if (officialClose != null && hasOfficialSettlement(win)) {
         return withOfficialClose(
@@ -2079,6 +2190,7 @@
     if (officialClose != null) win.finalPrice = officialClose;
     if (officialOutcome) win.windowOutcome = officialOutcome;
     hydrateWindowSettlementFromTicks(win, ticks);
+    applyPlayPtbHistory(win, ticks);
 
     const history = withOfficialClose(
       ticksToPriceHistory(ticks, win?.prevCloseAsset),
@@ -2087,6 +2199,9 @@
 
     tickCache.set(cacheKey, {
       history,
+      ticks,
+      ptbHistory: win.ptbHistory,
+      gammaPtb: win.gammaPtb,
       ptb: Number.isFinite(Number(win?.prevCloseAsset)) ? Number(win.prevCloseAsset) : null,
       finalPrice: Number.isFinite(Number(win?.finalPrice)) ? Number(win.finalPrice) : null,
     });

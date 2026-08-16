@@ -49,6 +49,7 @@ import {
   getRecordedWindow,
   saveRecordedWindow,
 } from "./db/recorded-window-repository.js";
+import { appendPtbHistory, recordingPtbFields } from "./ptb-history.js";
 import { upsertRecordedWindowSummary } from "./db/recorded-window-mongo-repository.js";
 import { pruneColdMarketData } from "./db/tick-archive.js";
 import {
@@ -467,6 +468,7 @@ export class MarketRecorder {
     }
     if (this.assetPrices.prevCloseAsset != null) {
       tick.prevCloseAsset = roundTo4(this.assetPrices.prevCloseAsset);
+      tick.priceToBeatSource = this.gammaSettled ? "gamma" : "rest";
     }
 
     return tick;
@@ -526,6 +528,14 @@ export class MarketRecorder {
     const first = this.activeWindow.prevCloseAsset == null;
     this.activeWindow.prevCloseAsset = ptb;
     this.assetPrices.prevCloseAsset = ptb;
+    const tSec = this.lastUsefulTickAtMs
+      ? this.lastUsefulTickAtMs / 1000
+      : Date.now() / 1000;
+    this.activeWindow.ptbHistory = appendPtbHistory(this.activeWindow.ptbHistory, {
+      t: tSec,
+      ptb,
+      source: "rest",
+    });
     this.applyAssetPrice(this.assetPrices.assetPrice);
     void this.persistWindowOpenPtb(ptb);
     logService.info(
@@ -541,8 +551,14 @@ export class MarketRecorder {
     const ptb = roundPolymarketAssetPriceMaybe(priceToBeat);
     if (ptb == null) return;
     this.gammaSettled = true;
+    this.activeWindow.gammaPtb = ptb;
     this.activeWindow.prevCloseAsset = ptb;
     this.assetPrices.prevCloseAsset = ptb;
+    this.activeWindow.ptbHistory = appendPtbHistory(this.activeWindow.ptbHistory, {
+      t: this.activeWindow.windowEnd,
+      ptb,
+      source: "gamma",
+    });
     this.applyAssetPrice(this.assetPrices.assetPrice ?? this.activeWindow.assetPrice);
   }
 
@@ -559,6 +575,7 @@ export class MarketRecorder {
       question: win.question,
       conditionId: win.conditionId,
       prevCloseAsset: ptb,
+      ...recordingPtbFields(win),
       assetPrice: win.assetPrice,
       assetGap: win.assetGap,
       windowOutcome: win.windowOutcome,
@@ -590,6 +607,7 @@ export class MarketRecorder {
         assetRange: doc.assetRange,
         prevCloseAsset: ptb,
         assetPrice: doc.assetPrice,
+        ...recordingPtbFields(win),
       });
     } catch (err) {
       logService.warn(
@@ -834,6 +852,15 @@ export class MarketRecorder {
       );
     }
 
+    const ptbHistory =
+      nextPtb != null && Number.isFinite(nextPtb)
+        ? appendPtbHistory(existing.ptbHistory, {
+            t: existing.windowEnd,
+            ptb: nextPtb,
+            source: "gamma",
+          })
+        : existing.ptbHistory;
+
     const nextDoc = {
       windowStart: existing.windowStart,
       windowEnd: existing.windowEnd,
@@ -843,6 +870,10 @@ export class MarketRecorder {
       conditionId: existing.conditionId,
       assetPrice: nextAsset,
       prevCloseAsset: nextPtb,
+      ...recordingPtbFields({
+        ptbHistory,
+        gammaPtb: nextPtb ?? existing.gammaPtb,
+      }),
       assetGap: nextGap,
       windowOutcome: official.outcome,
       yesPrice: official.yesPrice ?? existing.yesPrice,
@@ -875,6 +906,7 @@ export class MarketRecorder {
       assetRange: nextDoc.assetRange,
       prevCloseAsset: nextDoc.prevCloseAsset,
       assetPrice: nextDoc.assetPrice,
+      ...recordingPtbFields(nextDoc),
     }).catch((err) => {
       logService.warn(
         "recorder",
@@ -1018,6 +1050,7 @@ export class MarketRecorder {
         conditionId: this.activeWindow.conditionId,
         assetPrice: this.activeWindow.assetPrice,
         prevCloseAsset: this.activeWindow.prevCloseAsset,
+        ...recordingPtbFields(this.activeWindow),
         assetGap: this.activeWindow.assetGap,
         ptbCrossings: this.activeWindow.ptbCrossings,
         minAssetPrice: this.activeWindow.minAssetPrice,
@@ -1054,6 +1087,7 @@ export class MarketRecorder {
         conditionId: record.conditionId,
         assetPrice: record.assetPrice,
         prevCloseAsset: record.prevCloseAsset,
+        ...recordingPtbFields(record),
         assetGap: record.assetGap,
         windowOutcome: record.windowOutcome,
         yesPrice: record.yesPrice,
@@ -1083,6 +1117,7 @@ export class MarketRecorder {
         assetRange: recordedDoc.assetRange,
         prevCloseAsset: recordedDoc.prevCloseAsset,
         assetPrice: recordedDoc.assetPrice,
+        ...recordingPtbFields(recordedDoc),
       }).catch((err) => {
         logService.warn(
           "recorder",

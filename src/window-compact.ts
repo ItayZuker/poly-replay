@@ -1,4 +1,5 @@
 import type { RecordedWindowDocument, WindowOutcome } from "./types.js";
+import { decodePtbHistory, encodePtbHistory } from "./ptb-history.js";
 import { roundTo4 } from "./tick-compact.js";
 
 /** Numeric BSON keys for recorded window docs (`recorded_windows_*`). */
@@ -24,6 +25,8 @@ export const WK = {
   knownWallets: "19",
   rangeTop: "20",
   rangeBottom: "21",
+  ptbHistory: "22",
+  gammaPtb: "23",
 } as const;
 
 export const WindowOutcomeCode = {
@@ -158,6 +161,9 @@ export function toStoredRecordedWindow(
   if (doc.knownWallets != null && doc.knownWallets > 0) {
     stored[WK.knownWallets] = doc.knownWallets;
   }
+  const ptbHistory = encodePtbHistory(doc.ptbHistory);
+  if (ptbHistory) stored[WK.ptbHistory] = ptbHistory;
+  setIfDefined(stored, WK.gammaPtb, doc.gammaPtb);
 
   return stored;
 }
@@ -189,6 +195,8 @@ export function fromStoredRecordedWindow(doc: StoredWindowDocument): RecordedWin
       newWallets: doc.newWallets as number | undefined,
       knownWallets: doc.knownWallets as number | undefined,
       tickCount: Number(doc.tickCount),
+      ptbHistory: decodePtbHistory(doc.ptbHistory ?? doc[WK.ptbHistory]),
+      gammaPtb: (doc.gammaPtb ?? doc[WK.gammaPtb]) as number | undefined,
     });
   }
 
@@ -215,6 +223,8 @@ export function fromStoredRecordedWindow(doc: StoredWindowDocument): RecordedWin
     newWallets: doc[WK.newWallets] as number | undefined,
     knownWallets: doc[WK.knownWallets] as number | undefined,
     tickCount: Number(doc[WK.tickCount]),
+    ptbHistory: decodePtbHistory(doc[WK.ptbHistory]),
+    gammaPtb: doc[WK.gammaPtb] as number | undefined,
   });
 }
 

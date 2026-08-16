@@ -1,6 +1,11 @@
 {
-    "current": "1.73.1",
+    "current": "1.74.0",
     "releases": [
+        {
+            "version": "1.74.0",
+            "releasedAt": "2026-08-16T08:08:31.331Z",
+            "notes": "Live PTB stays REST openPrice (PTB (REST) label). Recordings keep a REST PTB history plus a separate Gamma value. Open Replay steps the gold line and Gap with REST, then applies Gamma on the last tick (PTB (GAMMA)). Docs updated."
+        },
         {
             "version": "1.73.1",
             "releasedAt": "2026-08-16T07:09:42.598Z",

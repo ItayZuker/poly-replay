@@ -8888,7 +8888,8 @@ body.is-column-resizing * {
   vertical-align: baseline;
 }
 
-.sim-label-hint.is-provisional {
+.sim-label-hint.is-provisional,
+.sim-label-hint.is-gamma {
   color: #d29922;
 }
 

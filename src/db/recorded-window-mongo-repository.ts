@@ -1,4 +1,5 @@
-import type { WindowOutcome } from "../types.js";
+import type { PtbHistoryEntry, WindowOutcome } from "../types.js";
+import { decodePtbHistory, encodePtbHistory } from "../ptb-history.js";
 import { getMongoClient, getMongoDbName } from "./mongo-client.js";
 
 const COLLECTION = "recorded_windows";
@@ -22,6 +23,8 @@ export interface RecordedWindowSummary {
   prevCloseAsset?: number;
   /** Last asset mark for the window (Open Replay close). */
   assetPrice?: number;
+  ptbHistory?: PtbHistoryEntry[];
+  gammaPtb?: number;
 }
 
 type MongoRecordedWindowDoc = {
@@ -42,6 +45,8 @@ type MongoRecordedWindowDoc = {
   assetRange?: number;
   prevCloseAsset?: number;
   assetPrice?: number;
+  ptbHistory?: unknown;
+  gammaPtb?: number;
   /** Legacy nested payload from older sim writers. */
   window?: {
     windowStart?: number;
@@ -79,6 +84,8 @@ const WINDOW_SUMMARY_PROJECTION = {
   assetRange: 1,
   prevCloseAsset: 1,
   assetPrice: 1,
+  ptbHistory: 1,
+  gammaPtb: 1,
   "window.windowStart": 1,
   "window.windowEnd": 1,
   "window.savedAt": 1,
@@ -148,6 +155,9 @@ function normalizeDoc(doc: MongoRecordedWindowDoc): RecordedWindowSummary | null
   if (assetRange != null && Number.isFinite(assetRange)) out.assetRange = assetRange;
   if (prevCloseAsset != null && Number.isFinite(prevCloseAsset)) out.prevCloseAsset = prevCloseAsset;
   if (assetPrice != null && Number.isFinite(assetPrice)) out.assetPrice = assetPrice;
+  const ptbHistory = decodePtbHistory(doc.ptbHistory);
+  if (ptbHistory) out.ptbHistory = ptbHistory;
+  if (doc.gammaPtb != null && Number.isFinite(doc.gammaPtb)) out.gammaPtb = doc.gammaPtb;
   if (windowOutcome === "up" || windowOutcome === "down") out.windowOutcome = windowOutcome;
 
   return out;
@@ -171,6 +181,8 @@ export async function upsertRecordedWindowSummary(
     assetRange?: number;
     prevCloseAsset?: number;
     assetPrice?: number;
+    ptbHistory?: PtbHistoryEntry[];
+    gammaPtb?: number;
   },
 ): Promise<void> {
   const mongo = await getMongoClient();
@@ -200,6 +212,11 @@ export async function upsertRecordedWindowSummary(
   }
   if (window.assetPrice != null && Number.isFinite(window.assetPrice)) {
     $set.assetPrice = window.assetPrice;
+  }
+  const ptbHistory = encodePtbHistory(window.ptbHistory);
+  if (ptbHistory) $set.ptbHistory = ptbHistory;
+  if (window.gammaPtb != null && Number.isFinite(window.gammaPtb)) {
+    $set.gammaPtb = window.gammaPtb;
   }
   if (window.windowOutcome === "up" || window.windowOutcome === "down") {
     $set.windowOutcome = window.windowOutcome;
