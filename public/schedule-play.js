@@ -71,6 +71,7 @@
   let transportHitsPanel = null;
   let outcomeValueEl = null;
   let hitsStatsDotsEl = null;
+  let windowFilterDotsEl = null;
   let hitsPnlEl = null;
   let hitsMarkersEl = null;
   let viewPlayBtn = null;
@@ -115,6 +116,8 @@
   let viewMode = "play";
   /** Pinned outcome buckets from clicks on hits stats dots. */
   let hitsHighlightPinned = new Set();
+  /** Pinned trade colors that filter the Play-tab window list (OR). Empty = all windows. */
+  let playWindowFilterPinned = new Set();
   /** Transient hover bucket from hits stats dots (`null` = none). */
   let hitsHighlightHover = null;
   /** Map-dot id currently hovered on the hits scatter (`null` = none). */
@@ -427,6 +430,7 @@
     transportHitsPanel = $("schedule-play-transport-hits");
     outcomeValueEl = $("schedule-play-outcome-value");
     hitsStatsDotsEl = $("schedule-play-hits-stats")?.querySelector(".schedule-play-hits-stats-dots");
+    windowFilterDotsEl = $("schedule-play-window-filter-dots");
     hitsPnlEl = $("schedule-play-hits-pnl");
     hitsMarkersEl = $("schedule-play-hits-markers");
     viewPlayBtn = $("schedule-play-view-play");
@@ -1015,6 +1019,120 @@
       windows: payload?.windows?.length || 0,
       hasData: (payload?.windows?.length || 0) > 0,
     };
+  }
+
+  function windowMatchesPlayFilter(win) {
+    if (playWindowFilterPinned.size === 0) return true;
+    return windowTradeDots(win).some((bucket) => playWindowFilterPinned.has(bucket));
+  }
+
+  function visibleWindowIndices() {
+    const windows = payload?.windows || [];
+    const out = [];
+    for (let i = 0; i < windows.length; i += 1) {
+      if (windowMatchesPlayFilter(windows[i])) out.push(i);
+    }
+    return out;
+  }
+
+  function visibleWindowCount() {
+    return visibleWindowIndices().length;
+  }
+
+  function visibleListIndex(payloadIndex) {
+    return visibleWindowIndices().indexOf(payloadIndex);
+  }
+
+  function nextVisibleAfter(payloadIndex) {
+    const vis = visibleWindowIndices();
+    for (const i of vis) {
+      if (i > payloadIndex) return i;
+    }
+    return -1;
+  }
+
+  function clearPlayWindowFilter() {
+    playWindowFilterPinned = new Set();
+  }
+
+  function togglePlayWindowFilter(bucket) {
+    if (playWindowFilterPinned.has(bucket)) playWindowFilterPinned.delete(bucket);
+    else playWindowFilterPinned.add(bucket);
+    applyPlayWindowFilter();
+  }
+
+  function syncPlayWindowFilterUi() {
+    if (!windowFilterDotsEl) return;
+    windowFilterDotsEl.querySelectorAll(".schedule-placement-stat[data-bucket]").forEach((el) => {
+      const bucket = el.getAttribute("data-bucket");
+      const pinned = Boolean(bucket && playWindowFilterPinned.has(bucket));
+      el.classList.toggle("is-play-filter-pinned", pinned);
+      el.setAttribute("aria-pressed", pinned ? "true" : "false");
+    });
+  }
+
+  function appendPlayFilterDot(parent, color, value, hasData) {
+    if (!parent) return;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "schedule-placement-stat schedule-play-hits-stat";
+    item.dataset.bucket = color;
+    item.setAttribute("aria-pressed", playWindowFilterPinned.has(color) ? "true" : "false");
+    item.title = hasData
+      ? `Show only windows with a ${color} trade (OR with other selected colors)`
+      : `No ${color} windows`;
+    item.disabled = !hasData || !(value > 0);
+
+    const dot = document.createElement("span");
+    dot.className = `schedule-placement-dot schedule-placement-dot-${color}`;
+    dot.setAttribute("aria-hidden", "true");
+    const count = document.createElement("span");
+    count.className = "schedule-placement-stat-count";
+    count.textContent = hasData ? String(value ?? 0) : "—";
+    item.append(dot, count);
+
+    if (!item.disabled) {
+      item.addEventListener("click", (e) => {
+        e.preventDefault();
+        togglePlayWindowFilter(color);
+      });
+    }
+
+    if (playWindowFilterPinned.has(color)) item.classList.add("is-play-filter-pinned");
+    parent.appendChild(item);
+  }
+
+  function renderPlayWindowFilterPanel() {
+    const totals = cardTotalsFromPayload();
+    if (!windowFilterDotsEl) return;
+    windowFilterDotsEl.replaceChildren();
+    appendPlayFilterDot(windowFilterDotsEl, "green", totals.green, totals.hasData);
+    appendPlayFilterDot(windowFilterDotsEl, "red", totals.red, totals.hasData);
+    appendPlayFilterDot(windowFilterDotsEl, "blue", totals.blue, totals.hasData);
+    syncPlayWindowFilterUi();
+  }
+
+  function applyPlayWindowFilter() {
+    renderPlayWindowFilterPanel();
+    if (!payload) return;
+    const vis = visibleWindowIndices();
+    if (!vis.length) {
+      stopPlayback();
+      selectedIndex = -1;
+      priceHistory = [];
+      if (listTrackEl) listTrackEl.replaceChildren();
+      syncListNavButtons();
+      updateTransportEnabled();
+      setStatus("No windows match the selected colors");
+      drawFrame();
+      return;
+    }
+    if (!vis.includes(selectedIndex)) {
+      if (listTrackEl) listTrackEl.replaceChildren();
+      void selectWindow(vis[0], { fromSlide: true, instant: true });
+      return;
+    }
+    renderList({ instant: true });
   }
 
   function bucketColor(bucket) {
@@ -1921,8 +2039,9 @@
     if (playheadSec < end - 0.001) return;
 
     // End of window: keep playing through the list only while autoplay is latched.
-    if (autoPlayWindows && viewMode === "play" && selectedIndex + 1 < windowCount()) {
-      void selectWindow(selectedIndex + 1, { fromSlide: true, continueAutoPlay: true });
+    const nextAuto = nextVisibleAfter(selectedIndex);
+    if (autoPlayWindows && viewMode === "play" && nextAuto >= 0) {
+      void selectWindow(nextAuto, { fromSlide: true, continueAutoPlay: true });
       return;
     }
     stopPlayback();
@@ -2354,19 +2473,20 @@
   }
 
   function syncListNavButtons() {
-    const count = windowCount();
+    const vis = visibleWindowIndices();
+    const pos = visibleListIndex(selectedIndex);
     const locked = viewMode !== "play" || windowsLoading || slotSpinning;
-    if (listUpBtn) listUpBtn.disabled = locked || selectedIndex <= 0 || count === 0;
-    if (listDownBtn) listDownBtn.disabled = locked || selectedIndex < 0 || selectedIndex >= count - 1;
+    if (listUpBtn) listUpBtn.disabled = locked || pos <= 0 || vis.length === 0;
+    if (listDownBtn) listDownBtn.disabled = locked || pos < 0 || pos >= vis.length - 1;
   }
 
   function updateListFade() {
     if (!listTrackEl) return;
     for (const item of listTrackEl.children) {
       if (!(item instanceof HTMLElement)) continue;
-      const idx = Number(item.dataset.index);
+      const idx = Number(item.dataset.visibleIndex);
       if (!Number.isFinite(idx)) continue;
-      const dist = Math.abs(idx - selectedIndex);
+      const dist = Math.abs(idx - visibleListIndex(selectedIndex));
       // Soften toward the ends, but keep the outermost cards partially visible
       // so the column mask gradient can show through them.
       const t = Math.min(1, dist / 3.5);
@@ -2413,9 +2533,12 @@
 
   function stepWindow(dir) {
     if (viewMode !== "play" || windowsLoading || slotSpinning) return;
-    const count = windowCount();
-    if (!count) return;
-    const next = Math.max(0, Math.min(count - 1, selectedIndex + dir));
+    const vis = visibleWindowIndices();
+    if (!vis.length) return;
+    const pos = visibleListIndex(selectedIndex);
+    const from = pos >= 0 ? pos : dir > 0 ? -1 : vis.length;
+    const nextPos = Math.max(0, Math.min(vis.length - 1, from + dir));
+    const next = vis[nextPos];
     if (next === selectedIndex) return;
     void selectWindow(next, { fromSlide: true });
   }
@@ -2423,12 +2546,15 @@
   function renderList(options = {}) {
     if (!listEl || !listTrackEl || !payload) return;
     listTrackEl.replaceChildren();
-    payload.windows.forEach((win, index) => {
+    const vis = visibleWindowIndices();
+    vis.forEach((index, visibleIndex) => {
+      const win = payload.windows[index];
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "schedule-play-item";
       if (index === selectedIndex) btn.classList.add("is-active");
       btn.dataset.index = String(index);
+      btn.dataset.visibleIndex = String(visibleIndex);
       btn.setAttribute("role", "option");
       btn.setAttribute("aria-selected", index === selectedIndex ? "true" : "false");
 
@@ -2471,7 +2597,8 @@
       });
       listTrackEl.appendChild(btn);
     });
-    slideToIndex(Math.max(0, selectedIndex), { instant: options.instant !== false });
+    const slideIndex = Math.max(0, visibleListIndex(selectedIndex));
+    slideToIndex(vis.length ? slideIndex : -1, { instant: options.instant !== false });
     syncListSelectionClasses();
   }
 
@@ -2501,7 +2628,7 @@
       renderList({ instant: options.instant !== false });
     } else {
       syncListSelectionClasses();
-      slideToIndex(index, { instant: Boolean(options.instant) });
+      slideToIndex(Math.max(0, visibleListIndex(index)), { instant: Boolean(options.instant) });
     }
 
     if (same && priceHistory.length > 0 && !options.force) {
@@ -2531,8 +2658,9 @@
       setStatus("No official settlement data for this window");
       drawFrame();
       if (continueAutoPlay) {
-        if (index + 1 < windowCount()) {
-          void selectWindow(index + 1, { fromSlide: true, continueAutoPlay: true });
+        const nextSkip = nextVisibleAfter(index);
+        if (nextSkip >= 0) {
+          void selectWindow(nextSkip, { fromSlide: true, continueAutoPlay: true });
         } else {
           stopPlayback();
         }
@@ -2575,7 +2703,13 @@
           return;
         }
         setStatus("Skipped window with no Chainlink ticks");
-        const nextIndex = Math.min(index, windowCount() - 1);
+        const vis = visibleWindowIndices();
+        if (!vis.length) {
+          applyPlayWindowFilter();
+          if (continueAutoPlay) stopPlayback();
+          return;
+        }
+        const nextIndex = vis.find((i) => i >= index) ?? vis[vis.length - 1];
         void selectWindow(nextIndex, {
           fromSlide: true,
           continueAutoPlay,
@@ -2589,7 +2723,8 @@
       setStatus(`${history.length} price ticks`);
       drawFrame();
       if (continueAutoPlay) startPlayback();
-      const next = payload.windows[index + 1];
+      const nextIdx = nextVisibleAfter(index);
+      const next = nextIdx >= 0 ? payload.windows[nextIdx] : null;
       if (next && hasOfficialSettlement(next)) {
         if (!tickCache.has(String(next.windowStart))) {
           void loadTicks(next.windowStart, next).catch(() => {});
@@ -2618,6 +2753,7 @@
       selectedIndex = Math.max(0, payload.windows.length - 1);
     }
     renderList({ instant: true });
+    renderPlayWindowFilterPanel();
     syncHeaderProgress();
     return true;
   }
@@ -2641,7 +2777,7 @@
     listEl?.addEventListener(
       "wheel",
       (e) => {
-        if (viewMode !== "play" || !windowCount()) return;
+        if (viewMode !== "play" || !visibleWindowCount()) return;
         e.preventDefault();
         if (listAnimating) return;
         const dir = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
@@ -2650,7 +2786,7 @@
       { passive: false },
     );
     listEl?.addEventListener("keydown", (e) => {
-      if (viewMode !== "play" || !windowCount()) return;
+      if (viewMode !== "play" || !visibleWindowCount()) return;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         stepWindow(e.key === "ArrowDown" ? 1 : -1);
@@ -2824,6 +2960,8 @@
     playheadSec = 0;
     viewMode = "play";
     clearHitsHighlight();
+    clearPlayWindowFilter();
+    renderPlayWindowFilterPanel();
     if (metaEl) metaEl.textContent = "—";
     clearMetricsPanel();
     setStatus("Loading windows…");
@@ -2862,7 +3000,7 @@
           drawFrame();
           if (slotSpinning) return;
           if (selectedIndex >= 0) {
-            slideToIndex(selectedIndex, { instant: true });
+            slideToIndex(Math.max(0, visibleListIndex(selectedIndex)), { instant: true });
             syncListSelectionClasses();
           }
         });
@@ -2898,6 +3036,7 @@
       stopSlotSpin();
       selectedIndex = -1;
       if (listTrackEl) listTrackEl.replaceChildren();
+      renderPlayWindowFilterPanel();
       syncListNavButtons();
       setWindowsLoading(false);
       setStatus(
@@ -2912,6 +3051,7 @@
     }
     stopSlotSpin();
     setWindowsLoading(false);
+    renderPlayWindowFilterPanel();
     setStatus(`${payload.windows.length} window${payload.windows.length === 1 ? "" : "s"}`);
     if (listTrackEl) listTrackEl.replaceChildren();
     const startIndex = firstHitOrZeroIndex(payload.windows);
