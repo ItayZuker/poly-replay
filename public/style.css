@@ -5217,11 +5217,25 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   padding: 10px 16px;
 }
 
+.positions-panel-header .panel-header-main,
+.triggers-panel-header .panel-header-main,
+.log-panel-header .panel-header-main {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .panel-header-heading {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.positions-panel-header .panel-header-heading,
+.triggers-panel-header .panel-header-heading,
+.log-panel-header .panel-header-heading {
+  flex: 0 0 auto;
+  min-width: max-content;
 }
 
 .panel-header-chevron {
@@ -5275,6 +5289,7 @@ body.is-row-resizing .panel-header-drag-handle {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .positions-panel-title {
@@ -7851,6 +7866,7 @@ body.is-trigger-price-dragging * {
   min-height: 0;
   overflow: hidden;
   padding: 8px 16px;
+  background: var(--bg);
   font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -7880,6 +7896,19 @@ body.is-trigger-price-dragging * {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.positions-panel-actions,
+.triggers-panel-actions,
+.log-panel-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+}
+
+#triggers-create-btn {
+  white-space: nowrap;
 }
 
 .positions-filter-label {
@@ -8889,7 +8918,8 @@ body.is-column-resizing * {
 }
 
 .sim-label-hint.is-provisional,
-.sim-label-hint.is-gamma {
+.sim-label-hint.is-gamma,
+.sim-label-hint.is-chainlink {
   color: #d29922;
 }
 

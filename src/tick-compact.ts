@@ -192,7 +192,9 @@ export function fromStoredChainlinkTick(doc: StoredTickDocument): ChainlinkTickD
       assetPrice: doc.assetPrice as number | undefined,
       prevCloseAsset: doc.prevCloseAsset as number | undefined,
       priceToBeatSource:
-        doc.priceToBeatSource === "gamma" || doc.priceToBeatSource === "rest"
+        doc.priceToBeatSource === "gamma" ||
+        doc.priceToBeatSource === "rest" ||
+        doc.priceToBeatSource === "chainlink"
           ? doc.priceToBeatSource
           : undefined,
       assetGap: doc.assetGap as number | undefined,

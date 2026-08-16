@@ -479,6 +479,7 @@
   function setPlayPtbSourceLabel(source) {
     const el = $("play-graph-ptb-source");
     if (!el) return;
+    el.classList.remove("is-gamma", "is-chainlink");
     if (source === "gamma") {
       el.hidden = false;
       el.textContent = "(GAMMA)";
@@ -488,19 +489,30 @@
     if (source === "rest") {
       el.hidden = false;
       el.textContent = "(REST)";
-      el.classList.remove("is-gamma");
+      return;
+    }
+    if (source === "chainlink") {
+      el.hidden = false;
+      el.textContent = "(Chainlink)";
+      el.classList.add("is-chainlink");
       return;
     }
     el.hidden = true;
     el.textContent = "";
-    el.classList.remove("is-gamma");
+  }
+
+  function playPtbSourceName(value) {
+    if (value === "gamma") return "gamma";
+    if (value === "chainlink" || value === "chainlink-rtds") return "chainlink";
+    if (value === "rest" || value === "polymarket-openPrice") return "rest";
+    return "rest";
   }
 
   function appendPlayPtbHistory(history, entry) {
     const ptb = Number(entry?.ptb);
     const t = Number(entry?.t);
     if (!Number.isFinite(ptb) || !Number.isFinite(t)) return history;
-    const source = entry.source === "gamma" ? "gamma" : "rest";
+    const source = playPtbSourceName(entry.source);
     const last = history[history.length - 1];
     if (last && last.ptb === ptb && last.source === source) return history;
     history.push({ t, ptb, source });
@@ -534,7 +546,9 @@
       const t = tick.tMs / 1000;
       const atEnd = Number.isFinite(endT) && t >= endT - 1e-6;
       const source =
-        tick.priceToBeatSource === "gamma" || atEnd ? "gamma" : "rest";
+        tick.priceToBeatSource === "gamma" || atEnd
+          ? "gamma"
+          : playPtbSourceName(tick.priceToBeatSource);
       appendPlayPtbHistory(history, { t: atEnd && Number.isFinite(endT) ? endT : t, ptb, source });
     }
     return history;

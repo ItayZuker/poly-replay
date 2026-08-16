@@ -1,6 +1,11 @@
 {
-    "current": "1.75.0",
+    "current": "1.76.0",
     "releases": [
+        {
+            "version": "1.76.0",
+            "releasedAt": "2026-08-16T13:43:00.724Z",
+            "notes": "PTB starts from the first in-window Chainlink tick (PTB (Chainlink)), then REST openPrice (PTB (REST)), then Gamma on Replay last tick (PTB (GAMMA)). Gap triggers can fire on Chainlink PTB. Log body and section-header spacing match other left-column panels. Docs updated."
+        },
         {
             "version": "1.75.0",
             "releasedAt": "2026-08-16T09:49:14.734Z",

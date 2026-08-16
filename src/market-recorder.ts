@@ -49,7 +49,12 @@ import {
   getRecordedWindow,
   saveRecordedWindow,
 } from "./db/recorded-window-repository.js";
-import { appendPtbHistory, recordingPtbFields } from "./ptb-history.js";
+import {
+  appendPtbHistory,
+  isRestPtbSource,
+  recordingPtbFields,
+  type PtbHistorySource,
+} from "./ptb-history.js";
 import { upsertRecordedWindowSummary } from "./db/recorded-window-mongo-repository.js";
 import { pruneColdMarketData } from "./db/tick-archive.js";
 import {
@@ -110,6 +115,8 @@ export class MarketRecorder {
   private assetPrices: { assetPrice?: number; prevCloseAsset?: number } = {};
   /** True once Gamma eventMetadata PTB/close were applied — stop following crypto-price open. */
   private gammaSettled = false;
+  /** Current recorded PTB source for this window (chainlink → rest → gamma). */
+  private livePtbSource: PtbHistorySource | undefined;
   private prefetchedNextWindowStart: number | null = null;
   private nextWindowPrefetchInFlight = false;
   /** Fingerprint of last written CLOB book tick (skip identical consecutive samples). */
@@ -312,6 +319,7 @@ export class MarketRecorder {
     this.lastBookFingerprint = null;
     this.assetPrices = {};
     this.gammaSettled = false;
+    this.livePtbSource = undefined;
     this.prefetchedNextWindowStart = null;
     this.nextWindowPrefetchInFlight = false;
     this.lastBookFingerprint = null;
@@ -468,7 +476,11 @@ export class MarketRecorder {
     }
     if (this.assetPrices.prevCloseAsset != null) {
       tick.prevCloseAsset = roundTo4(this.assetPrices.prevCloseAsset);
-      tick.priceToBeatSource = this.gammaSettled ? "gamma" : "rest";
+      tick.priceToBeatSource = this.gammaSettled
+        ? "gamma"
+        : this.livePtbSource === "chainlink"
+          ? "chainlink"
+          : "rest";
     }
 
     return tick;
@@ -493,7 +505,7 @@ export class MarketRecorder {
     this.pushChainlinkTick(tMs);
   }
 
-  /** Update live asset price only — never invent PTB. */
+  /** Update live asset price; first in-window Chainlink tick becomes provisional PTB. */
   private applyAssetPrice(assetPrice?: number): void {
     if (!this.activeWindow) return;
 
@@ -501,6 +513,7 @@ export class MarketRecorder {
     if (current != null) {
       this.activeWindow.assetPrice = current;
       this.assetPrices.assetPrice = current;
+      this.tryApplyChainlinkOpen(current);
     }
     this.activeWindow.assetGap = assetGapOrUnset(
       this.activeWindow.assetPrice,
@@ -515,19 +528,44 @@ export class MarketRecorder {
     );
   }
 
+  /** First Chainlink print of this window — does not overwrite REST or Gamma. */
+  private tryApplyChainlinkOpen(openPrice?: number): boolean {
+    if (!this.activeWindow || this.gammaSettled) return false;
+    if (isRestPtbSource(this.livePtbSource) || this.livePtbSource === "gamma") return false;
+    if (this.activeWindow.prevCloseAsset != null) return false;
+    const ptb = roundPolymarketAssetPriceMaybe(openPrice);
+    if (ptb == null) return false;
+    this.activeWindow.prevCloseAsset = ptb;
+    this.assetPrices.prevCloseAsset = ptb;
+    this.livePtbSource = "chainlink";
+    const tSec = this.lastUsefulTickAtMs
+      ? this.lastUsefulTickAtMs / 1000
+      : Date.now() / 1000;
+    this.activeWindow.ptbHistory = appendPtbHistory(this.activeWindow.ptbHistory, {
+      t: tSec,
+      ptb,
+      source: "chainlink",
+    });
+    void this.persistWindowOpenPtb(ptb);
+    logService.info("recorder", `Chainlink PTB for ${this.market._id} @ ${ptb}`);
+    return true;
+  }
+
   /**
    * Follow Polymarket crypto-price openPrice until they freeze it (or Gamma settles).
-   * Persists when the published open actually changes.
+   * Persists when the published open actually changes (including Chainlink → REST).
    */
   private tryApplyPublishedOpen(openPrice?: number): boolean {
     if (!this.activeWindow || this.gammaSettled) return false;
     const ptb = roundPolymarketAssetPriceMaybe(openPrice);
     if (ptb == null) return false;
-    if (this.activeWindow.prevCloseAsset === ptb) return false;
+    const last = this.activeWindow.ptbHistory?.[this.activeWindow.ptbHistory.length - 1];
+    if (last?.ptb === ptb && last.source === "rest") return false;
 
-    const first = this.activeWindow.prevCloseAsset == null;
+    const firstRest = !isRestPtbSource(this.livePtbSource);
     this.activeWindow.prevCloseAsset = ptb;
     this.assetPrices.prevCloseAsset = ptb;
+    this.livePtbSource = "rest";
     const tSec = this.lastUsefulTickAtMs
       ? this.lastUsefulTickAtMs / 1000
       : Date.now() / 1000;
@@ -540,7 +578,7 @@ export class MarketRecorder {
     void this.persistWindowOpenPtb(ptb);
     logService.info(
       "recorder",
-      `${first ? "Published PTB" : "Published PTB updated"} for ${this.market._id} @ ${ptb}`,
+      `${firstRest ? "Published PTB" : "Published PTB updated"} for ${this.market._id} @ ${ptb}`,
     );
     return true;
   }
@@ -551,6 +589,7 @@ export class MarketRecorder {
     const ptb = roundPolymarketAssetPriceMaybe(priceToBeat);
     if (ptb == null) return;
     this.gammaSettled = true;
+    this.livePtbSource = "gamma";
     this.activeWindow.gammaPtb = ptb;
     this.activeWindow.prevCloseAsset = ptb;
     this.assetPrices.prevCloseAsset = ptb;
@@ -695,10 +734,14 @@ export class MarketRecorder {
     this.lastBookFingerprint = null;
     this.assetPrices = {};
     this.gammaSettled = false;
+    this.livePtbSource = undefined;
     const now = Date.now();
     this.windowBeganAtMs = now;
     this.lastUsefulTickAtMs = now;
     this.lastClobTickAtMs = now;
+    const { asset } = parseMarketSeries(this.market._id);
+    const live = chainlinkPriceFeed.getLivePrice(asset);
+    if (live) this.applyAssetPrice(live.value);
     void ensureWindowTickDir(this.market._id, windowStart);
     void this.persistWindowStub();
     logService.info(
