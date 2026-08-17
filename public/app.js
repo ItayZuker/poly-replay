@@ -3080,7 +3080,6 @@ function syncMarketMobileStack() {
 
   syncMobileCountdownPlacement();
   syncMobileWalletPlacement();
-  syncScheduleMobileSide();
   // Re-run header layout so mobile always stacks Market/Schedule as bottom tabs.
   if (typeof updateAppHeaderLayout === "function") {
     updateAppHeaderLayout();
@@ -3108,61 +3107,6 @@ function initMarketMobileStack() {
   }
   const mq = window.matchMedia(MARKET_MOBILE_MQ);
   const onChange = () => syncMarketMobileStack();
-  if (typeof mq.addEventListener === "function") {
-    mq.addEventListener("change", onChange);
-  } else if (typeof mq.addListener === "function") {
-    mq.addListener(onChange);
-  }
-}
-
-/** Sync Schedule left-panel collapse chrome for mobile (subheader toggle + aria). */
-function syncScheduleMobileSide() {
-  const page = $("page-schedule");
-  const toggleBtn = $("schedule-side-toggle");
-  if (!page) return;
-
-  const mobile = isMarketMobileStack();
-  if (!mobile) {
-    page.classList.remove("is-schedule-side-collapsed");
-    if (toggleBtn) {
-      toggleBtn.setAttribute("aria-expanded", "true");
-      toggleBtn.setAttribute("aria-label", "Hide side panel");
-      toggleBtn.title = "Hide side panel";
-    }
-    return;
-  }
-
-  const collapsed = page.classList.contains("is-schedule-side-collapsed");
-  if (toggleBtn) {
-    toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    const label = collapsed ? "Show side panel" : "Hide side panel";
-    toggleBtn.setAttribute("aria-label", label);
-    toggleBtn.title = label;
-  }
-}
-
-function setScheduleSideCollapsed(collapsed) {
-  const page = $("page-schedule");
-  if (!page) return;
-  page.classList.toggle("is-schedule-side-collapsed", Boolean(collapsed));
-  syncScheduleMobileSide();
-}
-
-function initScheduleMobileSide() {
-  const toggleBtn = $("schedule-side-toggle");
-  toggleBtn?.addEventListener("click", () => {
-    if (!isMarketMobileStack()) return;
-    const page = $("page-schedule");
-    const collapsed = page?.classList.contains("is-schedule-side-collapsed");
-    setScheduleSideCollapsed(!collapsed);
-  });
-  syncScheduleMobileSide();
-  if (typeof window.matchMedia !== "function") {
-    window.addEventListener("resize", syncScheduleMobileSide);
-    return;
-  }
-  const mq = window.matchMedia(MARKET_MOBILE_MQ);
-  const onChange = () => syncScheduleMobileSide();
   if (typeof mq.addEventListener === "function") {
     mq.addEventListener("change", onChange);
   } else if (typeof mq.addListener === "function") {
@@ -14034,7 +13978,6 @@ async function init() {
   initColumnSplitter();
   initLeftRowSplitter();
   initMarketMobileStack();
-  initScheduleMobileSide();
   bindLeftColumnRail();
   bindMarketColumnRail();
   bindTriggerCreateModal();

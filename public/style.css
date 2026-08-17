@@ -1790,55 +1790,6 @@ body {
   --schedule-toolbar-height: 52px;
 }
 
-/* Desktop: no schedule sub-header. Mobile: bottom arrow bar only. */
-.schedule-page-subheader {
-  display: none;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-  height: var(--schedule-toolbar-height);
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  box-sizing: border-box;
-}
-
-.schedule-side-toggle-btn {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  height: 100%;
-  width: auto;
-  aspect-ratio: 1;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--muted);
-  cursor: pointer;
-  flex: 0 0 auto;
-}
-
-.schedule-side-toggle-btn .schedule-side-toggle-icon {
-  width: 14px;
-  height: 14px;
-  display: block;
-  flex: 0 0 auto;
-  transition: transform 0.15s ease;
-}
-
-.schedule-side-toggle-btn:hover,
-.schedule-side-toggle-btn:focus-visible {
-  color: var(--accent);
-  border-color: var(--accent);
-  outline: none;
-}
-
-.app-page-schedule.is-schedule-side-collapsed .schedule-side-toggle-btn .schedule-side-toggle-icon {
-  transform: rotate(180deg);
-}
-
 .schedule-page-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1859,64 +1810,79 @@ body {
 }
 
 @media (max-width: 720px) {
+  body:has(#page-schedule:not([hidden])),
+  body:has(#page-schedule:not([hidden])) .app {
+    height: 100dvh;
+  }
+
+  .app-page-schedule {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .app-page-schedule::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
   .app-page-schedule .schedule-page-body {
+    display: contents;
+  }
+
+  .app-page-schedule .schedule-main-panel {
     order: 1;
-  }
-
-  .app-page-schedule .schedule-page-subheader {
-    display: flex;
-    order: 2;
-    justify-content: flex-start;
-    align-items: center;
-    gap: 8px;
-    border-bottom: none;
-    border-top: 1px solid var(--border);
-  }
-
-  .app-page-schedule .schedule-side-toggle-btn {
-    display: inline-flex;
+    flex: 0 0 100%;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .app-page-schedule .schedule-setups-panel {
-    flex: 0 0 213px;
-    width: 213px;
-    max-width: min(213px, 40vw);
-    min-width: 0;
-    border-right-width: 1px;
-    opacity: 1;
-    overflow: hidden;
-    transition:
-      flex-basis 0.28s ease,
-      width 0.28s ease,
-      max-width 0.28s ease,
-      border-right-width 0.28s ease,
-      opacity 0.2s ease;
-  }
-
-  .app-page-schedule.is-schedule-side-collapsed .schedule-setups-panel {
-    flex-basis: 0;
-    width: 0;
-    max-width: 0;
-    min-width: 0;
-    border-right-width: 0;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .app-page-schedule.is-schedule-side-collapsed .schedule-main-panel {
-    flex: 1 1 auto;
+    order: 2;
+    flex: 0 0 auto;
     width: 100%;
+    max-width: none;
     min-width: 0;
+    min-height: 0;
+    height: auto;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    overflow: visible;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .app-page-schedule .schedule-setups-panel {
-      transition: none;
-    }
+  .app-page-schedule .schedule-workspace-footer,
+  .app-page-schedule .schedule-workspace-footer-body,
+  .app-page-schedule.is-replay-workspace .schedule-workspace-footer,
+  .app-page-schedule:not(.is-replay-workspace) .schedule-workspace-footer {
+    flex: 0 0 auto;
+    overflow: visible;
+    max-height: none;
+    min-height: 0;
+    height: auto;
+  }
 
-    .app-page-schedule .schedule-side-toggle-btn .schedule-side-toggle-icon {
-      transition: none;
-    }
+  .app-page-schedule:not(.is-replay-workspace) .schedule-live-triggers,
+  .app-page-schedule .schedule-live-triggers-list,
+  .app-page-schedule.is-replay-workspace .schedule-replay-panel,
+  .app-page-schedule .schedule-replay-controls,
+  .app-page-schedule .schedule-replay-triggers,
+  .app-page-schedule .schedule-replay-triggers-list {
+    flex: 0 0 auto;
+    overflow: visible;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .app-page-schedule .schedule-live-triggers-list,
+  .app-page-schedule .schedule-replay-triggers-list {
+    max-height: min(50vh, 420px);
+    overflow-y: auto;
   }
 }
 
