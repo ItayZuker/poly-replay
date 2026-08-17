@@ -4,7 +4,7 @@ App header tabs are **Market** | **Schedule** | **Replay** (plus **Settings**). 
 
 Trading on this product is **Trigger-only**. Phase setups, placement cards, **Auto Trade**, and **Use Schedule** are removed. The week grid always shows every UTC hour cell with Trigger stats.
 
-**Mobile (narrow viewports):** a bottom bar holds the side-panel arrow. The arrow opens/closes the left column (width animates) so the week table can use the full width; it rotates when the panel is closed. Desktop always shows the side panel (no bottom bar).
+**Mobile (narrow viewports):** the week table uses the full width and grows so the app header plus table fill the first screen (header height stays the same). The Trade Triggers list (Replay: **Run**, then **Triggers**, then **Settings**) sits full width under the table, below the fold — scroll down to see it (no visible scrollbar). Desktop keeps the side panel to the left of the table.
 
 ## Left column
 

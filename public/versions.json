@@ -1,6 +1,11 @@
 {
-    "current": "1.76.0",
+    "current": "1.76.1",
     "releases": [
+        {
+            "version": "1.76.1",
+            "releasedAt": "2026-08-17T07:49:45.190Z",
+            "notes": "Mobile Schedule drops the bottom side-panel arrow. The week table fills the first screen; Trade/Replay triggers sit under the table and appear on scroll. Docs updated."
+        },
         {
             "version": "1.76.0",
             "releasedAt": "2026-08-16T13:43:00.724Z",
