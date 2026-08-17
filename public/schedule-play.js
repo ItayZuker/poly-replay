@@ -73,7 +73,6 @@
   let hitsStatsDotsEl = null;
   let windowFilterDotsEl = null;
   let hitsPnlEl = null;
-  let hitsMarkersEl = null;
   let viewPlayBtn = null;
   let viewHitsBtn = null;
   let resizeObserver = null;
@@ -432,7 +431,6 @@
     hitsStatsDotsEl = $("schedule-play-hits-stats")?.querySelector(".schedule-play-hits-stats-dots");
     windowFilterDotsEl = $("schedule-play-window-filter-dots");
     hitsPnlEl = $("schedule-play-hits-pnl");
-    hitsMarkersEl = $("schedule-play-hits-markers");
     viewPlayBtn = $("schedule-play-view-play");
     viewHitsBtn = $("schedule-play-view-hits");
     phaseHoverEl = $("schedule-play-phase-hover");
@@ -1288,9 +1286,6 @@
 
   function renderHitsStatsPanel() {
     const totals = cardTotalsFromPayload();
-    const { dots } = collectHitDots();
-    const buys = dots.filter((d) => d.type === "buy").length;
-    const sells = dots.filter((d) => d.type === "sell").length;
 
     if (hitsStatsDotsEl) {
       hitsStatsDotsEl.replaceChildren();
@@ -1305,12 +1300,6 @@
       hitsPnlEl.className = "schedule-play-hits-pnl";
       if (totals.hasData && totals.pnl > 0) hitsPnlEl.classList.add("is-positive");
       else if (totals.hasData && totals.pnl < 0) hitsPnlEl.classList.add("is-negative");
-    }
-
-    if (hitsMarkersEl) {
-      hitsMarkersEl.textContent = totals.hasData
-        ? `${totals.windows} window${totals.windows === 1 ? "" : "s"} · ${dots.length} hit${dots.length === 1 ? "" : "s"} (${buys} buy / ${sells} sell) overlaid by time & price`
-        : "No windows in this card";
     }
   }
 
@@ -1739,8 +1728,24 @@
     }
   }
 
+  function lockChartHeightToPlay() {
+    if (!chartWrap || chartWrap.classList.contains("is-chart-height-locked")) return;
+    const height = chartWrap.getBoundingClientRect().height;
+    if (height <= 0) return;
+    chartWrap.style.height = `${Math.round(height)}px`;
+    chartWrap.classList.add("is-chart-height-locked");
+  }
+
+  function unlockChartHeight() {
+    if (!chartWrap?.classList.contains("is-chart-height-locked")) return;
+    chartWrap.style.height = "";
+    chartWrap.classList.remove("is-chart-height-locked");
+  }
+
   function updateViewChrome() {
     const isHits = viewMode === "hits";
+    if (isHits) lockChartHeightToPlay();
+    else unlockChartHeight();
     viewPlayBtn?.classList.toggle("is-active", !isHits);
     viewHitsBtn?.classList.toggle("is-active", isHits);
     viewPlayBtn?.setAttribute("aria-pressed", isHits ? "false" : "true");
@@ -2945,6 +2950,7 @@
     window.Simulator?.endExternalPhaseEdit?.();
     hideHeaderProgress();
     clearMetricsPanel();
+    unlockChartHeight();
     updateTransportEnabled();
     if (modal) modal.hidden = true;
     if (resizeObserver) {

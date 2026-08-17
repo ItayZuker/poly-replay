@@ -1,6 +1,11 @@
 {
-    "current": "1.78.0",
+    "current": "1.78.1",
     "releases": [
+        {
+            "version": "1.78.1",
+            "releasedAt": "2026-08-17T13:36:57.255Z",
+            "notes": "Open Replay fills the viewport on mobile. Play stacks filter dots and Official above play controls and Speed. Hits keeps the same graph height and filter-dot row; play controls stay on Play only. Docs updated."
+        },
         {
             "version": "1.78.0",
             "releasedAt": "2026-08-17T10:12:09.344Z",

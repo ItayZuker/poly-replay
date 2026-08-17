@@ -10308,7 +10308,8 @@ body.is-column-resizing * {
   box-sizing: border-box;
 }
 
-#schedule-play-transport-play {
+#schedule-play-transport-play,
+#schedule-play-transport-hits {
   flex-direction: row;
   align-items: center;
   gap: 12px;
@@ -10361,6 +10362,11 @@ body.is-column-resizing * {
   justify-content: space-between;
   gap: 12px;
   min-height: 30px;
+}
+
+#schedule-play-transport-hits .schedule-play-hits-stats {
+  flex: 1 1 auto;
+  width: 100%;
 }
 
 .schedule-play-hits-stats-dots {
@@ -10438,13 +10444,6 @@ body.is-column-resizing * {
   color: var(--down);
 }
 
-.schedule-play-hits-markers {
-  font-size: 0.78rem;
-  color: var(--muted);
-  min-height: 18px;
-  line-height: 1.2;
-}
-
 .schedule-play-metrics {
   display: flex;
   flex-direction: column;
@@ -10490,6 +10489,11 @@ body.is-column-resizing * {
   border: 1px solid var(--border);
   border-radius: 4px;
   overflow: hidden;
+}
+
+.schedule-play-chart-wrap.is-chart-height-locked {
+  flex-grow: 0;
+  flex-shrink: 0;
 }
 
 .schedule-play-chart-loading {
@@ -10726,8 +10730,32 @@ body.is-column-resizing * {
 }
 
 @media (max-width: 820px) {
+  #schedule-play-modal {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+    overflow: hidden;
+  }
+
+  #schedule-play-modal .modal-card.modal-card-play {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  #schedule-play-modal .modal-card.modal-card-play .modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
   .modal-body.schedule-play-body {
+    display: flex;
+    flex-direction: column;
     padding: 14px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .schedule-play-sidebar {
@@ -10738,14 +10766,56 @@ body.is-column-resizing * {
     margin-bottom: 12px;
     background: transparent;
     border: none;
+    flex: 0 0 auto;
   }
 
   .schedule-play-list {
     max-height: 140px;
   }
 
+  .schedule-play-main {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .schedule-play-transport {
+    margin-top: auto;
+    min-height: 68px;
+  }
+
+  #schedule-play-transport-hits:not([hidden]) {
+    align-items: flex-start;
+    min-height: 68px;
+  }
+
   .schedule-play-chart-wrap {
-    height: 260px;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 200px;
+  }
+
+  #schedule-play-transport-play:not([hidden]) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "filter outcome"
+      "controls controls";
+    align-items: center;
+    gap: 8px 12px;
+    min-height: 0;
+  }
+
+  #schedule-play-window-filter {
+    grid-area: filter;
+  }
+
+  #schedule-play-transport-play .schedule-play-controls {
+    grid-area: controls;
+  }
+
+  #schedule-play-outcome {
+    grid-area: outcome;
+    margin-left: 0;
   }
 }
 
