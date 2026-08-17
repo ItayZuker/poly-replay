@@ -13,6 +13,10 @@
   --accent: #58a6ff;
   --up: #2ea043;
   --down: #f85149;
+  --trigger-gap-fill-positive: color-mix(in srgb, var(--up) 12%, transparent);
+  --trigger-gap-fill-negative: color-mix(in srgb, var(--down) 12%, transparent);
+  --trigger-gap-chip-positive: color-mix(in srgb, var(--up) 12%, var(--panel));
+  --trigger-gap-chip-negative: color-mix(in srgb, var(--down) 12%, var(--panel));
   --box-gap: 6px;
   --row-height: 40px;
 }
@@ -6689,6 +6693,96 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   scrollbar-color: #484f58 transparent;
 }
 
+@media (max-width: 720px) {
+  #trigger-create-modal {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+    overflow: hidden;
+  }
+
+  #trigger-create-modal .modal-card.trigger-create-card {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  #trigger-create-modal .modal-card.trigger-create-card .modal-body {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Only the rails move: drop the extra stage inset so bars share the body padding. */
+  #trigger-create-modal .trigger-duration-stage {
+    --trigger-bar-label-gutter: 50px;
+    margin: 0;
+    padding: 0;
+  }
+
+  #trigger-create-modal .trigger-duration-labels {
+    margin-left: 0;
+    padding-left: 0;
+  }
+
+  #trigger-create-modal .trigger-price-column[data-edge="start"] .trigger-price-rail,
+  #trigger-create-modal .trigger-price-column[data-edge="start"] .trigger-price-range,
+  #trigger-create-modal .trigger-price-column[data-edge="start"] .trigger-price-thumb,
+  #trigger-create-modal .trigger-price-column[data-edge="start"] .trigger-price-zero {
+    left: var(--trigger-bar-label-gutter);
+  }
+
+  #trigger-create-modal .trigger-price-column[data-edge="end"] .trigger-price-rail,
+  #trigger-create-modal .trigger-price-column[data-edge="end"] .trigger-price-range,
+  #trigger-create-modal .trigger-price-column[data-edge="end"] .trigger-price-thumb,
+  #trigger-create-modal .trigger-price-column[data-edge="end"] .trigger-price-zero {
+    left: calc(100% - var(--trigger-bar-label-gutter));
+  }
+
+  #trigger-create-modal .trigger-gap-mode {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #trigger-create-modal .trigger-gap-mode-opt {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+
+  #trigger-create-modal .trigger-gap-mode-opt:last-child {
+    border-bottom: 0;
+  }
+
+  #trigger-create-modal .trigger-buy-order-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "sides sides"
+      "type share";
+    align-items: center;
+    justify-items: start;
+    gap: 10px 12px;
+  }
+
+  #trigger-create-modal .trigger-buy-order-row .trigger-buy-sides-mode,
+  #trigger-create-modal .trigger-buy-order-row .trigger-buy-sides-mode.is-disabled {
+    grid-area: sides;
+    margin-left: 0;
+    justify-self: end;
+  }
+
+  #trigger-create-modal .trigger-buy-order-row .trigger-order-type-field {
+    grid-area: type;
+    justify-self: start;
+  }
+
+  #trigger-create-modal .trigger-buy-order-row .trigger-shares-field {
+    grid-area: share;
+    justify-self: end;
+  }
+}
+
 .trigger-create-tabs {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 4px;
@@ -6834,16 +6928,19 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 
 .trigger-buy-order-row .trigger-buy-sides-mode {
   flex: 0 1 auto;
+  width: 220px;
   min-width: 168px;
   max-width: 220px;
   margin-left: auto;
 }
 
-.trigger-buy-sides-mode.is-disabled {
+.trigger-buy-order-row .trigger-buy-sides-mode.is-disabled {
   opacity: 0.55;
   pointer-events: none;
+  width: 110px;
+  min-width: 84px;
+  max-width: 110px;
   grid-template-columns: 1fr;
-  min-width: 0;
 }
 
 .trigger-buy-sides-mode.is-disabled [data-buy-sides="both"] {
@@ -6955,9 +7052,10 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 }
 
 .trigger-duration-diagram {
+  --trigger-graph-gutter: 32px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--trigger-graph-gutter);
   padding: 4px 0 0;
 }
 
@@ -6967,7 +7065,9 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   align-items: stretch;
   justify-content: space-between;
   gap: 0;
+  height: 280px;
   min-height: 280px;
+  max-height: 280px;
   margin: 0 8px;
   padding: 0 4px 0;
 }
@@ -6981,13 +7081,14 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   width: 128px;
   flex: 0 0 128px;
   margin-bottom: 0;
-  background: var(--panel);
+  background: transparent;
 }
 
 .trigger-price-side-wrap {
   display: block;
   width: 100%;
-  margin: 0 0 18px;
+  margin: 0 0 var(--trigger-graph-gutter, 32px);
+  background: var(--panel);
 }
 
 .trigger-price-column[data-edge="end"] {
@@ -7010,7 +7111,7 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 
 /* Keep end header spacing equal to start so scale mids share the PTB line. */
 .trigger-price-column[data-edge="end"] > .trigger-price-side-wrap:first-child {
-  margin-bottom: 18px;
+  margin-bottom: var(--trigger-graph-gutter, 32px);
 }
 
 .trigger-price-column.is-change-side-mode .trigger-price-thumb[data-thumb="low"],
@@ -7019,6 +7120,21 @@ body.is-trigger-reordering .trigger-card-drag-handle {
 }
 
 .trigger-price-column.is-change-side-mode .trigger-price-thumb[data-thumb="high"] .trigger-price-thumb-label {
+  left: calc(100% + 8px);
+  right: auto;
+}
+
+.trigger-price-column[data-edge="start"] .trigger-price-thumb-label,
+.trigger-price-column[data-edge="start"] .trigger-price-thumb[data-thumb="high"] .trigger-price-thumb-label,
+.trigger-price-column[data-edge="start"] .trigger-price-thumb[data-thumb="low"] .trigger-price-thumb-label {
+  left: auto;
+  right: calc(100% + 8px);
+}
+
+.trigger-price-column[data-edge="end"] .trigger-price-thumb-label,
+.trigger-price-column[data-edge="end"] .trigger-price-thumb[data-thumb="high"] .trigger-price-thumb-label,
+.trigger-price-column[data-edge="end"] .trigger-price-thumb[data-thumb="low"] .trigger-price-thumb-label,
+.trigger-price-column[data-edge="end"].is-change-side-mode .trigger-price-thumb[data-thumb="high"] .trigger-price-thumb-label {
   left: calc(100% + 8px);
   right: auto;
 }
@@ -7299,7 +7415,7 @@ select.trigger-price-side:focus {
   pointer-events: none;
 }
 
-/* Top handle: price to the right. Bottom handle: price to the left. */
+/* Fallback if a bar has no data-edge: high right, low left. */
 .trigger-price-thumb[data-thumb="high"] .trigger-price-thumb-label {
   left: calc(100% + 8px);
   right: auto;
@@ -7350,11 +7466,11 @@ select.trigger-price-side:focus {
 }
 
 .trigger-gap-fill.is-negative {
-  fill: rgba(248, 81, 73, 0.12);
+  fill: var(--trigger-gap-fill-negative);
 }
 
 .trigger-gap-fill.is-positive {
-  fill: rgba(46, 160, 67, 0.12);
+  fill: var(--trigger-gap-fill-positive);
 }
 
 .trigger-gap-fill[hidden] {
@@ -7363,7 +7479,7 @@ select.trigger-price-side:focus {
 
 .trigger-gap-size-control {
   position: absolute;
-  z-index: 5;
+  z-index: 8;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -7378,43 +7494,45 @@ select.trigger-price-side:focus {
   display: none !important;
 }
 
-/* +Gap fill is above PTB: sit just below the line. */
-.trigger-gap-size-control.is-positive {
-  transform: translate(-50%, 0);
-}
-
-/* -Gap fill is below PTB: sit just above the line. */
+.trigger-gap-size-control,
+.trigger-gap-size-control.is-positive,
 .trigger-gap-size-control.is-negative {
-  transform: translate(-50%, -100%);
+  transform: translate(-50%, -50%);
 }
 
 .trigger-gap-size-box {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 108px;
-  padding: 4px 10px;
-  border: 1px solid transparent;
+  gap: 2px;
+  min-width: 0;
+  width: max-content;
+  padding: 2px 6px;
+  border: 1px solid #d29922;
   border-radius: 4px;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
   box-sizing: border-box;
 }
 
-.trigger-gap-size-control.is-negative .trigger-gap-size-box {
-  border-color: var(--down);
-  background: rgba(248, 81, 73, 0.12);
+.trigger-gap-size-control.is-positive .trigger-gap-size-box,
+.trigger-gap-size-control.is-positive .trigger-gap-size-bound,
+.trigger-gap-size-control.is-positive .trigger-gap-size-value {
+  background-color: var(--trigger-gap-chip-positive);
 }
 
-.trigger-gap-size-control.is-positive .trigger-gap-size-box {
-  border-color: var(--up);
-  background: rgba(46, 160, 67, 0.12);
+.trigger-gap-size-control.is-negative .trigger-gap-size-box,
+.trigger-gap-size-control.is-negative .trigger-gap-size-bound,
+.trigger-gap-size-control.is-negative .trigger-gap-size-value {
+  background-color: var(--trigger-gap-chip-negative);
 }
 
-/* Relative: Min/Max match gold Gap buttons (not absolute green/red). */
 .trigger-gap-size-control.is-relative.is-positive .trigger-gap-size-box,
-.trigger-gap-size-control.is-relative.is-negative .trigger-gap-size-box {
-  border-color: #d29922;
-  background: rgba(210, 153, 34, 0.12);
+.trigger-gap-size-control.is-relative.is-negative .trigger-gap-size-box,
+.trigger-gap-size-control.is-relative.is-positive .trigger-gap-size-bound,
+.trigger-gap-size-control.is-relative.is-negative .trigger-gap-size-bound,
+.trigger-gap-size-control.is-relative.is-positive .trigger-gap-size-value,
+.trigger-gap-size-control.is-relative.is-negative .trigger-gap-size-value {
+  background-color: color-mix(in srgb, var(--panel) 55%, transparent);
 }
 
 .trigger-gap-size-bound,
@@ -7424,13 +7542,16 @@ select.trigger-price-side:focus {
   padding: 0;
   border: none;
   border-radius: 0;
-  background: transparent;
   box-shadow: none;
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
   line-height: 1.2;
   color: #c9d1d9;
+}
+
+.trigger-gap-size-unit {
+  background: transparent;
 }
 
 .trigger-gap-size-bound {
@@ -7454,10 +7575,12 @@ select.trigger-price-side:focus {
 }
 
 .trigger-gap-size-value {
-  width: 3.2em;
+  width: 2.4em;
   font-variant-numeric: tabular-nums;
   text-align: left;
-  color: #c9d1d9;
+  color: #fff;
+  -webkit-appearance: none;
+  appearance: none;
   /* Hide native number spinners so it reads as subtitle text. */
   -moz-appearance: textfield;
 }
@@ -7468,10 +7591,14 @@ select.trigger-price-side:focus {
   margin: 0;
 }
 
-.trigger-gap-size-bound:focus,
-.trigger-gap-size-value:focus {
+.trigger-gap-size-bound:focus {
   outline: none;
   color: #e6edf3;
+}
+
+.trigger-gap-size-value:focus {
+  outline: none;
+  color: #fff;
 }
 
 .trigger-ptb-line {

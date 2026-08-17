@@ -5838,15 +5838,27 @@ function triggerGapBiasOffset(kind, gapOffset) {
   return 0;
 }
 
+function triggerPriceRailCenterX(scale, stageRect) {
+  if (!scale) return null;
+  const rail = scale.querySelector(".trigger-price-rail");
+  const rect = (rail || scale).getBoundingClientRect();
+  if (rect.width < 1 && rect.height < 1) return null;
+  return rect.left + rect.width / 2 - stageRect.left;
+}
+
 function buildTriggerMarketZigzagPoints(stageRect, startScale, endScale, gaps = {}, trendRaw = null) {
   const startCol = startScale.closest(".trigger-price-column");
   const startRect = (startCol || startScale).getBoundingClientRect();
   const scaleRect = startScale.getBoundingClientRect();
-  // Always span the same path: left edge of the left bar → matching inset
-  // on the right of the stage. Duration > 0 places the right bar on top of
-  // that same gold line (it must not shorten the line).
-  const x0 = startRect.left - stageRect.left;
-  const x1 = Math.max(x0 + 80, stageRect.width - x0);
+  // Span rail-to-rail so the price line and gold PTB meet the bars.
+  // Duration 0 hides the end bar — keep a matching right inset.
+  const startRailX = triggerPriceRailCenterX(startScale, stageRect);
+  const endRailX = triggerPriceRailCenterX(endScale, stageRect);
+  const x0 = startRailX != null ? startRailX : startRect.left - stageRect.left;
+  const x1 =
+    endRailX != null
+      ? Math.max(x0 + 80, endRailX)
+      : Math.max(x0 + 80, stageRect.width - x0);
   const ptbY = scaleRect.top + scaleRect.height / 2 - stageRect.top;
   const gapOffset = Math.max(40, scaleRect.height * 0.36);
   const amp = Math.max(14, scaleRect.height * 0.14);
@@ -6144,10 +6156,8 @@ function renderTriggerMarketOverlay(
       }
       if (sizeControl) {
         const zoneMidX = (layout.x0 + layout.x1) / 2;
-        const ptbPad = 8;
         sizeControl.style.left = `${zoneMidX}px`;
-        // Relative: Min/Max always above the PTB line (With or Against).
-        sizeControl.style.top = `${ptbY - ptbPad}px`;
+        sizeControl.style.top = `${ptbY}px`;
         sizeControl.classList.remove("is-positive");
         sizeControl.classList.add("is-negative", "is-relative");
         sizeControl.hidden = false;
@@ -6159,25 +6169,20 @@ function renderTriggerMarketOverlay(
       fill.removeAttribute("hidden");
       fill.classList.toggle("is-negative", kind === "negative");
       fill.classList.toggle("is-positive", kind === "positive");
-      fill.setAttribute(
-        "d",
-        buildTriggerGapFillPath(zigzagPoints, layout.x0, layout.x1, ptbY),
-      );
-
       if (sizeControl) {
         const zoneMidX = (layout.x0 + layout.x1) / 2;
-        const ptbPad = 8;
         sizeControl.style.left = `${zoneMidX}px`;
-        // Keep Min/Max outside the active gap fill — opposite side of PTB.
-        // +Gap fill is above PTB → controls below; -Gap fill is below → controls above.
-        sizeControl.style.top =
-          kind === "positive" ? `${ptbY + ptbPad}px` : `${ptbY - ptbPad}px`;
+        sizeControl.style.top = `${ptbY}px`;
         sizeControl.classList.toggle("is-negative", kind === "negative");
         sizeControl.classList.toggle("is-positive", kind === "positive");
         sizeControl.classList.remove("is-relative");
         sizeControl.hidden = false;
         syncTriggerGapSizeControl(edge);
       }
+      fill.setAttribute(
+        "d",
+        buildTriggerGapFillPath(zigzagPoints, layout.x0, layout.x1, ptbY),
+      );
     }
 
     if (sideLine) {
@@ -6269,10 +6274,14 @@ function renderTriggerPtbGapUi() {
     };
     if (topBtnY == null) topBtnY = yByKind.positive;
 
-    // Full half-width of the price path for fill + colored line.
-    const halfX0 = edge === "start" ? built.x0 : midX;
-    const halfX1 = edge === "start" ? midX : built.x1;
-    const btnX = (halfX0 + halfX1) / 2;
+    // Fill spreads from mid toward each bar and stops just short of the rail.
+    const barGap = 10;
+    const halfX0 = edge === "start" ? built.x0 + barGap : midX;
+    const halfX1 = edge === "start" ? midX : built.x1 - barGap;
+    const rail = scale.querySelector(".trigger-price-rail");
+    const railRect = (rail || scale).getBoundingClientRect();
+    const railCenterX = railRect.left + railRect.width / 2 - stageRect.left;
+    const edgeBtns = [];
 
     for (const kind of ["negative", "positive"]) {
       const btn = stage.querySelector(`.trigger-ptb-btn[data-edge="${edge}"][data-ptb="${kind}"]`);
@@ -6302,13 +6311,30 @@ function renderTriggerPtbGapUi() {
         }
         btn.classList.toggle("is-active", active);
         btn.setAttribute("aria-pressed", active ? "true" : "false");
-        btn.style.left = `${Math.round(btnX)}px`;
-        btn.style.top = `${Math.round(yByKind[kind])}px`;
         if (edge === "end") {
           btn.disabled = zeroDuration;
           btn.setAttribute("aria-disabled", zeroDuration ? "true" : "false");
         }
+        edgeBtns.push({ btn, kind });
       }
+    }
+
+    // Keep Gap buttons inward of the rail. ¢ labels sit outside (left bar
+    // left, right bar right), so only the thumb needs clearance.
+    const labelGutter = 16;
+    let maxHalfW = 26;
+    for (const { btn } of edgeBtns) {
+      maxHalfW = Math.max(maxHalfW, (btn.offsetWidth || 52) / 2);
+    }
+    const clear = labelGutter + maxHalfW + 6;
+    const halfMid = (halfX0 + halfX1) / 2;
+    const btnX =
+      edge === "start"
+        ? Math.max(halfMid, railCenterX + clear)
+        : Math.min(halfMid, railCenterX - clear);
+    for (const { btn, kind } of edgeBtns) {
+      btn.style.left = `${Math.round(btnX)}px`;
+      btn.style.top = `${Math.round(yByKind[kind])}px`;
     }
 
     if (selected === "negative" || selected === "positive") {
@@ -6929,7 +6955,7 @@ function syncTriggerCreateBuySidesModeUi() {
   );
   wrap.querySelectorAll("[data-buy-sides]").forEach((btn) => {
     const isBoth = btn.getAttribute("data-buy-sides") === "both";
-    btn.hidden = !allowed && isBoth;
+    if (isBoth) btn.setAttribute("aria-hidden", allowed ? "false" : "true");
     btn.classList.toggle("is-active", btn.getAttribute("data-buy-sides") === mode);
     btn.disabled = triggerCreateViewOnly || !allowed;
   });
