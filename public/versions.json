@@ -1,6 +1,11 @@
 {
-    "current": "1.76.1",
+    "current": "1.77.0",
     "releases": [
+        {
+            "version": "1.77.0",
+            "releasedAt": "2026-08-17T09:02:02.446Z",
+            "notes": "Trigger dialog is full-screen on mobile. First/Both is half width when only First is available; on mobile it sits above Type and aligns right, with Share on the right. Gap fill stops at the gold PTB line; Min/Max uses the same fill color. Docs updated."
+        },
         {
             "version": "1.76.1",
             "releasedAt": "2026-08-17T07:49:45.190Z",
