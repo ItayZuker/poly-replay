@@ -1,3 +1,4 @@
+import { computeTwapAt } from "./asset-price-mode.js";
 import { roundPolymarketAssetPrice } from "./polymarket-display-price.js";
 
 const RTDS_URL = "wss://ws-live-data.polymarket.com";
@@ -20,6 +21,16 @@ const CHAINLINK_SYMBOL_BY_ASSET: Record<string, string> = {
   sol: "sol/usd",
 };
 
+const TWAP_TOPIC_BY_WINDOW: Record<30 | 60, string> = {
+  30: "crypto_prices_twap_thirty",
+  60: "crypto_prices_twap_sixty",
+};
+
+const TWAP_WINDOW_BY_TOPIC: Record<string, 30 | 60> = {
+  crypto_prices_twap_thirty: 30,
+  crypto_prices_twap_sixty: 60,
+};
+
 const ASSET_BY_CHAINLINK_SYMBOL = Object.fromEntries(
   Object.entries(CHAINLINK_SYMBOL_BY_ASSET).map(([asset, symbol]) => [symbol, asset]),
 );
@@ -38,6 +49,7 @@ interface PriceTick {
 export class ChainlinkPriceFeed {
   private ws: WebSocket | null = null;
   private prices = new Map<string, PriceEntry>();
+  private twapPrices = new Map<string, PriceEntry>();
   private tickHistory = new Map<string, PriceTick[]>();
   private windowOpens = new Map<string, number>();
   private windowCloses = new Map<string, number>();
@@ -51,6 +63,7 @@ export class ChainlinkPriceFeed {
   private connecting = false;
   private tearingDown = false;
   private listeners = new Set<(asset: string, timestampMs: number) => void>();
+  private twapListeners = new Set<(asset: string, windowSec: 30 | 60, timestampMs: number) => void>();
   private stallListeners = new Set<(asset: string) => void>();
   /** Assets currently in a stall episode (cleared when a fresh tick arrives). */
   private assetsInStall = new Set<string>();
@@ -94,6 +107,41 @@ export class ChainlinkPriceFeed {
       return undefined;
     }
     return entry;
+  }
+
+  getLiveTwap(
+    asset: string,
+    windowSec: 30 | 60,
+    options?: { maxAgeMs?: number },
+  ): PriceEntry | undefined {
+    const entry = this.twapPrices.get(this.twapKey(asset, windowSec));
+    if (!entry) return undefined;
+    if (
+      options?.maxAgeMs != null &&
+      Date.now() - entry.receivedAtMs > options.maxAgeMs
+    ) {
+      return undefined;
+    }
+    return entry;
+  }
+
+  /** Homemade rolling TWAP from raw RTDS ticks — fallback when the official feed is quiet. */
+  getComputedTwap(
+    asset: string,
+    windowSec: 30 | 60,
+    atMs = Date.now(),
+  ): number | undefined {
+    const ticks = this.tickHistory.get(asset.toLowerCase());
+    if (!ticks?.length) return undefined;
+    const samples = ticks.map((t) => ({ tMs: t.timestampMs, price: t.value }));
+    const twap = computeTwapAt(samples, atMs, windowSec * 1000);
+    return twap != null && Number.isFinite(twap)
+      ? roundPolymarketAssetPrice(twap)
+      : undefined;
+  }
+
+  resolveTwapPrice(asset: string, windowSec: 30 | 60, atMs = Date.now()): number | undefined {
+    return this.getLiveTwap(asset, windowSec)?.value ?? this.getComputedTwap(asset, windowSec, atMs);
   }
 
   /** True when we have a recent tick for this asset. */
@@ -321,6 +369,39 @@ export class ChainlinkPriceFeed {
     return `${asset.toLowerCase()}:${windowStartSec}`;
   }
 
+  private twapKey(asset: string, windowSec: 30 | 60): string {
+    return `${asset.toLowerCase()}:${windowSec}`;
+  }
+
+  private storeTwapPoint(
+    windowSec: 30 | 60,
+    symbol: string | undefined,
+    value: unknown,
+    timestampMs: unknown,
+  ): void {
+    if (!symbol) return;
+    const asset = ASSET_BY_CHAINLINK_SYMBOL[symbol.toLowerCase()];
+    if (!asset) return;
+
+    const parsedRaw = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(parsedRaw)) return;
+    const parsedValue = roundPolymarketAssetPrice(parsedRaw);
+    const ts =
+      typeof timestampMs === "number" && Number.isFinite(timestampMs)
+        ? timestampMs
+        : Date.now();
+
+    const prev = this.twapPrices.get(this.twapKey(asset, windowSec));
+    if (prev && ts < prev.timestampMs) return;
+
+    this.twapPrices.set(this.twapKey(asset, windowSec), {
+      value: parsedValue,
+      timestampMs: ts,
+      receivedAtMs: Date.now(),
+    });
+    this.notifyTwapUpdate(asset, windowSec, ts);
+  }
+
   private clearTimers(): void {
     if (this.pingTimer) {
       clearInterval(this.pingTimer);
@@ -358,6 +439,16 @@ export class ChainlinkPriceFeed {
               {
                 topic: "crypto_prices_chainlink",
                 type: "*",
+                filters: "",
+              },
+              {
+                topic: TWAP_TOPIC_BY_WINDOW[30],
+                type: "update",
+                filters: "",
+              },
+              {
+                topic: TWAP_TOPIC_BY_WINDOW[60],
+                type: "update",
                 filters: "",
               },
             ],
@@ -459,7 +550,7 @@ export class ChainlinkPriceFeed {
       type?: string;
       payload?: {
         symbol?: string;
-        value?: number;
+        value?: number | string;
         timestamp?: number;
         data?: Array<{ timestamp?: number; value?: number }>;
       };
@@ -468,6 +559,19 @@ export class ChainlinkPriceFeed {
     try {
       message = JSON.parse(raw) as typeof message;
     } catch {
+      return;
+    }
+
+    const twapWindow = message.topic
+      ? TWAP_WINDOW_BY_TOPIC[message.topic]
+      : undefined;
+    if (twapWindow != null) {
+      this.storeTwapPoint(
+        twapWindow,
+        message.payload?.symbol,
+        message.payload?.value,
+        message.payload?.timestamp,
+      );
       return;
     }
 
@@ -527,6 +631,13 @@ export class ChainlinkPriceFeed {
     return () => this.listeners.delete(listener);
   }
 
+  onTwapUpdate(
+    listener: (asset: string, windowSec: 30 | 60, timestampMs: number) => void,
+  ): () => void {
+    this.twapListeners.add(listener);
+    return () => this.twapListeners.delete(listener);
+  }
+
   onAssetStall(listener: (asset: string) => void): () => void {
     this.stallListeners.add(listener);
     return () => this.stallListeners.delete(listener);
@@ -535,6 +646,12 @@ export class ChainlinkPriceFeed {
   private notifyUpdate(asset: string, timestampMs: number): void {
     for (const listener of this.listeners) {
       listener(asset, timestampMs);
+    }
+  }
+
+  private notifyTwapUpdate(asset: string, windowSec: 30 | 60, timestampMs: number): void {
+    for (const listener of this.twapListeners) {
+      listener(asset, windowSec, timestampMs);
     }
   }
 

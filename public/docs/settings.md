@@ -1,12 +1,25 @@
-# Settings & wallet
+# Account
 
 ## Account tabs
 
-**User**, **Stats**, and **Credentials** share one Settings card (tab switcher).
+**User**, **Settings**, **Stats**, and **Credentials** share one Account card (tab switcher).
 
 ### User
 
 Display name and email for your account. **Allow trade** (**Off** / **On**): Off = demo; On = real orders when other gates pass — turning **Off** also moves every Trigger card that was on **Trade** back to **Demo**. Also log out, or permanently delete your account.
+
+### Settings
+
+**Current price** chooses the asset print used for **Current**, **Gap**, live **triggers** (Trade and Demo), Prediction scoring, and the replay price line:
+
+| Choice | Meaning |
+|--------|---------|
+| **Match Polymarket** (default) | 30-second Chainlink TWAP on **5 Min** markets, 60-second TWAP on **15 Min** — the same Current Polymarket shows |
+| **Raw Chainlink** | Last Chainlink RTDS tick (`btc/usd` / `eth/usd` / `sol/usd`), rounded to 2 decimals |
+
+Recordings always store the **raw** socket tick. If Match Polymarket is selected, replay rebuilds the averaged line (and trigger Gap / $ change) from those raw ticks.
+
+**PTB** is unchanged (first in-window Chainlink, then REST `openPrice`).
 
 ### Stats
 
@@ -14,7 +27,7 @@ Display name and email for your account. **Allow trade** (**Off** / **On**): Off
 |--------|---------|
 | **Fill success** | Rolling last **7 days** (independent of the ~7-day weekday×hour recording overlay). Shows a **total %** plus **FAK / FOK / GTD** rows (`successes/attempts · %`). **Partial fill = success**. **FAK/FOK:** count when the order is fired/sent. **GTD:** count only when the limit was **touched** while live (ask/bid/trade at the limit) — strategy cancels with no touch are ignored (neither success nor miss). **—** until the first countable attempt |
 
-Feed **Latency (ms)** is shown in the Settings page header (not in this tab).
+Feed **Latency (ms)** is shown in the Account page header (not in this tab).
 
 ### Credentials
 

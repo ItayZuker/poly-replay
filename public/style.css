@@ -4159,6 +4159,15 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   padding-top: 14px;
 }
 
+.settings-card--account .settings-tabs {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.settings-card--account .settings-tab {
+  padding: 7px 6px;
+  font-size: 0.74rem;
+}
+
 .settings-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4267,6 +4276,17 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 .settings-allow-trade-field .trade-allow-toggle .trigger-run-mode-btn {
   min-width: 40px;
   padding: 4px 10px;
+}
+
+.settings-price-mode-toggle {
+  min-width: 0;
+}
+
+.settings-price-mode-toggle .trigger-run-mode-btn {
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .settings-user-session {
@@ -5837,7 +5857,7 @@ body.is-row-resizing .panel-header-drag-handle {
 }
 
 .position-card {
-  border: 1px solid var(--border);
+  border: 1px solid var(--position-card-color, var(--border));
   border-radius: 4px;
   background: var(--panel);
   padding: 8px 10px;
@@ -8988,6 +9008,15 @@ body.is-column-resizing * {
   min-width: 0;
 }
 
+.sim-label-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
 .sim-label,
 .stat-label,
 .quote-label {
@@ -9001,13 +9030,15 @@ body.is-column-resizing * {
 }
 
 .sim-label-hint {
-  margin-left: 4px;
-  font-size: 0.65rem;
+  display: block;
+  margin: 0;
+  font-size: 0.62rem;
   font-weight: 500;
   letter-spacing: 0.02em;
   text-transform: none;
   color: var(--accent);
-  vertical-align: baseline;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .sim-label-hint.is-provisional,

@@ -4,6 +4,12 @@ import { isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { DEFAULT_MARKET_SERIES } from "../collections.js";
+import {
+  DEFAULT_ASSET_PRICE_MODE,
+  normalizeAssetPriceMode,
+  rememberAssetPriceMode,
+  type AssetPriceMode,
+} from "../asset-price-mode.js";
 import type { TradingConfig } from "../types.js";
 import { decryptSecret, encryptSecret, privateKeyHint } from "../wallet-crypto.js";
 import { getMongoClient, getMongoDbName } from "./mongo-client.js";
@@ -40,6 +46,8 @@ export interface UserDocument {
   trading: TradingConfig;
   /** Per-market trading settings. */
   tradingBySeries?: Record<string, TradingConfig>;
+  /** Current / Gap / trigger price: raw Chainlink tick or Polymarket TWAP. */
+  assetPriceMode?: AssetPriceMode;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,6 +62,7 @@ export interface UserPublic {
   /** True when funder + private key are both stored. */
   walletReady: boolean;
   trading: TradingConfig;
+  assetPriceMode: AssetPriceMode;
   wallet: {
     funderAddress?: string;
     signerAddress?: string;
@@ -299,6 +308,8 @@ async function collection() {
 function toPublic(doc: UserDocument): UserPublic {
   const hasPrivateKey = Boolean(doc.wallet?.privateKeyEnc);
   const funderAddress = doc.wallet?.funderAddress;
+  const assetPriceMode = normalizeAssetPriceMode(doc.assetPriceMode);
+  rememberAssetPriceMode(String(doc._id), assetPriceMode);
   return {
     id: String(doc._id),
     slug: doc.slug,
@@ -308,6 +319,7 @@ function toPublic(doc: UserDocument): UserPublic {
     admin: doc.admin === true,
     walletReady: hasPrivateKey && Boolean(funderAddress?.trim()),
     trading: normalizeTrading(doc.trading),
+    assetPriceMode,
     wallet: {
       funderAddress,
       signerAddress: doc.wallet?.signerAddress,
@@ -621,6 +633,7 @@ export async function registerUser(input: {
     passwordHash,
     wallet: { signatureType: 1 },
     trading: defaultTrading(),
+    assetPriceMode: DEFAULT_ASSET_PRICE_MODE,
     createdAt: now,
     updatedAt: now,
   };
@@ -875,6 +888,7 @@ export async function bootstrapAdminUser(input: {
     admin: true,
     wallet: { signatureType: 1 },
     trading: defaultTrading(),
+    assetPriceMode: DEFAULT_ASSET_PRICE_MODE,
     createdAt: now,
     updatedAt: now,
   };
@@ -897,6 +911,10 @@ export async function maybeBootstrapAdminFromEnv(): Promise<void> {
 export interface UpdateUserProfileInput {
   name?: string;
   email?: string;
+}
+
+export interface UpdateUserSettingsInput {
+  assetPriceMode?: unknown;
 }
 
 function normalizeOptionalText(raw: unknown, maxLen: number): string | undefined {
@@ -978,6 +996,23 @@ export async function updateUserProfile(
   await col.updateOne({ _id: user._id }, update);
   const updated = await col.findOne({ _id: user._id });
   if (!updated) throw new Error("User missing after profile update");
+  return toPublic(updated);
+}
+
+export async function updateUserSettings(
+  userId: string | ObjectId,
+  input: UpdateUserSettingsInput,
+): Promise<UserPublic> {
+  const user = await getUserById(userId);
+  if (!user) throw new Error("User not found");
+  const assetPriceMode = normalizeAssetPriceMode(input.assetPriceMode);
+  const col = await collection();
+  await col.updateOne(
+    { _id: user._id },
+    { $set: { assetPriceMode, updatedAt: new Date() } },
+  );
+  const updated = await col.findOne({ _id: user._id });
+  if (!updated) throw new Error("User missing after settings update");
   return toPublic(updated);
 }
 

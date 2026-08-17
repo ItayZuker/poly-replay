@@ -914,10 +914,78 @@ async function deleteAccount() {
 }
 
 let currentUserId = null;
+let userAssetPriceMode = "twap";
+
+function getUserAssetPriceMode() {
+  return userAssetPriceMode === "raw" ? "raw" : "twap";
+}
+
+function lookbackForSelectedSeries() {
+  return window.AssetPriceMode?.twapLookbackSecondsForSeries?.(selectedSeries) || 30;
+}
+
+function pickDisplayedAssetPrice(raw, twap) {
+  if (getUserAssetPriceMode() === "twap" && twap != null && Number.isFinite(twap)) return twap;
+  return raw;
+}
+
+function applyDisplayedAssetPrice(state) {
+  if (!state) return state;
+  const raw =
+    state.assetPriceRaw != null && Number.isFinite(state.assetPriceRaw)
+      ? state.assetPriceRaw
+      : state.assetPrice;
+  const twap = state.assetPriceTwap;
+  if (raw != null && Number.isFinite(raw)) state.assetPriceRaw = raw;
+  const price = pickDisplayedAssetPrice(raw, twap);
+  if (price != null && Number.isFinite(price)) {
+    state.assetPrice = price;
+    if (state.prevCloseAsset != null && Number.isFinite(state.prevCloseAsset)) {
+      state.assetGap = price - state.prevCloseAsset;
+    }
+  }
+  const rawHist = Array.isArray(state.priceHistoryRaw)
+    ? state.priceHistoryRaw
+    : Array.isArray(state.priceHistory)
+      ? state.priceHistory
+      : [];
+  state.priceHistoryRaw = rawHist;
+  if (getUserAssetPriceMode() === "twap") {
+    state.priceHistory =
+      Array.isArray(state.priceHistoryTwap) && state.priceHistoryTwap.length
+        ? state.priceHistoryTwap
+        : window.AssetPriceMode?.applyTwapToPriceHistory?.(rawHist, lookbackForSelectedSeries()) ||
+          rawHist;
+  } else {
+    state.priceHistory = rawHist;
+  }
+  return state;
+}
+
+function syncAssetPriceModeToggle(mode) {
+  const isTwap = mode !== "raw";
+  $("asset-price-mode-twap")?.classList.toggle("is-active", isTwap);
+  $("asset-price-mode-raw")?.classList.toggle("is-active", !isTwap);
+}
+
+function setUserAssetPriceMode(mode) {
+  userAssetPriceMode = mode === "raw" ? "raw" : "twap";
+  syncAssetPriceModeToggle(userAssetPriceMode);
+  if (windowState) {
+    applyDisplayedAssetPrice(windowState);
+    updateGraphPanel(windowState);
+    tickManipulationDetector(windowState);
+  }
+}
+
+window.getUserAssetPriceMode = getUserAssetPriceMode;
 
 function setCurrentUser(user) {
   currentUserId = user?.id ? String(user.id) : null;
   setSignedInHint(Boolean(currentUserId));
+  if (user && "assetPriceMode" in (user || {})) {
+    setUserAssetPriceMode(user.assetPriceMode);
+  }
 }
 
 function userScopedStorageKey(base) {
@@ -1062,7 +1130,7 @@ function userNameInitial(name) {
 
 function renderHeaderUserInitial(name) {
   const initial = userNameInitial(name);
-  const label = String(name || "").trim() || "Settings";
+  const label = String(name || "").trim() || "Account";
   const targets = [
     { el: $("settings-page-initial"), btn: $("settings-page-btn") },
     { el: $("auth-settings-initial"), btn: $("auth-settings-btn") },
@@ -1071,7 +1139,7 @@ function renderHeaderUserInitial(name) {
     if (el) el.textContent = initial;
     if (btn) {
       btn.title = label;
-      btn.setAttribute("aria-label", `Settings — ${label}`);
+      btn.setAttribute("aria-label", `Account — ${label}`);
     }
   }
 }
@@ -1081,6 +1149,9 @@ function renderSettingsUser(user) {
   const emailEl = $("settings-user-email");
   if (nameEl && document.activeElement !== nameEl) nameEl.value = user?.name || "";
   if (emailEl && document.activeElement !== emailEl) emailEl.value = user?.email || "";
+  if (user && user.assetPriceMode != null) {
+    setUserAssetPriceMode(user.assetPriceMode);
+  }
   renderHeaderUserInitial(user?.name);
 }
 
@@ -1163,7 +1234,7 @@ function applyWalletGate(ready) {
     btn.disabled = locked;
     btn.classList.toggle("is-wallet-locked", locked);
     btn.title = locked
-      ? "Add funder address and private key in Settings first"
+      ? "Add funder address and private key in Account first"
       : "";
   }
   if (!walletReady && typeof showAppPage === "function") {
@@ -1392,11 +1463,54 @@ function bindSettingsTabs() {
   });
 }
 
+function setSettingsPriceModeStatus(message, isError = false) {
+  const el = $("settings-price-mode-status");
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = "";
+    el.classList.remove("is-error");
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+  el.classList.toggle("is-error", isError);
+}
+
+function bindAssetPriceModeToggle() {
+  const toggle = $("asset-price-mode-toggle");
+  if (!toggle || toggle.dataset.bound === "1") return;
+  toggle.dataset.bound = "1";
+  toggle.addEventListener("click", async (event) => {
+    const btn = event.target.closest?.("[data-asset-price-mode]");
+    if (!btn) return;
+    const mode = btn.getAttribute("data-asset-price-mode") === "raw" ? "raw" : "twap";
+    const prev = getUserAssetPriceMode();
+    setUserAssetPriceMode(mode);
+    setSettingsPriceModeStatus("");
+    try {
+      const res = await fetch("/api/user", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assetPriceMode: mode }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
+      if (payload?.assetPriceMode) setUserAssetPriceMode(payload.assetPriceMode);
+    } catch (err) {
+      setUserAssetPriceMode(prev);
+      setSettingsPriceModeStatus(err instanceof Error ? err.message : String(err), true);
+    }
+  });
+}
+
 function bindSettingsEditors() {
   bindSettingsTabs();
   bindSettingsInfoTips();
   bindSettingsFunderReveal();
   bindSettingsEnterToSave();
+  bindAssetPriceModeToggle();
 
   const userSave = $("settings-user-save");
   const funderInput = $("settings-funder-input");
@@ -3462,10 +3576,24 @@ function setLivePtbSourceLabel(source) {
   el.textContent = "";
 }
 
+function setLiveCurrentSourceLabel() {
+  const el = $("graph-current-source");
+  if (!el) return;
+  if (getUserAssetPriceMode() === "twap") {
+    const lookback = lookbackForSelectedSeries();
+    el.hidden = false;
+    el.textContent = lookback === 60 ? "(Avg 60s)" : "(Avg 30s)";
+    return;
+  }
+  el.hidden = true;
+  el.textContent = "";
+}
+
 function updateGraphPanel(state) {
   $("graph-ptb").textContent = fmtPrice(state.prevCloseAsset);
   setLivePtbSourceLabel(state.priceToBeatSource);
   $("graph-current").textContent = fmtPrice(state.assetPrice);
+  setLiveCurrentSourceLabel();
 
   const gapEl = $("graph-gap");
   if (state.assetGap != null && Number.isFinite(state.assetGap)) {
@@ -3653,6 +3781,35 @@ function resolvePositionTriggerName(card) {
   return name || "";
 }
 
+function normalizeTriggerColorHex(value) {
+  if (typeof value !== "string") return "";
+  const s = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+    return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`.toLowerCase();
+  }
+  return "";
+}
+
+/** Same color as the matching Market Trigger card border / handle. */
+function resolvePositionTriggerColor(card) {
+  const tid = typeof card?.triggerId === "string" ? card.triggerId.trim() : "";
+  if (!tid) return "";
+  const t = typeof findUserTrigger === "function" ? findUserTrigger(tid) : null;
+  if (!t) return "";
+  return normalizeTriggerColorHex(t.color) || "#58a6ff";
+}
+
+function syncPositionCardTriggerColors() {
+  const list = $("positions-cards");
+  if (!list) return;
+  for (const el of list.querySelectorAll(".position-card[data-trigger-id]")) {
+    const color = resolvePositionTriggerColor({ triggerId: el.dataset.triggerId });
+    if (color) el.style.setProperty("--position-card-color", color);
+    else el.style.removeProperty("--position-card-color");
+  }
+}
+
 function renderPositionCard(card) {
   const sideClass = card.side === "up" ? "is-up" : "is-down";
   const status = card.status || "open";
@@ -3786,8 +3943,13 @@ function renderPositionCard(card) {
       <span class="position-card-side-wrap">${triggerMissLabel}<span class="position-card-side ${sideClass}">${sideLabel}</span>${buyTimeHtml}</span>
       ${buyFillHtml}
     </div>`;
+  const triggerId = !isPrediction && typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+  const triggerColor = resolvePositionTriggerColor(card);
+  const triggerAttrs = `${
+    triggerId ? ` data-trigger-id="${escapeHtml(triggerId)}"` : ""
+  }${triggerColor ? ` style="--position-card-color:${triggerColor}"` : ""}`;
   // is-loading → gray pulsing badge (Waiting only). Open keeps accent via .is-open.
-  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${card.triggerMiss === true ? " is-trigger-miss" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}">
+  return `<article class="position-card is-${status}${isDemo ? " is-demo" : ""}${isPrediction ? " is-prediction" : ""}${card.triggerMiss === true ? " is-trigger-miss" : ""}${statusWaiting ? " is-loading" : ""}${valuesPending ? " is-values-pending" : ""}" data-position-id="${card.id}"${triggerAttrs}>
     <div class="position-card-top">
       ${titleLeftHtml}
       ${statusRightHtml}
@@ -4909,6 +5071,15 @@ function syncGraphSaveBtn(state = windowState) {
 
 function updateWindowUI(state) {
   const prevWindowStart = windowState?.windowStart;
+  if (state) {
+    if (state.assetPriceRaw == null && state.assetPrice != null) {
+      state.assetPriceRaw = state.assetPrice;
+    }
+    if (!Array.isArray(state.priceHistoryRaw) && Array.isArray(state.priceHistory)) {
+      state.priceHistoryRaw = state.priceHistory;
+    }
+    applyDisplayedAssetPrice(state);
+  }
   windowState = state;
   window.windowState = state;
 
@@ -4969,9 +5140,17 @@ function appendChainlinkTick(tick, redraw = true) {
   if (!tick || tick.asset !== selectedAsset()) return;
   if (windowState?.officialSettled) return;
 
-  const price = roundPolymarketAssetPrice(Number(tick.price));
+  const raw = Number.isFinite(Number(tick.price))
+    ? roundPolymarketAssetPrice(Number(tick.price))
+    : windowState?.assetPriceRaw;
+  const lookback = lookbackForSelectedSeries();
+  const twapRaw = lookback === 60 ? tick.twap60 : tick.twap30;
+  const twap = Number.isFinite(Number(twapRaw))
+    ? roundPolymarketAssetPrice(Number(twapRaw))
+    : windowState?.assetPriceTwap;
   const timestampMs = Number(tick.timestampMs);
-  if (!Number.isFinite(price) || !Number.isFinite(timestampMs)) return;
+  if (!Number.isFinite(timestampMs)) return;
+  if ((raw == null || !Number.isFinite(raw)) && (twap == null || !Number.isFinite(twap))) return;
 
   if (!windowState?.windowStart || !windowState?.windowEnd) {
     pendingChainlinkTicks.push(tick);
@@ -4990,20 +5169,33 @@ function appendChainlinkTick(tick, redraw = true) {
     return;
   }
 
-  const history = Array.isArray(windowState.priceHistory)
-    ? windowState.priceHistory
-    : (windowState.priceHistory = []);
-  const last = history[history.length - 1];
-  if (!last || last.t !== t || last.price !== price) {
-    history.push({ t, price });
-    if (history.length > 2000) history.splice(0, history.length - 2000);
+  if (raw != null && Number.isFinite(raw)) {
+    const rawHistory = Array.isArray(windowState.priceHistoryRaw)
+      ? windowState.priceHistoryRaw
+      : (windowState.priceHistoryRaw = Array.isArray(windowState.priceHistory)
+        ? windowState.priceHistory.slice()
+        : []);
+    const lastRaw = rawHistory[rawHistory.length - 1];
+    if (!lastRaw || lastRaw.t !== t || lastRaw.price !== raw) {
+      rawHistory.push({ t, price: raw });
+      if (rawHistory.length > 2000) rawHistory.splice(0, rawHistory.length - 2000);
+    }
+    windowState.assetPriceRaw = raw;
+  }
+  if (twap != null && Number.isFinite(twap)) {
+    const twapHistory = Array.isArray(windowState.priceHistoryTwap)
+      ? windowState.priceHistoryTwap
+      : (windowState.priceHistoryTwap = []);
+    const lastTwap = twapHistory[twapHistory.length - 1];
+    if (!lastTwap || lastTwap.t !== t || lastTwap.price !== twap) {
+      twapHistory.push({ t, price: twap });
+      if (twapHistory.length > 2000) twapHistory.splice(0, twapHistory.length - 2000);
+    }
+    windowState.assetPriceTwap = twap;
   }
 
-  windowState.assetPrice = price;
+  applyDisplayedAssetPrice(windowState);
   windowState.lastTickMs = timestampMs;
-  if (Number.isFinite(windowState.prevCloseAsset)) {
-    windowState.assetGap = price - windowState.prevCloseAsset;
-  }
   window.windowState = windowState;
 
   tickManipulationDetector(windowState);
@@ -5027,6 +5219,7 @@ function applyQuotesUpdate(quotes) {
 
   if (!windowState) {
     windowState = { priceHistory: [], ...(quotes || {}) };
+    applyDisplayedAssetPrice(windowState);
   } else {
     const next = { ...quotes };
     // Live Current comes from chainlink-tick; don't let book quotes rewind it.
@@ -5035,6 +5228,10 @@ function applyQuotesUpdate(quotes) {
       delete next.assetGap;
     }
     Object.assign(windowState, next);
+    if (quotes.assetPriceTwap != null && Number.isFinite(quotes.assetPriceTwap)) {
+      windowState.assetPriceTwap = quotes.assetPriceTwap;
+    }
+    applyDisplayedAssetPrice(windowState);
   }
   window.windowState = windowState;
 
@@ -7550,6 +7747,7 @@ function renderTriggersList() {
   const list = Array.isArray(userTriggers) ? userTriggers : [];
   if (empty) empty.hidden = list.length > 0;
   window.ScheduleLiveTriggers?.render?.();
+  syncPositionCardTriggerColors();
   for (const trigger of list) {
     const triggerId = String(trigger.id || "");
     const runMode = trigger.runMode === "trade" ? "trade" : "demo";

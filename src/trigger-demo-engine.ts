@@ -12,6 +12,7 @@ import {
   TriggerReplayRaceSession,
   type ReplayTriggerDef,
 } from "./trigger-replay-sim.js";
+import { applyLiveStatePriceMode, peekAssetPriceMode } from "./asset-price-mode.js";
 import type { LiveWindowState, ReplayTickDocument } from "./types.js";
 
 type SessionEntry = {
@@ -129,11 +130,14 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
     byUser.set(t.userId, list);
   }
 
-  const tick = liveStateToTick(state, nowMs);
   const latency = feedLatencyMs(state);
   const windowEnded = nowMs >= windowEnd * 1000;
 
   for (const [userId, triggers] of byUser) {
+    const tick = liveStateToTick(
+      applyLiveStatePriceMode(state, peekAssetPriceMode(userId)),
+      nowMs,
+    );
     await ensureUserEngine(userId, series);
     const engine = getEngine(userId);
     const key = sessionKey(userId, series, windowStart);

@@ -18,7 +18,7 @@ Poly Replay is Trigger-driven Polymarket **up/down** trading: define Market Trig
 | **Market** | Live window, Triggers, trades, positions — [Market](doc:market) |
 | **Schedule** | Live hour-slot Trigger stats and Trade triggers — [Schedule](doc:schedule) |
 | **Replay** | Historical what-if board (Run, Replay Triggers, recordings) — [Schedule](doc:schedule) |
-| **Settings** | Profile and wallet — [Settings & wallet](doc:settings) |
+| **Account** | Profile, Current-price mode, and wallet — [Account](doc:settings) |
 
 ## Concepts
 

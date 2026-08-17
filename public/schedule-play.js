@@ -2138,6 +2138,13 @@
       history.push({ t: tick.tMs / 1000, price });
     }
     history.sort((a, b) => a.t - b.t);
+    if (window.getUserAssetPriceMode?.() === "twap") {
+      const series =
+        typeof currentSeries === "function" ? currentSeries() : "";
+      const lookback =
+        window.AssetPriceMode?.twapLookbackSecondsForSeries?.(series) || 30;
+      return window.AssetPriceMode?.applyTwapToPriceHistory?.(history, lookback) || history;
+    }
     return history;
   }
 
@@ -2308,14 +2315,14 @@
       } else {
         applyPlayPtbHistory(win, cached.ticks || []);
       }
-      // Rebuild tip if this session's official close differs from cached history tip.
+      const rebuilt = ticksToPriceHistory(cached.ticks || [], win?.prevCloseAsset);
       if (officialClose != null && hasOfficialSettlement(win)) {
         return withOfficialClose(
-          (cached.history || []).filter((p) => Number(p.t) < Number(win.windowEnd) - 1e-9),
+          rebuilt.filter((p) => Number(p.t) < Number(win.windowEnd) - 1e-9),
           win,
         );
       }
-      return cached.history;
+      return rebuilt;
     }
 
     const ticks = await fetchTickStream(windowStart, "chainlink");
@@ -3115,6 +3122,7 @@
             triggers: Array.isArray(options.triggers) ? options.triggers : undefined,
             live: options.live === true,
             recordingsOnly: options.recordingsOnly === true,
+            assetPriceMode: window.getUserAssetPriceMode?.() || "twap",
           }),
         },
       );

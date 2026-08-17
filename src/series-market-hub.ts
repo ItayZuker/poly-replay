@@ -2,6 +2,10 @@ import { createPublicClient, getClobHost, getChainId } from "./clob-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
 import {
+  appendCappedHistory,
+  twapLookbackSecondsForTimeframe,
+} from "./asset-price-mode.js";
+import {
   getPolymarketWindowAssetPricesForPair,
   applyRtdsLivePrice,
 } from "./asset-price-service.js";
@@ -45,6 +49,7 @@ class SeriesFeed {
       windowStart: now,
       windowEnd: now + 300,
       priceHistory: [],
+      priceHistoryTwap: [],
       ptbCrossings: 0,
       bookTickSequence: 0,
     };
@@ -54,7 +59,18 @@ class SeriesFeed {
     return {
       ...this.state,
       priceHistory: [...this.state.priceHistory],
+      priceHistoryTwap: [...(this.state.priceHistoryTwap ?? [])],
     };
+  }
+
+  private refreshTwapPrice(atMs = Date.now()): void {
+    try {
+      const { asset, timeframe } = parseMarketSeries(this.series);
+      const lookback = twapLookbackSecondsForTimeframe(timeframe);
+      this.state.assetPriceTwap = chainlinkPriceFeed.resolveTwapPrice(asset, lookback, atMs);
+    } catch {
+      this.state.assetPriceTwap = undefined;
+    }
   }
 
   private ownerKey(): string {
@@ -107,6 +123,7 @@ class SeriesFeed {
         const current = roundPolymarketAssetPriceMaybe(live.value);
         if (current != null) {
           this.state.assetPrice = current;
+          this.refreshTwapPrice();
           const nowSec = Date.now() / 1000;
           if (
             this.state.prevCloseAsset == null &&
@@ -130,9 +147,14 @@ class SeriesFeed {
           }
           const tickSec = Date.now() / 1000;
           if (tickSec >= this.state.windowStart && tickSec < this.state.windowEnd) {
-            this.state.priceHistory.push({ t: tickSec, price: current });
-            if (this.state.priceHistory.length > 2000) {
-              this.state.priceHistory.splice(0, this.state.priceHistory.length - 2000);
+            appendCappedHistory(this.state.priceHistory, tickSec, current);
+            if (this.state.assetPriceTwap != null) {
+              if (!this.state.priceHistoryTwap) this.state.priceHistoryTwap = [];
+              appendCappedHistory(
+                this.state.priceHistoryTwap,
+                tickSec,
+                this.state.assetPriceTwap,
+              );
             }
           }
         }
@@ -154,6 +176,8 @@ class SeriesFeed {
 
       if (this.state.windowStart !== pair.windowStart) {
         this.state.priceHistory = [];
+        this.state.priceHistoryTwap = [];
+        this.state.assetPriceTwap = undefined;
         this.state.ptbCrossings = 0;
         this.state.bookTickSequence = 0;
         this.lastPtbSide = null;
@@ -216,6 +240,7 @@ class SeriesFeed {
         if (live.assetPrice != null) {
           this.state.assetPrice = live.assetPrice;
         }
+        this.refreshTwapPrice();
         this.state.assetGap = assetGapOrUnset(
           this.state.assetPrice,
           this.state.prevCloseAsset,
@@ -225,6 +250,7 @@ class SeriesFeed {
         if (live) {
           this.state.assetPrice = roundPolymarketAssetPriceMaybe(live.value);
         }
+        this.refreshTwapPrice();
         this.state.assetGap = assetGapOrUnset(
           this.state.assetPrice,
           this.state.prevCloseAsset,

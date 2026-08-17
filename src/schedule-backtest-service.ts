@@ -19,6 +19,11 @@ import {
 } from "./schedule-backtest-cache.js";
 import { discardBadRecording } from "./bad-recording-cleanup.js";
 import { logService } from "./log-service.js";
+import {
+  applyTwapToReplayTicks,
+  normalizeAssetPriceMode,
+  twapLookbackSecondsForSeries,
+} from "./asset-price-mode.js";
 import { recordingPtbFields } from "./ptb-history.js";
 import { isFlatPriceFromTicks, isFlatPriceWindow } from "./window-dynamics.js";
 import {
@@ -143,6 +148,8 @@ export interface BacktestScheduleOptions {
   prediction?: Partial<PredictionDetectorConfig> | null;
   /** Replay Trigger cards applied on each simulated window. */
   triggers?: unknown[] | null;
+  /** Apply 30s/60s TWAP to recorded raw ticks for Current / Gap / triggers. */
+  assetPriceMode?: "raw" | "twap";
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
@@ -552,6 +559,7 @@ export async function simulateRecordedWindow(
   simResultCache?: Map<string, WindowSimCacheEntry>,
   predictionConfig?: PredictionDetectorConfig | null,
   triggerDefs?: ReturnType<typeof normalizeReplayTriggerDefs> | null,
+  assetPriceMode?: "raw" | "twap",
 ): Promise<RecordedWindowSimulation> {
   const windowEnd = window.windowEnd;
   const windowStart = window.windowStart;
@@ -605,6 +613,10 @@ export async function simulateRecordedWindow(
   if (!ticks) {
     ticks = await listReplayTicks(market, window.windowStart, 50_000);
     tickCache?.set(window.windowStart, ticks);
+  }
+
+  if (normalizeAssetPriceMode(assetPriceMode) === "twap") {
+    ticks = applyTwapToReplayTicks(ticks, twapLookbackSecondsForSeries(series));
   }
 
   // Missing CLOB book or Chainlink → exclude from Replay (either side alone is unusable).
@@ -1212,6 +1224,7 @@ export async function backtestSchedulePlacements(
             simResultCache,
             prediction,
             triggers,
+            options.assetPriceMode,
           );
           releaseWindowTicks(window.windowStart, tickCache, tickUseRemaining);
           completedUnits += 1;
@@ -1591,6 +1604,8 @@ export interface BuildPlacementPlayOptions {
   recordingsOnly?: boolean;
   /** Replay Prediction settings (same as Schedule Run). */
   prediction?: Partial<PredictionDetectorConfig> | null;
+  /** Current / Gap / trigger price: raw recorded ticks or reconstructed TWAP. */
+  assetPriceMode?: "raw" | "twap";
   /** Replay Triggers (when present, replace Prediction; phase buys stay muted). */
   triggers?: unknown[] | null;
 }
@@ -1896,6 +1911,7 @@ export async function buildPlacementPlayPayload(
       undefined,
       prediction,
       triggerOnly ? triggers : null,
+      options.assetPriceMode,
     );
     let markers = sim.markers ?? [];
     if (markers.some((m) => m.y == null || !Number.isFinite(m.y))) {

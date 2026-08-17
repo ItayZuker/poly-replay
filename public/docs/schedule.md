@@ -1,6 +1,6 @@
 ﻿# Schedule
 
-App header tabs are **Market** | **Schedule** | **Replay** (plus **Settings**). **Schedule** is the live workspace; **Replay** is its own page (same week grid, separate left column and hour-cell board).
+App header tabs are **Market** | **Schedule** | **Replay** (plus **Account**). **Schedule** is the live workspace; **Replay** is its own page (same week grid, separate left column and hour-cell board).
 
 Trading on this product is **Trigger-only**. Phase setups, placement cards, **Auto Trade**, and **Use Schedule** are removed. The week grid always shows every UTC hour cell with Trigger stats.
 
@@ -28,7 +28,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 - Current UTC cell is highlighted
 - Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. Manual quote-box buys are removed (legacy manual fills still count in Market/Live only — not on Schedule hour cells)
 
-Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on (Settings → **User**) and a trigger on **Trade**.
+Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on (Account → **User**) and a trigger on **Trade**. The Open Replay price line (and Replay Run trigger Gap / $ change) follows Account → **Settings** Current price: raw recorded ticks, or a reconstructed 30s/60s TWAP when **Match Polymarket** is selected.
 
 ## Live vs Replay
 

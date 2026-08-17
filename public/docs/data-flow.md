@@ -29,12 +29,12 @@ Server -> SSE -> Browser
 | Data | Source |
 |------|--------|
 | Quotes (best bid/ask + size) | Polymarket CLOB (server WS); SSE `quotes` every book change |
-| Chart points | Chainlink WS → SSE `chainlink-tick` (client appends); full `priceHistory` only on SSE connect / window roll / series change |
+| Chart points | Chainlink WS (raw + TWAP) → SSE `chainlink-tick` (client appends the selected Current); full `priceHistory` only on SSE connect / window roll / series change |
 | Window / tokens | Polymarket REST; full SSE `window` (history + trading) on connect, market-window roll, and rare REST-driven pushes — not every tick |
 | Positions (open / pending) / markers / phases | SSE `trading` (~250ms coalesce) — settled Positions via REST + browser cache |
 | Settled Positions (last 24h) | `GET /api/trading/positions` → browser `localStorage`; refresh on `statsRevision` |
-| PTB | Live Market: first in-window Chainlink tick — label **PTB (Chainlink)** — then Polymarket crypto-price `openPrice` — **PTB (REST)** (follow updates until they freeze it; never prior-window; never Gamma). Recordings append Chainlink → REST changes to `ptbHistory` and store Gamma `eventMetadata.priceToBeat` separately (`gammaPtb`). Open Replay scrubs that history, then Gamma on the last tick (**PTB (GAMMA)**) |
-| Asset price / Current | Live Market: Chainlink RTDS (`btc/usd` / `eth/usd` / `sol/usd`), rounded like Polymarket’s page (2 decimals for BTC ≥ 1000) — not replaced by Gamma. Open Replay last tick: Gamma `eventMetadata.finalPrice` |
+| PTB | Live Market: first in-window Chainlink tick — **(Chainlink)** under the PTB label — then Polymarket crypto-price `openPrice` — **(REST)** under PTB (follow updates until they freeze it; never prior-window; never Gamma). Recordings append Chainlink → REST changes to `ptbHistory` and store Gamma `eventMetadata.priceToBeat` separately (`gammaPtb`). Open Replay scrubs that history, then Gamma on the last tick (**PTB (GAMMA)**) |
+| Asset price / Current | Live Market: [Account](doc:settings) → **Settings** — default **Match Polymarket** (official 30s/60s Chainlink TWAP) or **Raw Chainlink** RTDS tick. Recordings always store the raw tick. Replay rebuilds the TWAP line when Match Polymarket is selected. Not replaced by Gamma on the live page. Open Replay last tick: Gamma `eventMetadata.finalPrice` |
 | Gap / crossings | Server: Current − PTB — **no gap** (and gap-based triggers do not fire) until the first in-window Chainlink PTB is present |
 
 ## Trading
@@ -82,4 +82,4 @@ Replay uses recent `recorded_windows` in Mongo (default ~**7 days**, overridable
 
 **Recording recovery (recorder process):** If Chainlink for an asset goes silent (~20s), RTDS reconnects and the active window for that asset is discarded. A health watchdog also covers two silence cases (after a short grace at window open): ~**60s** with **no book and no Chainlink** ticks discards that window, force-reconnects Chainlink + CLOB, and restarts the stuck series’ recorder; ~**20s** with **no CLOB book ticks** while Chainlink is still flowing force-reconnects only the market WebSocket and re-subscribes tokens (keeps the window so Chainlink capture continues). Window rollover (official close wait + save) always clears the in-progress finalize lock so a failed save cannot stall Recording forever.
 
-Wallet credentials in [Settings](doc:settings) unlock Market, Schedule, and Replay, and live signing.
+Wallet credentials in [Account](doc:settings) unlock Market, Schedule, and Replay, and live signing.

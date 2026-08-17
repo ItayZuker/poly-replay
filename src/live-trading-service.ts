@@ -27,6 +27,12 @@ import { SimulatorEngine } from "./simulator-engine.js";
 import { simulatorService, phaseSetupToSimSetup } from "./simulator-service.js";
 import { logService } from "./log-service.js";
 import {
+  applyLiveStatePriceMode,
+  normalizeAssetPriceMode,
+  peekAssetPriceMode,
+  rememberAssetPriceMode,
+} from "./asset-price-mode.js";
+import {
   fetchClosedPositions,
   fetchUserPositions,
   fetchUserTrades,
@@ -1257,6 +1263,7 @@ export class LiveTradingService {
       if (!user) {
         throw new Error(`User not found: ${this.userId}`);
       }
+      rememberAssetPriceMode(this.userId, normalizeAssetPriceMode(user.assetPriceMode));
       this.config = resolveUserTradingForSeries(user, series);
     } catch (err) {
       logService.warn("trading", `Failed to load trading config: ${String(err)}`);
@@ -6933,7 +6940,13 @@ class LiveTradingRegistry {
       ),
     ];
 
-    await Promise.all(matching.map((e) => e.tick(state, nowMs).catch(() => {})));
+    await Promise.all(
+      matching.map((e) =>
+        e.tick(applyLiveStatePriceMode(state, peekAssetPriceMode(e.getUserId())), nowMs).catch(
+          () => {},
+        ),
+      ),
+    );
 
     if (otherSeries.length === 0) {
       seriesMarketHub.setActiveSeries([]);
@@ -6947,7 +6960,11 @@ class LiveTradingRegistry {
         await Promise.all(
           engines
             .filter((e) => e.getBoundSeries() === series)
-            .map((e) => e.tick(feed, nowMs).catch(() => {})),
+            .map((e) =>
+              e
+                .tick(applyLiveStatePriceMode(feed, peekAssetPriceMode(e.getUserId())), nowMs)
+                .catch(() => {}),
+            ),
         );
       }),
     );
