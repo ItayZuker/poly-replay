@@ -136,9 +136,14 @@ import {
   maybeBootstrapDefaultPassword,
   registerUser,
   updateUserProfile,
+  updateUserSettings,
   updateUserWallet,
   type UserPublic,
 } from "./db/user-repository.js";
+import {
+  normalizeAssetPriceMode,
+  peekAssetPriceMode,
+} from "./asset-price-mode.js";
 import {
   buildClearSessionCookie,
   buildSessionCookie,
@@ -378,6 +383,8 @@ function enrichWindowStateForUser(
     : undefined;
   return {
     ...state,
+    assetPriceRaw: state.assetPrice,
+    assetPriceTwap: state.assetPriceTwap,
     sim: simulatorService.getPublicState(),
     trading: trading ?? null,
   };
@@ -389,6 +396,7 @@ function quotesPayloadFromState(state: ReturnType<typeof displayService.peekStat
     windowStart: state.windowStart,
     windowEnd: state.windowEnd,
     assetPrice: state.assetPrice,
+    assetPriceTwap: state.assetPriceTwap,
     assetGap: state.assetGap,
     prevCloseAsset: state.prevCloseAsset,
     priceToBeatSource: state.priceToBeatSource,
@@ -594,6 +602,7 @@ async function runScheduleReplaySse(
       sellOrderType?: "FAK" | "FOK";
     } | null;
     triggers?: unknown[] | null;
+    assetPriceMode?: "raw" | "twap";
   },
 ): Promise<void> {
   let market;
@@ -642,6 +651,9 @@ async function runScheduleReplaySse(
       fillSuccessPct,
       prediction,
       triggers,
+      assetPriceMode: normalizeAssetPriceMode(
+        input.assetPriceMode ?? peekAssetPriceMode(input.userId),
+      ),
       // Always re-sim on interactive Replay so stats match current setups + recordings.
       forceResimulate: true,
       shouldAbort: () => closed.value,
@@ -751,7 +763,20 @@ app.patch("/api/user", async (req, res) => {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
-    const body = (req.body ?? {}) as { name?: string; email?: string };
+    const body = (req.body ?? {}) as {
+      name?: string;
+      email?: string;
+      assetPriceMode?: unknown;
+    };
+    if ("assetPriceMode" in body && !("name" in body) && !("email" in body)) {
+      const user = await updateUserSettings(authUser.id, {
+        assetPriceMode: body.assetPriceMode,
+      });
+      pushQuotesLive();
+      pushWindowStateImmediate();
+      res.json(user);
+      return;
+    }
     if (!("name" in body) && !("email" in body)) {
       res.status(400).json({ error: "Provide name and/or email" });
       return;
@@ -2137,6 +2162,7 @@ async function runPlacementPlay(
     live?: boolean;
     /** Idle Replay board: clean recordings, no buy/sell markers. */
     recordingsOnly?: boolean;
+    assetPriceMode?: "raw" | "twap";
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
@@ -2219,6 +2245,9 @@ async function runPlacementPlay(
     triggers: recordingsOnly ? [] : input.triggers,
     recordingsOnly,
     forceResimulate: recordingsOnly ? true : undefined,
+    assetPriceMode: normalizeAssetPriceMode(
+      input.assetPriceMode ?? peekAssetPriceMode(userId),
+    ),
   });
   return { status: 200 as const, body: payload };
 }
@@ -2231,6 +2260,7 @@ function parsePlayRequestBody(req: express.Request): {
   triggers?: unknown[] | null;
   live?: boolean;
   recordingsOnly?: boolean;
+  assetPriceMode?: "raw" | "twap";
   prediction?: {
     sensitivitySec?: number;
     maxQuoteCents?: number;
@@ -2280,6 +2310,7 @@ function parsePlayRequestBody(req: express.Request): {
     triggers,
     live,
     recordingsOnly,
+    assetPriceMode: normalizeAssetPriceMode(body.assetPriceMode),
     prediction,
   };
 }
@@ -2411,6 +2442,9 @@ app.post("/api/schedule-replay", async (req, res) => {
         fillSuccessPct: req.body?.fillSuccessPct,
         prediction: req.body?.prediction,
         triggers: req.body?.triggers,
+        assetPriceMode: normalizeAssetPriceMode(
+          req.body?.assetPriceMode ?? peekAssetPriceMode(userId),
+        ),
       });
       responseFinished = true;
       abortSocket?.off("close", onSocketClose);
@@ -2443,6 +2477,9 @@ app.post("/api/schedule-replay", async (req, res) => {
         fillSuccessPct: req.body?.fillSuccessPct ?? 100,
         prediction: req.body?.prediction,
         triggers: req.body?.triggers,
+        assetPriceMode: normalizeAssetPriceMode(
+          req.body?.assetPriceMode ?? peekAssetPriceMode(userId),
+        ),
       }),
     });
     if (!remoteRes.ok || !remoteRes.body) {
@@ -2518,6 +2555,7 @@ app.post("/api/internal/schedule-replay", async (req, res) => {
       fillSuccessPct: req.body?.fillSuccessPct,
       prediction: req.body?.prediction,
       triggers: req.body?.triggers,
+      assetPriceMode: normalizeAssetPriceMode(req.body?.assetPriceMode),
     });
     responseFinished = true;
   } catch (err) {
@@ -2850,14 +2888,25 @@ async function main(): Promise<void> {
 
   // Send each Chainlink point as a tiny incremental event. Full window
   // snapshots remain the recovery path for initial load and reconnects.
+  const broadcastChainlinkTick = (asset: string, timestampMs: number) => {
+    const live = chainlinkPriceFeed.getLivePrice(asset);
+    broadcast("chainlink-tick", {
+      asset,
+      price: live?.value,
+      twap30: chainlinkPriceFeed.resolveTwapPrice(asset, 30, timestampMs),
+      twap60: chainlinkPriceFeed.resolveTwapPrice(asset, 60, timestampMs),
+      timestampMs,
+    });
+  };
+
   const chainlinkTickUnsub = chainlinkPriceFeed.onUpdate((asset, timestampMs) => {
     const live = chainlinkPriceFeed.getLivePrice(asset);
     if (!live || live.timestampMs !== timestampMs) return;
-    broadcast("chainlink-tick", {
-      asset,
-      price: live.value,
-      timestampMs,
-    });
+    broadcastChainlinkTick(asset, timestampMs);
+  });
+
+  const twapTickUnsub = chainlinkPriceFeed.onTwapUpdate((asset, _windowSec, timestampMs) => {
+    broadcastChainlinkTick(asset, timestampMs);
   });
 
   // Quotes every tick (small). Full window only when the market window rolls.
@@ -2880,6 +2929,7 @@ async function main(): Promise<void> {
     liveTradingRegistry.stopPolling();
     displayService.stop();
     chainlinkTickUnsub();
+    twapTickUnsub();
     clobMarketFeed.stop();
     chainlinkPriceFeed.stop();
     await closeMongoClient().catch(() => {});

@@ -109,8 +109,8 @@
             type="button"
             id="auth-settings-btn"
             class="header-settings-btn"
-            aria-label="Settings"
-            title="Settings"
+            aria-label="Account"
+            title="Account"
             hidden
           >
             <span id="auth-settings-initial" class="header-settings-initial" aria-hidden="true">?</span>
@@ -168,7 +168,7 @@
 
             <div id="auth-signup-panel" class="auth-panel" hidden>
               <h1 class="auth-brand">Create account</h1>
-              <p class="auth-sub">Email and password — add a wallet later in Settings.</p>
+              <p class="auth-sub">Email and password — add a wallet later in Account.</p>
               <form id="auth-signup-form" class="auth-form" autocomplete="on">
                 <label class="auth-field">
                   <span class="auth-field-label">Display name</span>
@@ -358,8 +358,8 @@
           id="settings-page-btn"
           class="header-settings-btn"
           data-page="settings"
-          aria-label="Settings"
-          title="Settings"
+          aria-label="Account"
+          title="Account"
         >
           <span id="settings-page-initial" class="header-settings-initial" aria-hidden="true">?</span>
         </button>
@@ -460,7 +460,7 @@
         </section>
 
         <!-- Trade panel kept in DOM (hidden) so left-column drag math stays stable.
-             Allow trade lives under Settings → User. -->
+             Allow trade lives under Account → User. -->
         <section class="panel trade-panel" aria-label="Trade" hidden>
           <div class="trade-panel-header">
             <div class="panel-header-main">
@@ -668,13 +668,19 @@
             <div class="sim-row">
               <div class="sim-box">
                 <div class="sim-cell">
-                  <div class="sim-label">PTB<span class="sim-label-hint" id="graph-ptb-source" hidden></span></div>
+                  <div class="sim-label-stack">
+                    <div class="sim-label">PTB</div>
+                    <span class="sim-label-hint" id="graph-ptb-source" hidden></span>
+                  </div>
                   <div id="graph-ptb" class="sim-value">—</div>
                 </div>
               </div>
               <div class="sim-box">
                 <div class="sim-cell">
-                  <div class="sim-label">Current</div>
+                  <div class="sim-label-stack">
+                    <div class="sim-label">Current</div>
+                    <span class="sim-label-hint" id="graph-current-source" hidden></span>
+                  </div>
                   <div id="graph-current" class="sim-value">—</div>
                 </div>
               </div>
@@ -770,13 +776,13 @@
         <div class="settings-page">
           <header class="settings-page-header">
             <div class="settings-page-title-row">
-              <h2 class="settings-page-title">Settings</h2>
+              <h2 class="settings-page-title">Account</h2>
               <label class="header-field header-field--plain settings-page-latency">
                 <span class="header-field-label">Latency (ms)</span>
                 <span id="feed-latency-ms" class="header-field-value">—</span>
               </label>
             </div>
-            <p class="settings-page-sub">Account profile and credentials</p>
+            <p class="settings-page-sub">Profile, settings, and credentials</p>
           </header>
 
           <section class="settings-card settings-card--inline" aria-label="Documentation">
@@ -796,6 +802,18 @@
                 aria-controls="settings-tab-panel-user"
               >
                 User
+              </button>
+              <button
+                type="button"
+                class="settings-tab"
+                role="tab"
+                id="settings-tab-settings"
+                data-settings-tab="settings"
+                aria-selected="false"
+                aria-controls="settings-tab-panel-settings"
+                tabindex="-1"
+              >
+                Settings
               </button>
               <button
                 type="button"
@@ -872,6 +890,50 @@
                   <button type="button" id="settings-delete-account-btn" class="settings-danger-btn">Delete account</button>
                   <span id="settings-session-status" class="settings-inline-status" hidden></span>
                 </div>
+              </div>
+            </div>
+
+            <div
+              class="settings-tab-panel"
+              role="tabpanel"
+              id="settings-tab-panel-settings"
+              data-settings-tab-panel="settings"
+              aria-labelledby="settings-tab-settings"
+              hidden
+            >
+              <p class="settings-card-desc">
+                Current, Gap, triggers, and replay use this price. Recordings always store the raw Chainlink tick.
+              </p>
+              <div class="settings-allow-trade">
+                <div
+                  class="wallet-control-field wallet-control-field--segment settings-allow-trade-field"
+                  role="group"
+                  aria-label="Current price"
+                >
+                  <span class="settings-field-label" id="asset-price-mode-label">Current price</span>
+                  <div class="trade-allow-toggle trigger-run-mode settings-price-mode-toggle" id="asset-price-mode-toggle">
+                    <button
+                      type="button"
+                      class="trigger-run-mode-btn is-active"
+                      data-asset-price-mode="twap"
+                      id="asset-price-mode-twap"
+                    >
+                      Match Polymarket
+                    </button>
+                    <button
+                      type="button"
+                      class="trigger-run-mode-btn"
+                      data-asset-price-mode="raw"
+                      id="asset-price-mode-raw"
+                    >
+                      Raw Chainlink
+                    </button>
+                  </div>
+                </div>
+                <p class="settings-card-desc">
+                  Match Polymarket uses a 30-second average on 5 Min markets and a 60-second average on 15 Min markets.
+                </p>
+                <span id="settings-price-mode-status" class="settings-inline-status" hidden></span>
               </div>
             </div>
 
@@ -2376,7 +2438,8 @@
   <script src="/schedule-live-triggers.js?v=1.4"></script>
   <script src="/schedule-hour-slots.js?v=1.5.5"></script>
   <script src="/schedule.js?v=1.5.5"></script>
-  <script src="/schedule-play.js?v=1.5.9"></script>
-  <script src="/app.js?v=1.5.26"></script>
+  <script src="/asset-price-mode.js?v=1.0.0"></script>
+  <script src="/schedule-play.js?v=1.5.10"></script>
+  <script src="/app.js?v=1.5.29"></script>
 </body>
 </html>

@@ -1,6 +1,11 @@
 {
-    "current": "1.77.0",
+    "current": "1.78.0",
     "releases": [
+        {
+            "version": "1.78.0",
+            "releasedAt": "2026-08-17T10:12:09.344Z",
+            "notes": "Account page (was Settings) with Current price: Match Polymarket 30s/60s TWAP or Raw Chainlink — used for Current, Gap, live/demo triggers, and Replay. Current shows (Avg 30s)/(Avg 60s). Positions card borders match that trigger’s color. Docs updated."
+        },
         {
             "version": "1.77.0",
             "releasedAt": "2026-08-17T09:02:02.446Z",

@@ -173,6 +173,10 @@ export interface LiveWindowState {
   question?: string;
   prevCloseAsset?: number;
   assetPrice?: number;
+  /** Raw Chainlink tick when assetPrice has been overlaid for a user. */
+  assetPriceRaw?: number;
+  /** Official or computed 30s/60s TWAP for the series timeframe. */
+  assetPriceTwap?: number;
   assetGap?: number;
   /** Where prevCloseAsset (PTB) came from — first Chainlink tick, published open, or Gamma. */
   priceToBeatSource?: "chainlink-rtds" | "polymarket-openPrice" | "gamma";
@@ -201,6 +205,8 @@ export interface LiveWindowState {
   /** Measured CLOB WebSocket round-trip latency (ms). */
   feedLatencyMs?: number;
   priceHistory: Array<{ t: number; price: number }>;
+  /** Parallel to priceHistory when TWAP Current is available. */
+  priceHistoryTwap?: Array<{ t: number; price: number }>;
   /** Monotonic sequence incremented once per CLOB book update. */
   bookTickSequence?: number;
 }
