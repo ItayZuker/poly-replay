@@ -54,7 +54,7 @@ export interface ReplayTriggerDef {
   buyOrderType: "FAK" | "FOK" | "GTD";
   sellOrderType: TriggerSellOrderType;
   windowArea: { start: number; end: number };
-  /** Ms before Apply start to arm Buy GTD (0 = at Apply start). */
+  /** Unused — Buy GTD always places at Apply start. Kept as 0 for stored records. */
   gtdPlaceOffsetMs: number;
   /** first = one side; both = UP and DOWN independently. */
   buySidesMode: "first" | "both";
@@ -255,11 +255,6 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     buyOrderTypeRaw === "GTD" && !(durationMs === 0 && startMode === "price" && !hasPtbGap)
       ? "FOK"
       : buyOrderTypeRaw;
-  const gtdPlaceOffsetRaw = Math.floor(Number(o.gtdPlaceOffsetMs));
-  const gtdPlaceOffsetMs =
-    Number.isFinite(gtdPlaceOffsetRaw) && gtdPlaceOffsetRaw >= 0
-      ? Math.min(gtdPlaceOffsetRaw, 1_000_000_000)
-      : 0;
   return {
     id,
     name: typeof o.name === "string" ? o.name : undefined,
@@ -294,7 +289,7 @@ export function normalizeReplayTriggerDef(raw: unknown): ReplayTriggerDef | null
     buyOrderType,
     sellOrderType,
     windowArea: { start: areaStart, end: areaEnd },
-    gtdPlaceOffsetMs,
+    gtdPlaceOffsetMs: 0,
     buySidesMode:
       durationMs === 0 && startMode === "price" && o.buySidesMode === "both" ? "both" : "first",
   };
@@ -545,22 +540,6 @@ function inApplyWindow(tick: ReplayTickDocument, windowStart: number, windowEnd:
   return frac >= area.start && frac <= area.end;
 }
 
-/** Buy GTD place window: Apply start − offset → Apply end (offset 0 = Apply start). */
-function inBuyGtdPlaceWindow(
-  tick: ReplayTickDocument,
-  windowStart: number,
-  windowEnd: number,
-  area: { start: number; end: number },
-  offsetMs: number,
-): boolean {
-  const duration = Math.max(1, windowEnd - windowStart);
-  const applyStart = windowStart + area.start * duration;
-  const applyEnd = windowStart + area.end * duration;
-  const offsetSec = Math.max(0, Number(offsetMs) || 0) / 1000;
-  const placeAt = applyStart - offsetSec;
-  return tick.t + 1e-9 >= placeAt && tick.t <= applyEnd + 1e-9;
-}
-
 export class TriggerReplayRaceSession {
   private readonly rts: Rt[];
   private readonly endMs: number;
@@ -704,15 +683,7 @@ export class TriggerReplayRaceSession {
     }
 
     const buyGtd = isBuyGtd(def);
-    const inArea = buyGtd
-      ? inBuyGtdPlaceWindow(
-          tick,
-          this.windowStart,
-          this.windowEnd,
-          def.windowArea,
-          def.gtdPlaceOffsetMs,
-        )
-      : inApplyWindow(tick, this.windowStart, this.windowEnd, def.windowArea);
+    const inArea = inApplyWindow(tick, this.windowStart, this.windowEnd, def.windowArea);
     if (!inArea) {
       if (rt.phase === "watching") {
         rt.phase = "idle";

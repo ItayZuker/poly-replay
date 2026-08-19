@@ -24,22 +24,11 @@ function inBuyGtdPlaceWindow(
   windowStart: number,
   windowEnd: number,
   area: { start: number; end: number },
-  offsetMs: number,
 ): boolean {
   const duration = Math.max(1, windowEnd - windowStart);
   const applyStart = windowStart + area.start * duration;
   const applyEnd = windowStart + area.end * duration;
-  const offsetSec = Math.max(0, Number(offsetMs) || 0) / 1000;
-  const placeAt = applyStart - offsetSec;
-  return nowSec + 1e-9 >= placeAt && nowSec <= applyEnd + 1e-9;
-}
-
-function nextWindow(state: LiveWindowState): LiveWindowState | null {
-  const ws = Number(state.windowStart);
-  const we = Number(state.windowEnd);
-  const dur = we - ws;
-  if (!Number.isFinite(ws) || !Number.isFinite(we) || !(dur > 0)) return null;
-  return { ...state, windowStart: we, windowEnd: we + dur };
+  return nowSec + 1e-9 >= applyStart && nowSec <= applyEnd + 1e-9;
 }
 
 function desireForTrigger(
@@ -52,7 +41,7 @@ function desireForTrigger(
   const ws = Number(stateForWindow.windowStart);
   const we = Number(stateForWindow.windowEnd);
   if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) return null;
-  if (!inBuyGtdPlaceWindow(nowSec, ws, we, def.windowArea, def.gtdPlaceOffsetMs)) {
+  if (!inBuyGtdPlaceWindow(nowSec, ws, we, def.windowArea)) {
     return null;
   }
   return {
@@ -88,7 +77,6 @@ export async function tickTriggerGtdEngine(
   }
 
   const nowSec = nowMs / 1000;
-  const nxt = nextWindow(state);
 
   const userIds = new Set<string>(byUser.keys());
   for (const engine of liveTradingRegistry.listEngines()) {
@@ -118,10 +106,6 @@ export async function tickTriggerGtdEngine(
       if (def && isBuyGtdDef(def)) {
         const cur = desireForTrigger(winner, def, state, nowSec);
         if (cur) desires.push(cur);
-        if (nxt) {
-          const nextDesire = desireForTrigger(winner, def, nxt, nowSec);
-          if (nextDesire) desires.push(nextDesire);
-        }
       }
     }
     await engine.syncTriggerGtdBuys(state, desires).catch(() => {});

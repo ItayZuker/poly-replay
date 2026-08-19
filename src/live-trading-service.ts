@@ -198,7 +198,7 @@ export type TriggerGtdDesire = {
   takeProfitCents?: number;
   /** Optional title hint; server also resolves from Mongo by triggerId. */
   triggerName?: string;
-  /** Target market window (unix sec). Enables pre-open placement for Offset GTD. */
+  /** Target market window (unix sec) for this rest. */
   windowStart?: number;
   windowEnd?: number;
   /** both = allow UP+DOWN fills; first = cancel sibling on first fill (default). */

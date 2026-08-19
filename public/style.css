@@ -6849,34 +6849,6 @@ body.is-trigger-reordering .trigger-card-drag-handle {
   color: var(--text);
 }
 
-.trigger-gtd-place-offset {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.trigger-gtd-place-offset-label {
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.trigger-gtd-place-offset.is-disabled .trigger-gtd-place-offset-label {
-  color: var(--muted);
-}
-
-.trigger-gtd-place-offset .trigger-duration-value:disabled,
-.trigger-gtd-place-offset .trigger-duration-unit:disabled {
-  color: var(--muted);
-  background: var(--bg-elevated, var(--bg));
-  border-color: var(--border);
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
 .trigger-window-area-slider {
   width: 100%;
   padding-left: 4px;
@@ -7815,8 +7787,7 @@ select.trigger-price-side:focus {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  /* Left inset matches the stage so Start sits under the left bar;
-     no right inset so Duration lines up with Offset GTD. */
+  /* Left inset matches the stage so Start sits under the left bar. */
   margin: 0 0 0 8px;
   padding: 0 0 0 4px;
   min-height: 28px;
@@ -9516,7 +9487,6 @@ body.is-column-resizing * {
 #trigger-create-modal.is-view-only .modal-field > span,
 #trigger-create-modal.is-view-only .trigger-shares-caption,
 #trigger-create-modal.is-view-only .trigger-window-area-title,
-#trigger-create-modal.is-view-only .trigger-gtd-place-offset-label,
 #trigger-create-modal.is-view-only .trigger-duration-label {
   color: #8b949e;
 }
