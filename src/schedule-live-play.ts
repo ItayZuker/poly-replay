@@ -112,9 +112,18 @@ function shouldCountTriggerTrade(
 function bucketFromStatus(
   status: string,
   pnl: number,
+  official?: WindowOutcome | null,
+  side?: "up" | "down" | string,
 ): PlayOutcomeBucket {
   if (status === "sold") return pnl > 0 ? "green" : "red";
-  if (status === "win" || status === "loss") return pnl > 1e-9 ? "blue" : "red";
+  if (
+    (official === "up" || official === "down") &&
+    (side === "up" || side === "down")
+  ) {
+    return side === official ? "blue" : "red";
+  }
+  if (status === "win") return "blue";
+  if (status === "loss") return "red";
   return "none";
 }
 
@@ -433,6 +442,13 @@ export async function buildLiveHourPlayPayload(
 
     const meta = recordedByStart.get(windowStart);
     const windowEnd = meta?.windowEnd ?? windowStart + DEFAULT_WINDOW_SEC;
+    // Live Open Replay requires official Gamma on the recording (same gate as Replay).
+    const windowOutcome: WindowOutcome | undefined =
+      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
+        ? meta.windowOutcome
+        : undefined;
+    if (!windowOutcome) continue;
+
     const markers: SimMarker[] = [];
     let pnl = 0;
     let sold = false;
@@ -443,19 +459,12 @@ export async function buildLiveHourPlayPayload(
       markers.push(...markersFromCard(row.card, row.status, row.pnl));
       pnl += row.pnl;
       if (row.status === "sold") sold = true;
-      const b = bucketFromStatus(row.status, row.pnl);
+      const b = bucketFromStatus(row.status, row.pnl, windowOutcome, row.card.side);
       tradeDots.push(...tradeDotsFromCard(row.card, b));
       if (bucket === "none" && b !== "none") bucket = b;
     }
 
     if (!tradeDots.length && !markers.length) continue;
-
-    // Live Open Replay requires official Gamma on the recording (same gate as Replay).
-    const windowOutcome: WindowOutcome | undefined =
-      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
-        ? meta.windowOutcome
-        : undefined;
-    if (!windowOutcome) continue;
 
     const hasTicks = tickSet.has(windowStart);
     const prevCloseAsset =
@@ -636,6 +645,10 @@ export async function buildDemoTriggerPlayPayload(
 
     const meta = recordedByStart.get(windowStart);
     const windowEnd = meta?.windowEnd ?? windowStart + DEFAULT_WINDOW_SEC;
+    const windowOutcome: WindowOutcome | undefined =
+      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
+        ? meta.windowOutcome
+        : undefined;
     const markers: SimMarker[] = [];
     let pnl = 0;
     let sold = false;
@@ -652,17 +665,12 @@ export async function buildDemoTriggerPlayPayload(
       markers.push(...markersFromCard(row.card, row.status, row.pnl));
       pnl += row.pnl;
       if (row.status === "sold") sold = true;
-      const b = bucketFromStatus(row.status, row.pnl);
+      const b = bucketFromStatus(row.status, row.pnl, windowOutcome, row.card.side);
       tradeDots.push(...tradeDotsFromCard(row.card, b));
       if (bucket === "none" && b !== "none") bucket = b;
     }
 
     if (!markers.length) continue;
-
-    const windowOutcome: WindowOutcome | undefined =
-      meta?.windowOutcome === "up" || meta?.windowOutcome === "down"
-        ? meta.windowOutcome
-        : undefined;
 
     const hasTicks = tickSet.has(windowStart);
     const prevCloseAsset =

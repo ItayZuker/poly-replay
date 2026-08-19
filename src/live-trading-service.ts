@@ -16,7 +16,11 @@ import {
   placeMarketOrder,
   type MarketOrderType,
 } from "./order-service.js";
-import { fetchCurrentUpDownMarket, fetchUpDownMarketAtWindow } from "./market-pair.js";
+import {
+  fetchCurrentUpDownMarket,
+  fetchUpDownMarketAtWindow,
+  upDownSlugFromSeriesWindow,
+} from "./market-pair.js";
 import {
   getTradingClient,
   initTradingClient,
@@ -361,10 +365,10 @@ function fillStateForTriggerRest(
   resting: Pick<TriggerRestingBuyOrder, "sessionKey" | "slug">,
   fallback: LiveWindowState,
 ): LiveWindowState {
-  // Tokens / Gamma settle by slug — prefer that window when it disagrees with sessionKey.
-  const slugWs = windowStartFromUpDownSlug(resting.slug);
+  // Rest target window (sessionKey) wins over a rolled live slug.
   const sessionWs = windowStartFromSessionKey(resting.sessionKey);
-  const windowStart = slugWs ?? sessionWs;
+  const slugWs = windowStartFromUpDownSlug(resting.slug);
+  const windowStart = sessionWs ?? slugWs;
   if (windowStart == null || !Number.isFinite(windowStart)) return fallback;
 
   const series =
@@ -2698,8 +2702,31 @@ export class LiveTradingService {
   private async fetchOfficialMarketOutcome(
     card: TradingPositionCard,
   ): Promise<"up" | "down" | null> {
-    const slug = typeof card.slug === "string" ? card.slug.trim() : "";
+    const keyWs = windowStartFromSessionKey(String(card.windowKey || ""));
+    const series =
+      String(card.series || "")
+        .trim()
+        .toLowerCase() ||
+      String(card.windowKey || "").split(":")[0] ||
+      "";
+    const fromKey = keyWs != null ? upDownSlugFromSeriesWindow(series, keyWs) : null;
+    const cardSlug = typeof card.slug === "string" ? card.slug.trim() : "";
+    const slugWs = windowStartFromUpDownSlug(cardSlug);
+    const slug =
+      fromKey ||
+      (keyWs != null && slugWs === keyWs ? cardSlug : "") ||
+      cardSlug;
     if (!slug) return null;
+    if (fromKey && cardSlug !== fromKey) {
+      card.slug = fromKey;
+      this.scheduleUpsertPositionCard(card);
+      if (cardSlug) {
+        logService.warn(
+          "trading",
+          `Held settle slug aligned to windowKey (${fromKey}, was ${cardSlug})`,
+        );
+      }
+    }
     try {
       const resolution = await fetchOfficialWindowResolution(slug);
       if (resolution?.outcome === "up" || resolution?.outcome === "down") {
@@ -6833,13 +6860,18 @@ export class LiveTradingService {
         String(c.windowKey || "") === windowKey &&
         c.side === side,
     );
+    const expectedSlug =
+      upDownSlugFromSeriesWindow(series, windowStart) ||
+      (windowStartFromUpDownSlug(input.slug) === windowStart && typeof input.slug === "string"
+        ? input.slug.trim()
+        : undefined);
     if (openExisting) {
       openExisting.shares = shares;
       openExisting.buyPrice = buyPrice;
       openExisting.buyCost = shares * buyPrice;
       openExisting.side = side;
       if (input.triggerMiss) openExisting.triggerMiss = true;
-      if (input.slug) openExisting.slug = input.slug;
+      if (expectedSlug) openExisting.slug = expectedSlug;
       this.scheduleUpsertPositionCard(openExisting);
       this.publishTriggerLiveBuy(triggerId, side, buyPrice, shares);
       this.notify();
@@ -6865,7 +6897,7 @@ export class LiveTradingService {
     if (typeof input.triggerName === "string" && input.triggerName.trim()) {
       card.triggerName = input.triggerName.trim();
     }
-    if (input.slug) card.slug = input.slug;
+    if (expectedSlug) card.slug = expectedSlug;
     if (input.triggerMiss) card.triggerMiss = true;
     this.positionCards.unshift(card);
     this.pruneColdPositionCardsFromRam();
