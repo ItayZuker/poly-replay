@@ -1,6 +1,6 @@
 /**
- * Week grid slots are UTC weekday × hour. New recordings override only that
- * hour; older same-weekday hours stay until re-recorded.
+ * Week grid slots are UTC weekday × hour. New *usable* recordings override
+ * only that hour; older same-weekday hours stay until a newer usable day exists.
  */
 
 export type WeekDayId = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -39,20 +39,23 @@ export function dayHourFromWindowStart(windowStart: number): {
 /**
  * For each UTC weekday×hour slot, keep windows from the latest calendar day
  * that has data in that slot (newer week overrides only that hour).
+ * Pass `eligible` so stubs / unfinished days cannot replace last week's usable day.
  */
 export function selectLatestDayHourWindows<T extends { windowStart: number }>(
   windows: T[],
+  eligible?: (window: T) => boolean,
 ): T[] {
-  if (windows.length === 0) return [];
+  const list = eligible ? windows.filter(eligible) : windows;
+  if (list.length === 0) return [];
 
   const latestDayBySlot = new Map<string, string>();
-  for (const window of windows) {
+  for (const window of list) {
     const { slotKey, dayKey } = dayHourFromWindowStart(window.windowStart);
     const prev = latestDayBySlot.get(slotKey);
     if (!prev || dayKey > prev) latestDayBySlot.set(slotKey, dayKey);
   }
 
-  return windows.filter((window) => {
+  return list.filter((window) => {
     const { slotKey, dayKey } = dayHourFromWindowStart(window.windowStart);
     return latestDayBySlot.get(slotKey) === dayKey;
   });

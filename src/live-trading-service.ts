@@ -91,6 +91,7 @@ import {
   getUserTrigger,
   listActiveTradeGtdTriggersForSeries,
   listUserTriggers,
+  pickHighestTradeGtdTriggerId,
   setTriggerLiveBuy,
   setTriggerLiveSell,
   setTriggerLiveUi,
@@ -5510,6 +5511,17 @@ export class LiveTradingService {
     const currentWs = Number(state.windowStart);
     const nowSec = Math.floor((state.lastTickMs ?? Date.now()) / 1000);
 
+    // Only the highest Trade GTD card in the Triggers list may rest.
+    const listed = await listActiveTradeGtdTriggersForSeries(
+      String(state.series || this.boundSeries || ""),
+    );
+    const winnerId = pickHighestTradeGtdTriggerId(
+      listed.filter((t) => t.userId === this.userId),
+    );
+    const allowedDesires = winnerId
+      ? desires.filter((d) => String(d.triggerId || "").trim() === winnerId)
+      : [];
+
     type Want = TriggerGtdDesire & {
       side: "up" | "down";
       targetKey: string;
@@ -5518,7 +5530,7 @@ export class LiveTradingService {
       buySidesMode: "first" | "both";
     };
     const desireByKey = new Map<string, Want>();
-    for (const d of desires) {
+    for (const d of allowedDesires) {
       const triggerId = String(d.triggerId || "").trim();
       if (!triggerId) continue;
       const targetWsRaw = Number(d.windowStart);

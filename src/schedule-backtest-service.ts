@@ -8,6 +8,7 @@ import {
   windowsHavingReplayTickFiles,
 } from "./db/tick-repository.js";
 import { getWeekHistoryCutoffUtcSec, selectLatestDayHourWindows } from "./day-hour-slots.js";
+import { hasOfficialWindowOutcome } from "./official-window-resolution.js";
 import { defaultPhaseConfig, recordAskSamples } from "./phase-config.js";
 import { SimulatorEngine } from "./simulator-engine.js";
 import { phaseSetupToSimSetup } from "./simulator-service.js";
@@ -1035,10 +1036,11 @@ export async function backtestSchedulePlacements(
   const cutoffUtc = getWeekHistoryCutoffUtcSec();
   const cutoffDay = rollingCutoffDayUtc();
   // Same Mongo window index as Replay — keep ~2 weeks, then for each
-  // weekday×hour keep only the latest calendar day (missed hours keep last week).
+  // weekday×hour keep only the latest official-Gamma day (stubs keep last week).
   const listed = await listRecordedWindowsSince(cutoffUtc, series);
   const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
     listed.filter((w) => !isFlatPriceWindow(w)),
+    (w) => hasOfficialWindowOutcome(w.windowOutcome),
   ).map((w) => ({
     _id: String(w.windowStart),
     windowStart: w.windowStart,
@@ -1651,6 +1653,7 @@ async function listSlotRecordedWindows(
   const listed = await listRecordedWindowsSince(cutoffUtc, series);
   const allWindows: RecordedWindowDocument[] = selectLatestDayHourWindows(
     listed.filter((w) => !isFlatPriceWindow(w)),
+    (w) => hasOfficialWindowOutcome(w.windowOutcome),
   ).map((w) => ({
     _id: String(w.windowStart),
     windowStart: w.windowStart,

@@ -14,7 +14,7 @@ export type ReplaySlotDayId = WeekDayId;
 export interface ReplaySlotWindowCount {
   day: ReplaySlotDayId;
   hour: number;
-  /** Replay-usable windows on the latest calendar day for this weekday×hour. */
+  /** Replay-usable windows on the latest official-Gamma calendar day for this weekday×hour. */
   windowCount: number;
 }
 
@@ -76,7 +76,7 @@ function activeFromStored(stored: StoredReplayWindow[], seriesFilter?: string): 
     if (!isInHistoryWindow(w.windowStart, cutoffUtc)) continue;
     candidates.push(w);
   }
-  return selectLatestDayHourWindows(candidates);
+  return selectLatestDayHourWindows(candidates, (w) => w.hasOfficialOutcome);
 }
 
 function recordingsVersionFromWindows(windows: StoredReplayWindow[]): string {

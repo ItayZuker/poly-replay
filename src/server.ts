@@ -579,6 +579,13 @@ function setupsByIdFromBody(setups: unknown): Map<string, TradingPhaseSetup | nu
   return map;
 }
 
+/** Replay Run / Open Replay: at most one Test trigger setup. */
+function takeAtMostOneReplayTrigger(raw: unknown): unknown[] {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const first = raw.find((t) => t != null && typeof t === "object");
+  return first ? [first] : [];
+}
+
 async function runScheduleReplaySse(
   res: express.Response,
   closed: { value: boolean },
@@ -623,7 +630,7 @@ async function runScheduleReplaySse(
     typeof input.fillSuccessPct === "number" && Number.isFinite(input.fillSuccessPct)
       ? Math.max(0, Math.min(100, input.fillSuccessPct))
       : 100;
-  const triggers = Array.isArray(input.triggers) ? input.triggers : [];
+  const triggers = takeAtMostOneReplayTrigger(input.triggers);
   // Triggers replace Prediction. null = Prediction Off; object = On; undefined = default.
   const prediction =
     triggers.length > 0 ? null : input.prediction === null ? null : input.prediction;
@@ -2235,14 +2242,15 @@ async function runPlacementPlay(
       ? Math.max(0, Math.min(100, input.fillSuccessPct))
       : 100;
   const phaseSetup = normalizePhaseSetup(input.phaseSetup as never) ?? undefined;
-  const hasTriggers = Array.isArray(input.triggers) && input.triggers.length > 0;
   const recordingsOnly = input.recordingsOnly === true;
+  const triggers = recordingsOnly ? [] : takeAtMostOneReplayTrigger(input.triggers);
+  const hasTriggers = triggers.length > 0;
   const payload = await buildPlacementPlayPayload(userId, market, placement, {
     latencyMs,
     fillSuccessPct,
     phaseSetup: phaseSetup ?? null,
     prediction: hasTriggers || recordingsOnly ? null : input.prediction === null ? null : input.prediction,
-    triggers: recordingsOnly ? [] : input.triggers,
+    triggers,
     recordingsOnly,
     forceResimulate: recordingsOnly ? true : undefined,
     assetPriceMode: normalizeAssetPriceMode(
@@ -2298,7 +2306,9 @@ function parsePlayRequestBody(req: express.Request): {
         ? body.prediction
         : undefined
     : undefined;
-  const triggers = Array.isArray(body.triggers) ? body.triggers : undefined;
+  const triggers = Array.isArray(body.triggers)
+    ? takeAtMostOneReplayTrigger(body.triggers)
+    : undefined;
   const live = body.live === true || body.mode === "live" || q.live === "1";
   const recordingsOnly =
     body.recordingsOnly === true || body.mode === "recordings" || q.recordingsOnly === "1";

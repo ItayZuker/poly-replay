@@ -13,6 +13,7 @@ import {
   roundPolymarketAssetPriceMaybe,
 } from "./polymarket-display-price.js";
 import {
+  buildUpDownSlug,
   fetchCurrentUpDownMarket,
   fetchCurrentUpDownMarketWithRetry,
   fetchMarketPairFromSlug,
@@ -47,6 +48,7 @@ import {
 } from "./db/tick-repository.js";
 import {
   getRecordedWindow,
+  listRecordedWindows,
   saveRecordedWindow,
 } from "./db/recorded-window-repository.js";
 import {
@@ -77,10 +79,14 @@ const WINDOW_START_GRACE_MS = 20_000;
 /**
  * After windowEnd, hard-poll Gamma in the background this long before leaving
  * windowOutcome unset on the recording (does not block the next window).
- * Later backfill / light retries can still write the outcome when Gamma lands.
+ * Light retries continue until Gamma lands (same pattern as live held settle).
  */
 const OFFICIAL_RESOLVE_MAX_WAIT_MS = 20 * 60 * 1000;
 const OFFICIAL_RESOLVE_POLL_MS = 2_000;
+const OFFICIAL_RESOLVE_LIGHT_POLL_MS = 30_000;
+const OFFICIAL_RESOLVE_LIGHT_BATCH = 4;
+/** Resume light retries for unset windows this far back on recorder start. */
+const OFFICIAL_RESOLVE_RESUME_SEC = 2 * 24 * 60 * 60;
 
 type StateChangeListener = (series: string) => void;
 
@@ -130,6 +136,10 @@ export class MarketRecorder {
   private finalizing = false;
   /** In-flight background Gamma polls keyed by windowStart (non-blocking). */
   private pendingOfficialResolves = new Map<number, Promise<void>>();
+  /** Unset windows waiting for Gamma after the 20m hard poll (or found on start). */
+  private unresolvedOfficialWindows = new Map<number, { windowEnd: number; slug: string }>();
+  private officialLightRetryTimer: ReturnType<typeof setInterval> | null = null;
+  private officialLightRetryInFlight = false;
 
   constructor(market: MarketDocument, onStateChange: StateChangeListener | null = null) {
     this.market = market;
@@ -229,6 +239,13 @@ export class MarketRecorder {
       this.recordChainlinkTick();
     });
 
+    void this.enqueueUnsetOfficialFromDisk().catch((err) => {
+      logService.warn(
+        "recorder",
+        `Gamma light-retry resume failed (${this.market._id}): ${String(err)}`,
+      );
+    });
+
     logService.success("recorder", `Recording started for ${this.market._id}`);
   }
 
@@ -245,6 +262,8 @@ export class MarketRecorder {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
+    this.stopOfficialLightRetryTimer();
+    this.unresolvedOfficialWindows.clear();
     if (this.clobRawUnsub) {
       this.clobRawUnsub();
       this.clobRawUnsub = null;
@@ -789,7 +808,7 @@ export class MarketRecorder {
     }
   }
 
-  /** Non-blocking: poll Gamma until windowEnd+20m, then patch the saved recording. */
+  /** Non-blocking: poll Gamma until windowEnd+20m, then light-retry until it lands. */
   private scheduleBackgroundOfficialResolve(input: {
     windowStart: number;
     windowEnd: number;
@@ -803,6 +822,95 @@ export class MarketRecorder {
     this.pendingOfficialResolves.set(input.windowStart, work);
   }
 
+  private enqueueOfficialLightRetry(input: {
+    windowStart: number;
+    windowEnd: number;
+    slug: string;
+  }): void {
+    const slug = input.slug.trim();
+    if (!slug) return;
+    this.unresolvedOfficialWindows.set(input.windowStart, {
+      windowEnd: input.windowEnd,
+      slug,
+    });
+    this.ensureOfficialLightRetryTimer();
+  }
+
+  private ensureOfficialLightRetryTimer(): void {
+    if (this.officialLightRetryTimer || !this.interval) return;
+    this.officialLightRetryTimer = setInterval(() => {
+      void this.runOfficialLightRetries();
+    }, OFFICIAL_RESOLVE_LIGHT_POLL_MS);
+  }
+
+  private stopOfficialLightRetryTimer(): void {
+    if (!this.officialLightRetryTimer) return;
+    clearInterval(this.officialLightRetryTimer);
+    this.officialLightRetryTimer = null;
+  }
+
+  private async enqueueUnsetOfficialFromDisk(): Promise<void> {
+    const cutoff = Math.floor(Date.now() / 1000) - OFFICIAL_RESOLVE_RESUME_SEC;
+    const { asset, timeframe } = parseMarketSeries(this.market._id);
+    const windows = await listRecordedWindows(this.market);
+    let queued = 0;
+    for (const window of windows) {
+      if (window.windowStart < cutoff) continue;
+      if (hasOfficialWindowOutcome(window.windowOutcome)) continue;
+      if (this.activeWindow?.windowStart === window.windowStart) continue;
+      const slug =
+        window.slug?.trim() || buildUpDownSlug(asset, timeframe, window.windowStart);
+      if (!slug) continue;
+      this.unresolvedOfficialWindows.set(window.windowStart, {
+        windowEnd: window.windowEnd,
+        slug,
+      });
+      queued += 1;
+    }
+    if (queued === 0) return;
+    logService.info(
+      "recorder",
+      `Queued ${queued} unset window(s) for Gamma light retry (${this.market._id})`,
+    );
+    this.ensureOfficialLightRetryTimer();
+  }
+
+  private async runOfficialLightRetries(): Promise<void> {
+    if (this.officialLightRetryInFlight) return;
+    if (this.unresolvedOfficialWindows.size === 0) {
+      this.stopOfficialLightRetryTimer();
+      return;
+    }
+    this.officialLightRetryInFlight = true;
+    try {
+      let tried = 0;
+      for (const [windowStart, meta] of this.unresolvedOfficialWindows) {
+        if (tried >= OFFICIAL_RESOLVE_LIGHT_BATCH) break;
+        if (this.pendingOfficialResolves.has(windowStart)) continue;
+        if (this.activeWindow?.windowStart === windowStart) continue;
+        tried += 1;
+        try {
+          const official = await fetchOfficialWindowResolution(meta.slug);
+          if (!official) continue;
+          await this.applyOfficialResolutionToSavedWindow(windowStart, official);
+          this.unresolvedOfficialWindows.delete(windowStart);
+          logService.success(
+            "recorder",
+            `Light Gamma retry settled ${meta.slug} → ${official.outcome}`,
+          );
+        } catch (err) {
+          logService.warn(
+            "recorder",
+            `Light Gamma retry failed for ${meta.slug}: ${String(err)}`,
+          );
+        }
+      }
+      if (this.unresolvedOfficialWindows.size === 0) this.stopOfficialLightRetryTimer();
+    } finally {
+      this.officialLightRetryInFlight = false;
+    }
+  }
+
   private async runBackgroundOfficialResolve(input: {
     windowStart: number;
     windowEnd: number;
@@ -813,8 +921,9 @@ export class MarketRecorder {
     if (remainingMs <= 0) {
       logService.warn(
         "recorder",
-        `Official resolution timed out for ${input.slug}; windowOutcome left unset`,
+        `Official resolution past 20m for ${input.slug}; switching to light retry`,
       );
+      this.enqueueOfficialLightRetry(input);
       return;
     }
 
@@ -831,13 +940,15 @@ export class MarketRecorder {
     if (!official) {
       logService.warn(
         "recorder",
-        `Official resolution unavailable after 20m for ${input.slug}; windowOutcome left unset`,
+        `Official resolution unavailable after 20m for ${input.slug}; switching to light retry`,
       );
+      this.enqueueOfficialLightRetry(input);
       return;
     }
 
     try {
       await this.applyOfficialResolutionToSavedWindow(input.windowStart, official);
+      this.unresolvedOfficialWindows.delete(input.windowStart);
       logService.success(
         "recorder",
         `Background Gamma settled ${input.slug} → ${official.outcome}`,
@@ -847,6 +958,7 @@ export class MarketRecorder {
         "recorder",
         `Failed to apply background Gamma for ${input.slug}: ${String(err)}`,
       );
+      this.enqueueOfficialLightRetry(input);
     }
   }
 
