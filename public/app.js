@@ -5672,8 +5672,6 @@ let triggerCreateSellOrderType = "FAK";
 let triggerCreateBuyOrderType = "FOK";
 /** first = one side; both = UP and DOWN independently. */
 let triggerCreateBuySidesMode = "first";
-/** Ms before Apply start to place Buy GTD (0 = at Apply start). */
-let triggerCreateGtdPlaceOffsetMs = 0;
 /** Fraction of market window [0–1] when the trigger may apply. */
 let triggerCreateWindowArea = { start: 0, end: 1 };
 /** Active side tab in the create/edit dialog: "buy" | "sell". */
@@ -7059,68 +7057,12 @@ function syncTriggerCreateBuyOrderTypeUi() {
   if (note) {
     note.classList.toggle("is-gtd-locked", !gtdOk);
   }
-  syncTriggerGtdPlaceOffsetUi();
   syncTriggerCreateBuySidesModeUi();
 }
 
-function normalizeTriggerGtdPlaceOffsetMs(raw, fallback = 0) {
-  const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n < 0) {
-    const fb = Math.floor(Number(fallback));
-    return Number.isFinite(fb) && fb >= 0 ? Math.min(fb, 1_000_000_000) : 0;
-  }
-  return Math.min(n, 1_000_000_000);
-}
-
-function readTriggerGtdPlaceOffsetMsFromInputs() {
-  const valueEl = $("trigger-gtd-place-offset-value");
-  const unitEl = $("trigger-gtd-place-offset-unit");
-  const value = clampTriggerDurationValue(valueEl?.value);
-  const unit = unitEl?.value in TRIGGER_DURATION_UNIT_MS ? unitEl.value : "s";
-  if (valueEl && String(value) !== String(valueEl.value)) valueEl.value = String(value);
-  return value * TRIGGER_DURATION_UNIT_MS[unit];
-}
-
-function applyTriggerGtdPlaceOffsetToInputs(ms) {
-  const valueEl = $("trigger-gtd-place-offset-value");
-  const unitEl = $("trigger-gtd-place-offset-unit");
-  if (!valueEl || !unitEl) return;
-  const n = normalizeTriggerGtdPlaceOffsetMs(ms, 0);
-  if (n === 0) {
-    valueEl.value = "0";
-    if (!(unitEl.value in TRIGGER_DURATION_UNIT_MS)) unitEl.value = "s";
-  } else if (n >= 60_000 && n % 60_000 === 0) {
-    valueEl.value = String(n / 60_000);
-    unitEl.value = "min";
-  } else if (n >= 1000 && n % 1000 === 0) {
-    valueEl.value = String(n / 1000);
-    unitEl.value = "s";
-  } else {
-    valueEl.value = String(n);
-    unitEl.value = "ms";
-  }
-  triggerCreateGtdPlaceOffsetMs = n;
-  syncTriggerGtdPlaceOffsetUi();
-}
-
-function syncTriggerGtdPlaceOffsetDraft() {
-  triggerCreateGtdPlaceOffsetMs = normalizeTriggerGtdPlaceOffsetMs(
-    readTriggerGtdPlaceOffsetMsFromInputs(),
-    0,
-  );
-  syncTriggerGtdPlaceOffsetUi();
-}
-
-/** Place GTD before window is editable only when Buy type is GTD. */
-function syncTriggerGtdPlaceOffsetUi() {
-  const wrap = $("trigger-gtd-place-offset");
-  const valueEl = $("trigger-gtd-place-offset-value");
-  const unitEl = $("trigger-gtd-place-offset-unit");
-  const enabled = triggerCreateBuyOrderType === "GTD";
-  wrap?.classList.toggle("is-disabled", !enabled);
-  if (valueEl) valueEl.disabled = triggerCreateViewOnly || !enabled;
-  if (unitEl) unitEl.disabled = triggerCreateViewOnly || !enabled;
-  applyTriggerCreateViewOnlyLock();
+/** Buy GTD always places at Apply start. Stored offsets are ignored. */
+function normalizeTriggerGtdPlaceOffsetMs(_raw, _fallback = 0) {
+  return 0;
 }
 
 function syncTriggerCreateBuyOrderTypeDraft() {
@@ -8808,7 +8750,6 @@ function fillTriggerCreateFormFromTrigger(trigger) {
   applyTriggerBuySharesToInput(trigger?.buyShares);
   applyTriggerBuyOrderTypeToInput(trigger?.buyOrderType ?? "FOK");
   setTriggerCreateBuySidesMode(trigger?.buySidesMode ?? "first");
-  applyTriggerGtdPlaceOffsetToInputs(trigger?.gtdPlaceOffsetMs ?? 0);
   applyTriggerSellToInputs(
     trigger?.takeProfitCents,
     trigger?.stopLossCents,
@@ -8840,7 +8781,6 @@ function buildTriggerFromCreateDraft() {
   syncTriggerCreateNameDraft();
   syncTriggerCreateColorDraft();
   syncTriggerDurationDraft();
-  syncTriggerGtdPlaceOffsetDraft();
   syncTriggerCreateBuySharesDraft();
   syncTriggerCreateBuyOrderTypeDraft();
   syncTriggerCreateSellDraft();
@@ -8907,7 +8847,7 @@ function buildTriggerFromCreateDraft() {
       triggerCreateWindowArea.start,
       triggerCreateWindowArea.end,
     ),
-    gtdPlaceOffsetMs: normalizeTriggerGtdPlaceOffsetMs(triggerCreateGtdPlaceOffsetMs, 0),
+    gtdPlaceOffsetMs: 0,
     runMode: existing?.runMode === "trade" ? "trade" : "demo",
     ...(triggerCreateHost === "replay"
       ? { paused: existing ? existing.paused === true : true }
@@ -9032,7 +8972,6 @@ function resetTriggerCreateForm() {
   applyTriggerBuySharesToInput(10);
   applyTriggerBuyOrderTypeToInput("FOK");
   setTriggerCreateBuySidesMode("first");
-  applyTriggerGtdPlaceOffsetToInputs(0);
   applyTriggerSellToInputs(10, 10, "FAK");
   triggerCreateWindowArea = { start: 0, end: 1 };
   setTriggerCreateActiveTab("buy");
@@ -9246,15 +9185,6 @@ function bindTriggerCreateModal() {
       return;
     }
     setTriggerCreateBuySidesMode(btn.getAttribute("data-buy-sides"));
-  });
-  $("trigger-gtd-place-offset-value")?.addEventListener("input", () => {
-    syncTriggerGtdPlaceOffsetDraft();
-  });
-  $("trigger-gtd-place-offset-value")?.addEventListener("change", () => {
-    syncTriggerGtdPlaceOffsetDraft();
-  });
-  $("trigger-gtd-place-offset-unit")?.addEventListener("change", () => {
-    syncTriggerGtdPlaceOffsetDraft();
   });
   $("trigger-buy-order-info-btn")?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -11647,14 +11577,13 @@ function triggerApplyBoundsSec(state, areaStart, areaEnd) {
   };
 }
 
-/** Buy GTD place window: Apply start − Place GTD before window → Apply end. */
-function triggerGtdPlaceBoundsSec(state, areaStart, areaEnd, offsetMs) {
+/** Buy GTD place window: Apply start → Apply end. */
+function triggerGtdPlaceBoundsSec(state, areaStart, areaEnd) {
   const bounds = triggerApplyBoundsSec(state, areaStart, areaEnd);
   if (!bounds) return null;
-  const offsetSec = Math.max(0, normalizeTriggerGtdPlaceOffsetMs(offsetMs, 0)) / 1000;
   return {
     ...bounds,
-    placeSec: bounds.startSec - offsetSec,
+    placeSec: bounds.startSec,
   };
 }
 
@@ -11671,24 +11600,15 @@ function isInTriggerApplyAreaNow(state, areaStart, areaEnd) {
 }
 
 /**
- * True when wall clock is in the Buy GTD place window (may start before market open).
+ * True when wall clock is in the Buy GTD place window (Apply start → Apply end).
  */
-function isInTriggerGtdPlaceWindowNow(state, areaStart, areaEnd, offsetMs) {
-  const bounds = triggerGtdPlaceBoundsSec(state, areaStart, areaEnd, offsetMs);
+function isInTriggerGtdPlaceWindowNow(state, areaStart, areaEnd) {
+  const bounds = triggerGtdPlaceBoundsSec(state, areaStart, areaEnd);
   if (!bounds) return false;
   const nowSec = Date.now() / 1000;
   if (nowSec > bounds.endSec) return false;
   if (nowSec >= bounds.windowEnd) return false;
   return nowSec >= bounds.placeSec;
-}
-
-/** Next market window state (same duration) for pre-open GTD placement. */
-function nextMarketWindowState(state) {
-  const ws = Number(state?.windowStart);
-  const we = Number(state?.windowEnd);
-  if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) return null;
-  const dur = we - ws;
-  return { ...state, windowStart: we, windowEnd: we + dur };
 }
 
 /** Per-trigger runtime: watching start→end pattern, or open TP/SL position. */
@@ -12957,13 +12877,11 @@ function triggerSideRuntimeIsOpen(triggerId, side) {
 function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
   const id = String(trigger?.id || "");
   if (!id || !stateForWindow) return;
-  const offsetMs = normalizeTriggerGtdPlaceOffsetMs(trigger.gtdPlaceOffsetMs, 0);
   if (
     !isInTriggerGtdPlaceWindowNow(
       stateForWindow,
       trigger.windowArea?.start,
       trigger.windowArea?.end,
-      offsetMs,
     )
   ) {
     return;
@@ -12990,7 +12908,7 @@ function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
   });
 }
 
-/** Build Trade GTD desires for triggers in their Offset/Apply place window (wall clock). */
+/** Build Trade GTD desires for triggers in their Apply place window (wall clock). */
 function collectTradeGtdDesires(state) {
   const desires = [];
   if (!state || !Array.isArray(userTriggers)) return desires;
@@ -12998,7 +12916,6 @@ function collectTradeGtdDesires(state) {
   if (!trigger) return desires;
   const id = String(trigger.id || "");
   if (!id) return desires;
-  const nextState = nextMarketWindowState(state);
   const both = triggerBuySidesModeOf(trigger) === "both";
   // Cross-card Trade race: other cards holding block new rests (except this
   // card's both-sides path, which may still desire the free side).
@@ -13011,7 +12928,6 @@ function collectTradeGtdDesires(state) {
     return desires;
   }
   pushTradeGtdDesireIfInPlaceWindow(desires, trigger, state);
-  if (nextState) pushTradeGtdDesireIfInPlaceWindow(desires, trigger, nextState);
   return desires;
 }
 
@@ -13036,31 +12952,25 @@ function scheduleTriggerGtdArming(state = windowState) {
   let anyTradeGtd = false;
   const pendingArmKeys = [];
 
-  const nextState = nextMarketWindowState(state);
   for (const trigger of userTriggers) {
     if (trigger.runMode !== "trade") continue;
     if (!triggerUsesBuyGtd(trigger)) continue;
     anyTradeGtd = true;
     const id = String(trigger.id || "");
     if (!id) continue;
-    const offsetMs = normalizeTriggerGtdPlaceOffsetMs(trigger.gtdPlaceOffsetMs, 0);
-    for (const win of [state, nextState]) {
-      if (!win) continue;
-      const bounds = triggerGtdPlaceBoundsSec(
-        win,
-        trigger.windowArea?.start,
-        trigger.windowArea?.end,
-        offsetMs,
-      );
-      if (!bounds) continue;
-      const startMs = bounds.placeSec * 1000;
-      const endMs = Math.min(bounds.endSec, bounds.windowEnd) * 1000;
-      const armKey = `${id}:${bounds.placeSec}:${bounds.windowStart}`;
-      if (nowMs >= startMs && nowMs <= endMs) {
-        if (!triggerGtdArmedApplyKeys.has(armKey)) pendingArmKeys.push(armKey);
-      } else if (nowMs < startMs) {
-        earliestFutureMs = Math.min(earliestFutureMs, startMs);
-      }
+    const bounds = triggerGtdPlaceBoundsSec(
+      state,
+      trigger.windowArea?.start,
+      trigger.windowArea?.end,
+    );
+    if (!bounds) continue;
+    const startMs = bounds.placeSec * 1000;
+    const endMs = Math.min(bounds.endSec, bounds.windowEnd) * 1000;
+    const armKey = `${id}:${bounds.placeSec}:${bounds.windowStart}`;
+    if (nowMs >= startMs && nowMs <= endMs) {
+      if (!triggerGtdArmedApplyKeys.has(armKey)) pendingArmKeys.push(armKey);
+    } else if (nowMs < startMs) {
+      earliestFutureMs = Math.min(earliestFutureMs, startMs);
     }
   }
 
@@ -13207,18 +13117,10 @@ function tickUserTriggers(state) {
           trigger.windowArea?.start,
           trigger.windowArea?.end,
         );
-        const gtdOffsetMs = normalizeTriggerGtdPlaceOffsetMs(trigger.gtdPlaceOffsetMs, 0);
-        const inArea = isInTriggerGtdPlaceWindowNow(
-          state,
-          area.start,
-          area.end,
-          gtdOffsetMs,
-        );
+        const inArea = isInTriggerGtdPlaceWindowNow(state, area.start, area.end);
         if (inArea) {
           pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, state);
         }
-        const nextState = nextMarketWindowState(state);
-        if (nextState) pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, nextState);
       }
     }
 

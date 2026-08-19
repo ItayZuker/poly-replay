@@ -83,7 +83,7 @@ export interface UserTriggerRecord {
    */
   buySidesMode: "first" | "both";
   windowArea: { start: number; end: number };
-  /** Ms before Apply start to place Buy GTD (0 = at Apply start). */
+  /** Unused — Buy GTD always places at Apply start. Kept as 0 for stored records. */
   gtdPlaceOffsetMs: number;
   runMode: "demo" | "trade";
   demoStats: TriggerDemoStats;
@@ -341,12 +341,7 @@ export function normalizeUserTriggerInput(
       if (existing?.buySidesMode === "both") return "both";
       return "first";
     })(),
-    gtdPlaceOffsetMs: (() => {
-      const n = Math.floor(Number(o.gtdPlaceOffsetMs));
-      if (Number.isFinite(n) && n >= 0) return Math.min(n, 1_000_000_000);
-      const prev = Math.floor(Number(existing?.gtdPlaceOffsetMs));
-      return Number.isFinite(prev) && prev >= 0 ? Math.min(prev, 1_000_000_000) : 0;
-    })(),
+    gtdPlaceOffsetMs: 0,
     runMode: o.runMode === "trade" ? "trade" : "demo",
     demoStats: normalizeDemoStats(o.demoStats ?? existing?.demoStats),
     // Full editor saves omit liveUi — keep existing highlight unless explicitly patched.

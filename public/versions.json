@@ -1,6 +1,11 @@
 {
-    "current": "1.80.0",
+    "current": "1.81.0",
     "releases": [
+        {
+            "version": "1.81.0",
+            "releasedAt": "2026-08-19T12:21:00.000Z",
+            "notes": "Buy GTD places at Apply start and cancels at Apply end. Place GTD before window is removed (no next-window pre-place). Docs updated."
+        },
         {
             "version": "1.80.0",
             "releasedAt": "2026-08-19T11:54:32.219Z",
