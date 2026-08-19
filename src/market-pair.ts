@@ -190,6 +190,21 @@ export function buildUpDownSlug(asset: string, timeframe: string, windowStart: n
   return `${asset}-updown-${timeframe}-${windowStart}`;
 }
 
+/** `btc-5m` + `1786485600` → `btc-updown-5m-1786485600`. */
+export function upDownSlugFromSeriesWindow(
+  series: string | undefined | null,
+  windowStart: number | undefined | null,
+): string | null {
+  const ws = Math.floor(Number(windowStart));
+  if (!Number.isFinite(ws) || ws <= 0) return null;
+  const m = String(series || "")
+    .trim()
+    .toLowerCase()
+    .match(/^([a-z]+)-(5m|15m)$/);
+  if (!m) return null;
+  return buildUpDownSlug(m[1]!, m[2]!, ws);
+}
+
 export function getUpDownSeriesSlug(asset: string, timeframe: string): string {
   const slug = UP_DOWN_SERIES_SLUG[asset.toLowerCase()]?.[timeframe];
   if (!slug) {

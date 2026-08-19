@@ -1,6 +1,11 @@
 {
-    "current": "1.79.0",
+    "current": "1.79.1",
     "releases": [
+        {
+            "version": "1.79.1",
+            "releasedAt": "2026-08-19T09:12:49.727Z",
+            "notes": "Held Demo/Trade Win/Loss settle from the entry window slug (windowKey), not a rolled live slug. Open Replay held dots are buy side vs Official. Docs updated."
+        },
         {
             "version": "1.79.0",
             "releasedAt": "2026-08-19T08:09:29.655Z",

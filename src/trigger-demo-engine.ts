@@ -13,6 +13,7 @@ import {
   type ReplayTriggerDef,
 } from "./trigger-replay-sim.js";
 import { applyLiveStatePriceMode, peekAssetPriceMode } from "./asset-price-mode.js";
+import { upDownSlugFromSeriesWindow } from "./market-pair.js";
 import type { LiveWindowState, ReplayTickDocument } from "./types.js";
 
 type SessionEntry = {
@@ -203,7 +204,7 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
           buyPrice: rt.entryPrice,
           series,
           windowStart,
-          slug: state.slug,
+          slug: upDownSlugFromSeriesWindow(series, windowStart) ?? state.slug,
         });
         if (cardId) entry.openCardByTrigger.set(openKey, cardId);
         entry.lastEntry.set(rtKey, {
@@ -248,7 +249,7 @@ async function tickSeries(state: LiveWindowState, nowMs: number): Promise<void> 
           buyPrice: rt.entryPrice,
           series,
           windowStart,
-          slug: state.slug,
+          slug: upDownSlugFromSeriesWindow(series, windowStart) ?? state.slug,
         });
       }
       sessions.delete(key);
