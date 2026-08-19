@@ -175,7 +175,11 @@ export interface LiveWindowState {
   assetPrice?: number;
   /** Raw Chainlink tick when assetPrice has been overlaid for a user. */
   assetPriceRaw?: number;
-  /** Official or computed 30s/60s TWAP for the series timeframe. */
+  /** Official or computed 30s TWAP (all series). */
+  assetPriceTwap30?: number;
+  /** Official or computed 60s TWAP (all series). */
+  assetPriceTwap60?: number;
+  /** Legacy single TWAP slot (prefer twap30 / twap60). */
   assetPriceTwap?: number;
   assetGap?: number;
   /** Where prevCloseAsset (PTB) came from — first Chainlink tick, published open, or Gamma. */

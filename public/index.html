@@ -863,26 +863,6 @@
                 <button type="button" id="settings-user-save" class="settings-primary-btn">Save profile</button>
                 <span id="settings-user-status" class="settings-inline-status" hidden></span>
               </div>
-              <div class="settings-allow-trade">
-                <p class="settings-card-desc">Off = demo; On = real orders when other gates pass</p>
-                <div
-                  id="wallet-start-trading-field"
-                  class="wallet-control-field wallet-control-field--segment settings-allow-trade-field"
-                  role="group"
-                  aria-label="Allow trade"
-                >
-                  <span class="settings-field-label" id="allow-trade-label">Allow trade</span>
-                  <div class="trade-allow-toggle trigger-run-mode" id="start-trading-toggle">
-                    <button type="button" class="trigger-run-mode-btn is-active" data-allow-trade="off" id="start-trading-off">
-                      Off
-                    </button>
-                    <button type="button" class="trigger-run-mode-btn" data-allow-trade="on" id="start-trading-on">
-                      On
-                    </button>
-                  </div>
-                  <input type="checkbox" id="start-trading" class="visually-hidden" tabindex="-1" aria-hidden="true" />
-                </div>
-              </div>
               <div class="settings-user-session">
                 <p class="settings-card-desc">Sign out of this browser, or permanently delete your account</p>
                 <div class="settings-card-actions settings-card-actions--stack">
@@ -901,40 +881,89 @@
               aria-labelledby="settings-tab-settings"
               hidden
             >
-              <p class="settings-card-desc">
-                Current, Gap, triggers, and replay use this price. Recordings always store the raw Chainlink tick.
-              </p>
-              <div class="settings-allow-trade">
+              <section class="settings-section" aria-labelledby="settings-section-global">
+                <h3 class="settings-section-title" id="settings-section-global">Global</h3>
+                <p class="settings-card-desc">Off = demo; On = real orders when other gates pass</p>
+                <div
+                  id="wallet-start-trading-field"
+                  class="wallet-control-field wallet-control-field--segment settings-allow-trade-field"
+                  role="group"
+                  aria-label="Allow trade"
+                >
+                  <span class="settings-field-label" id="allow-trade-label">Allow trade</span>
+                  <div class="trade-allow-toggle trigger-run-mode" id="start-trading-toggle">
+                    <button type="button" class="trigger-run-mode-btn is-active" data-allow-trade="off" id="start-trading-off">
+                      Off
+                    </button>
+                    <button type="button" class="trigger-run-mode-btn" data-allow-trade="on" id="start-trading-on">
+                      On
+                    </button>
+                  </div>
+                  <input type="checkbox" id="start-trading" class="visually-hidden" tabindex="-1" aria-hidden="true" />
+                </div>
+              </section>
+              <section class="settings-section" aria-labelledby="settings-section-market">
+                <h3 class="settings-section-title" id="settings-section-market">Market</h3>
+                <p class="settings-card-desc">
+                  Current, Gap, triggers, and replay use this price on every market. Recordings always store the raw Chainlink tick.
+                </p>
                 <div
                   class="wallet-control-field wallet-control-field--segment settings-allow-trade-field"
                   role="group"
                   aria-label="Current price"
                 >
-                  <span class="settings-field-label" id="asset-price-mode-label">Current price</span>
-                  <div class="trade-allow-toggle trigger-run-mode settings-price-mode-toggle" id="asset-price-mode-toggle">
-                    <button
-                      type="button"
-                      class="trigger-run-mode-btn is-active"
-                      data-asset-price-mode="twap"
-                      id="asset-price-mode-twap"
-                    >
-                      Match Polymarket
-                    </button>
-                    <button
-                      type="button"
-                      class="trigger-run-mode-btn"
-                      data-asset-price-mode="raw"
-                      id="asset-price-mode-raw"
-                    >
-                      Raw Chainlink
-                    </button>
-                  </div>
+                  <label class="settings-field-label" id="asset-price-mode-label" for="asset-price-mode-select">Current price</label>
+                  <select
+                    id="asset-price-mode-select"
+                    class="settings-field-input settings-price-mode-select"
+                    aria-labelledby="asset-price-mode-label"
+                  >
+                    <option value="raw">Raw Chainlink</option>
+                    <option value="twap30">30s Avg</option>
+                    <option value="twap60">60s Avg</option>
+                  </select>
                 </div>
                 <p class="settings-card-desc">
-                  Match Polymarket uses a 30-second average on 5 Min markets and a 60-second average on 15 Min markets.
+                  Raw is the last Chainlink tick. 30s / 60s Avg use Polymarket’s official TWAP (same window on every series).
                 </p>
                 <span id="settings-price-mode-status" class="settings-inline-status" hidden></span>
-              </div>
+              </section>
+              <section class="settings-section" aria-labelledby="settings-section-replay">
+                <h3 class="settings-section-title" id="settings-section-replay">Replay</h3>
+                <p class="settings-card-desc">
+                  Replay Run uses these values. They are not tied to live feed latency or Stats fill success.
+                </p>
+                <div class="settings-form-grid">
+                  <div class="settings-field">
+                    <label class="settings-field-label" for="schedule-replay-latency-input">Latency (ms)</label>
+                    <input
+                      id="schedule-replay-latency-input"
+                      class="settings-field-input"
+                      type="number"
+                      min="0"
+                      max="10000"
+                      step="10"
+                      value="20"
+                      inputmode="numeric"
+                      title="Simulated order latency for Replay (FAK and GTD place delay). Default 20ms."
+                    />
+                  </div>
+                  <div class="settings-field">
+                    <label class="settings-field-label" for="schedule-replay-fill-success-input">Fill Success (%)</label>
+                    <input
+                      id="schedule-replay-fill-success-input"
+                      class="settings-field-input"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value="90"
+                      inputmode="numeric"
+                      title="Chance each Replay fill attempt succeeds after latency. Default 90%."
+                    />
+                  </div>
+                </div>
+              </section>
             </div>
 
             <div
@@ -1137,55 +1166,6 @@
                     class="schedule-replay-triggers-list"
                     aria-label="Replay trigger cards"
                   ></div>
-                </div>
-                <div
-                  id="schedule-replay-settings"
-                  class="schedule-replay-settings"
-                  aria-label="Replay settings"
-                >
-                  <div class="schedule-replay-settings-head">
-                    <span class="schedule-replay-settings-title">Settings</span>
-                  </div>
-                  <div class="schedule-replay-settings-body">
-                    <div class="schedule-replay-latency">
-                      <label class="schedule-replay-latency-label" for="schedule-replay-latency-input"
-                        >Latency (ms)</label
-                      >
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          id="schedule-replay-latency-input"
-                          class="schedule-replay-latency-input"
-                          type="number"
-                          min="0"
-                          max="10000"
-                          step="10"
-                          value="20"
-                          inputmode="numeric"
-                          tabindex="-1"
-                          title="Simulated order latency for Replay (FAK and GTD place delay). Default 20ms."
-                        />
-                      </div>
-                    </div>
-                    <div class="schedule-replay-latency">
-                      <label class="schedule-replay-latency-label" for="schedule-replay-fill-success-input"
-                        >Fill Success (%)</label
-                      >
-                      <div class="schedule-replay-latency-field">
-                        <input
-                          id="schedule-replay-fill-success-input"
-                          class="schedule-replay-latency-input"
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="1"
-                          value="90"
-                          inputmode="numeric"
-                          tabindex="-1"
-                          title="Chance each Replay fill attempt succeeds after latency. Default 90%."
-                        />
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>

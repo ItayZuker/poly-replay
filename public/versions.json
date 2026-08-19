@@ -1,6 +1,11 @@
 {
-    "current": "1.79.1",
+    "current": "1.80.0",
     "releases": [
+        {
+            "version": "1.80.0",
+            "releasedAt": "2026-08-19T11:54:32.219Z",
+            "notes": "Account Settings: Allow trade, Current price (Raw / 30s Avg / 60s Avg, default Raw, all markets), and Replay Latency / Fill Success. Replay page no longer has those inputs. Account header button matches page-tab active style. Docs updated."
+        },
         {
             "version": "1.79.1",
             "releasedAt": "2026-08-19T09:12:49.727Z",

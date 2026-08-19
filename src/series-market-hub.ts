@@ -1,10 +1,7 @@
 import { createPublicClient, getClobHost, getChainId } from "./clob-service.js";
 import { clobMarketFeed } from "./clob-market-feed.js";
 import { chainlinkPriceFeed } from "./chainlink-price-feed.js";
-import {
-  appendCappedHistory,
-  twapLookbackSecondsForTimeframe,
-} from "./asset-price-mode.js";
+import { appendCappedHistory } from "./asset-price-mode.js";
 import {
   getPolymarketWindowAssetPricesForPair,
   applyRtdsLivePrice,
@@ -65,10 +62,13 @@ class SeriesFeed {
 
   private refreshTwapPrice(atMs = Date.now()): void {
     try {
-      const { asset, timeframe } = parseMarketSeries(this.series);
-      const lookback = twapLookbackSecondsForTimeframe(timeframe);
-      this.state.assetPriceTwap = chainlinkPriceFeed.resolveTwapPrice(asset, lookback, atMs);
+      const { asset } = parseMarketSeries(this.series);
+      this.state.assetPriceTwap30 = chainlinkPriceFeed.resolveTwapPrice(asset, 30, atMs);
+      this.state.assetPriceTwap60 = chainlinkPriceFeed.resolveTwapPrice(asset, 60, atMs);
+      this.state.assetPriceTwap = this.state.assetPriceTwap30;
     } catch {
+      this.state.assetPriceTwap30 = undefined;
+      this.state.assetPriceTwap60 = undefined;
       this.state.assetPriceTwap = undefined;
     }
   }
@@ -148,12 +148,12 @@ class SeriesFeed {
           const tickSec = Date.now() / 1000;
           if (tickSec >= this.state.windowStart && tickSec < this.state.windowEnd) {
             appendCappedHistory(this.state.priceHistory, tickSec, current);
-            if (this.state.assetPriceTwap != null) {
+            if (this.state.assetPriceTwap30 != null) {
               if (!this.state.priceHistoryTwap) this.state.priceHistoryTwap = [];
               appendCappedHistory(
                 this.state.priceHistoryTwap,
                 tickSec,
-                this.state.assetPriceTwap,
+                this.state.assetPriceTwap30,
               );
             }
           }
@@ -178,6 +178,8 @@ class SeriesFeed {
         this.state.priceHistory = [];
         this.state.priceHistoryTwap = [];
         this.state.assetPriceTwap = undefined;
+        this.state.assetPriceTwap30 = undefined;
+        this.state.assetPriceTwap60 = undefined;
         this.state.ptbCrossings = 0;
         this.state.bookTickSequence = 0;
         this.lastPtbSide = null;

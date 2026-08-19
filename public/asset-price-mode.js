@@ -1,6 +1,17 @@
 (function (global) {
   function normalizeAssetPriceMode(raw) {
-    return raw === "raw" ? "raw" : "twap";
+    const value = String(raw ?? "").trim().toLowerCase();
+    if (value === "twap30" || value === "30" || value === "twap_30") return "twap30";
+    if (value === "twap60" || value === "60" || value === "twap_60") return "twap60";
+    if (value === "twap") return "twap30";
+    return "raw";
+  }
+
+  function twapLookbackSecondsForMode(mode) {
+    const normalized = normalizeAssetPriceMode(mode);
+    if (normalized === "twap30") return 30;
+    if (normalized === "twap60") return 60;
+    return null;
   }
 
   function twapLookbackSecondsForTimeframe(timeframe) {
@@ -97,6 +108,7 @@
 
   global.AssetPriceMode = {
     normalizeAssetPriceMode,
+    twapLookbackSecondsForMode,
     twapLookbackSecondsForTimeframe,
     twapLookbackSecondsForSeries,
     computeTwapAt,

@@ -385,6 +385,8 @@ function enrichWindowStateForUser(
     ...state,
     assetPriceRaw: state.assetPrice,
     assetPriceTwap: state.assetPriceTwap,
+    assetPriceTwap30: state.assetPriceTwap30,
+    assetPriceTwap60: state.assetPriceTwap60,
     sim: simulatorService.getPublicState(),
     trading: trading ?? null,
   };
@@ -397,6 +399,8 @@ function quotesPayloadFromState(state: ReturnType<typeof displayService.peekStat
     windowEnd: state.windowEnd,
     assetPrice: state.assetPrice,
     assetPriceTwap: state.assetPriceTwap,
+    assetPriceTwap30: state.assetPriceTwap30,
+    assetPriceTwap60: state.assetPriceTwap60,
     assetGap: state.assetGap,
     prevCloseAsset: state.prevCloseAsset,
     priceToBeatSource: state.priceToBeatSource,
@@ -609,7 +613,7 @@ async function runScheduleReplaySse(
       sellOrderType?: "FAK" | "FOK";
     } | null;
     triggers?: unknown[] | null;
-    assetPriceMode?: "raw" | "twap";
+    assetPriceMode?: "raw" | "twap30" | "twap60";
   },
 ): Promise<void> {
   let market;
@@ -2169,7 +2173,7 @@ async function runPlacementPlay(
     live?: boolean;
     /** Idle Replay board: clean recordings, no buy/sell markers. */
     recordingsOnly?: boolean;
-    assetPriceMode?: "raw" | "twap";
+    assetPriceMode?: "raw" | "twap30" | "twap60";
     prediction?: {
       sensitivitySec?: number;
       maxQuoteCents?: number;
@@ -2268,7 +2272,7 @@ function parsePlayRequestBody(req: express.Request): {
   triggers?: unknown[] | null;
   live?: boolean;
   recordingsOnly?: boolean;
-  assetPriceMode?: "raw" | "twap";
+  assetPriceMode?: "raw" | "twap30" | "twap60";
   prediction?: {
     sensitivitySec?: number;
     maxQuoteCents?: number;

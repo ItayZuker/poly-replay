@@ -66,10 +66,6 @@ function syncScheduleWorkspaceUi() {
   if (replayBtn) {
     replayBtn.tabIndex = replayOpen ? 0 : -1;
   }
-  const latencyInput = $("schedule-replay-latency-input");
-  const fillInput = $("schedule-replay-fill-success-input");
-  if (latencyInput) latencyInput.tabIndex = replayOpen ? 0 : -1;
-  if (fillInput) fillInput.tabIndex = replayOpen ? 0 : -1;
   const main = document.querySelector(".schedule-main-panel");
   if (main) {
     main.setAttribute("aria-label", replayOpen ? "Replay" : "Schedule");
@@ -914,18 +910,31 @@ async function deleteAccount() {
 }
 
 let currentUserId = null;
-let userAssetPriceMode = "twap";
+let userAssetPriceMode = "raw";
 
 function getUserAssetPriceMode() {
-  return userAssetPriceMode === "raw" ? "raw" : "twap";
+  return window.AssetPriceMode?.normalizeAssetPriceMode?.(userAssetPriceMode) || "raw";
 }
 
-function lookbackForSelectedSeries() {
-  return window.AssetPriceMode?.twapLookbackSecondsForSeries?.(selectedSeries) || 30;
+function lookbackForUserPriceMode() {
+  return window.AssetPriceMode?.twapLookbackSecondsForMode?.(getUserAssetPriceMode()) ?? null;
+}
+
+function pickTwapForUserMode(state) {
+  const lookback = lookbackForUserPriceMode();
+  if (lookback === 60) {
+    const v = state?.assetPriceTwap60 ?? state?.assetPriceTwap;
+    return Number.isFinite(Number(v)) ? Number(v) : null;
+  }
+  if (lookback === 30) {
+    const v = state?.assetPriceTwap30 ?? state?.assetPriceTwap;
+    return Number.isFinite(Number(v)) ? Number(v) : null;
+  }
+  return null;
 }
 
 function pickDisplayedAssetPrice(raw, twap) {
-  if (getUserAssetPriceMode() === "twap" && twap != null && Number.isFinite(twap)) return twap;
+  if (lookbackForUserPriceMode() != null && twap != null && Number.isFinite(twap)) return twap;
   return raw;
 }
 
@@ -935,7 +944,7 @@ function applyDisplayedAssetPrice(state) {
     state.assetPriceRaw != null && Number.isFinite(state.assetPriceRaw)
       ? state.assetPriceRaw
       : state.assetPrice;
-  const twap = state.assetPriceTwap;
+  const twap = pickTwapForUserMode(state);
   if (raw != null && Number.isFinite(raw)) state.assetPriceRaw = raw;
   const price = pickDisplayedAssetPrice(raw, twap);
   if (price != null && Number.isFinite(price)) {
@@ -950,27 +959,24 @@ function applyDisplayedAssetPrice(state) {
       ? state.priceHistory
       : [];
   state.priceHistoryRaw = rawHist;
-  if (getUserAssetPriceMode() === "twap") {
+  const lookback = lookbackForUserPriceMode();
+  if (lookback != null) {
     state.priceHistory =
-      Array.isArray(state.priceHistoryTwap) && state.priceHistoryTwap.length
-        ? state.priceHistoryTwap
-        : window.AssetPriceMode?.applyTwapToPriceHistory?.(rawHist, lookbackForSelectedSeries()) ||
-          rawHist;
+      window.AssetPriceMode?.applyTwapToPriceHistory?.(rawHist, lookback) || rawHist;
   } else {
     state.priceHistory = rawHist;
   }
   return state;
 }
 
-function syncAssetPriceModeToggle(mode) {
-  const isTwap = mode !== "raw";
-  $("asset-price-mode-twap")?.classList.toggle("is-active", isTwap);
-  $("asset-price-mode-raw")?.classList.toggle("is-active", !isTwap);
+function syncAssetPriceModeSelect(mode) {
+  const select = $("asset-price-mode-select");
+  if (select) select.value = mode === "twap30" || mode === "twap60" ? mode : "raw";
 }
 
 function setUserAssetPriceMode(mode) {
-  userAssetPriceMode = mode === "raw" ? "raw" : "twap";
-  syncAssetPriceModeToggle(userAssetPriceMode);
+  userAssetPriceMode = window.AssetPriceMode?.normalizeAssetPriceMode?.(mode) || "raw";
+  syncAssetPriceModeSelect(userAssetPriceMode);
   if (windowState) {
     applyDisplayedAssetPrice(windowState);
     updateGraphPanel(windowState);
@@ -1478,13 +1484,13 @@ function setSettingsPriceModeStatus(message, isError = false) {
 }
 
 function bindAssetPriceModeToggle() {
-  const toggle = $("asset-price-mode-toggle");
-  if (!toggle || toggle.dataset.bound === "1") return;
-  toggle.dataset.bound = "1";
-  toggle.addEventListener("click", async (event) => {
-    const btn = event.target.closest?.("[data-asset-price-mode]");
-    if (!btn) return;
-    const mode = btn.getAttribute("data-asset-price-mode") === "raw" ? "raw" : "twap";
+  const select = $("asset-price-mode-select");
+  if (!select || select.dataset.bound === "1") return;
+  select.dataset.bound = "1";
+  syncAssetPriceModeSelect(getUserAssetPriceMode());
+  select.addEventListener("change", async () => {
+    const mode =
+      window.AssetPriceMode?.normalizeAssetPriceMode?.(select.value) || "raw";
     const prev = getUserAssetPriceMode();
     setUserAssetPriceMode(mode);
     setSettingsPriceModeStatus("");
@@ -3579,8 +3585,8 @@ function setLivePtbSourceLabel(source) {
 function setLiveCurrentSourceLabel() {
   const el = $("graph-current-source");
   if (!el) return;
-  if (getUserAssetPriceMode() === "twap") {
-    const lookback = lookbackForSelectedSeries();
+  const lookback = lookbackForUserPriceMode();
+  if (lookback != null) {
     el.hidden = false;
     el.textContent = lookback === 60 ? "(Avg 60s)" : "(Avg 30s)";
     return;
@@ -5143,14 +5149,21 @@ function appendChainlinkTick(tick, redraw = true) {
   const raw = Number.isFinite(Number(tick.price))
     ? roundPolymarketAssetPrice(Number(tick.price))
     : windowState?.assetPriceRaw;
-  const lookback = lookbackForSelectedSeries();
-  const twapRaw = lookback === 60 ? tick.twap60 : tick.twap30;
-  const twap = Number.isFinite(Number(twapRaw))
-    ? roundPolymarketAssetPrice(Number(twapRaw))
-    : windowState?.assetPriceTwap;
+  const twap30 = Number.isFinite(Number(tick.twap30))
+    ? roundPolymarketAssetPrice(Number(tick.twap30))
+    : windowState?.assetPriceTwap30;
+  const twap60 = Number.isFinite(Number(tick.twap60))
+    ? roundPolymarketAssetPrice(Number(tick.twap60))
+    : windowState?.assetPriceTwap60;
   const timestampMs = Number(tick.timestampMs);
   if (!Number.isFinite(timestampMs)) return;
-  if ((raw == null || !Number.isFinite(raw)) && (twap == null || !Number.isFinite(twap))) return;
+  if (
+    (raw == null || !Number.isFinite(raw)) &&
+    (twap30 == null || !Number.isFinite(twap30)) &&
+    (twap60 == null || !Number.isFinite(twap60))
+  ) {
+    return;
+  }
 
   if (!windowState?.windowStart || !windowState?.windowEnd) {
     pendingChainlinkTicks.push(tick);
@@ -5182,16 +5195,12 @@ function appendChainlinkTick(tick, redraw = true) {
     }
     windowState.assetPriceRaw = raw;
   }
-  if (twap != null && Number.isFinite(twap)) {
-    const twapHistory = Array.isArray(windowState.priceHistoryTwap)
-      ? windowState.priceHistoryTwap
-      : (windowState.priceHistoryTwap = []);
-    const lastTwap = twapHistory[twapHistory.length - 1];
-    if (!lastTwap || lastTwap.t !== t || lastTwap.price !== twap) {
-      twapHistory.push({ t, price: twap });
-      if (twapHistory.length > 2000) twapHistory.splice(0, twapHistory.length - 2000);
-    }
-    windowState.assetPriceTwap = twap;
+  if (twap30 != null && Number.isFinite(twap30)) {
+    windowState.assetPriceTwap30 = twap30;
+    windowState.assetPriceTwap = twap30;
+  }
+  if (twap60 != null && Number.isFinite(twap60)) {
+    windowState.assetPriceTwap60 = twap60;
   }
 
   applyDisplayedAssetPrice(windowState);
@@ -5228,6 +5237,12 @@ function applyQuotesUpdate(quotes) {
       delete next.assetGap;
     }
     Object.assign(windowState, next);
+    if (quotes.assetPriceTwap30 != null && Number.isFinite(quotes.assetPriceTwap30)) {
+      windowState.assetPriceTwap30 = quotes.assetPriceTwap30;
+    }
+    if (quotes.assetPriceTwap60 != null && Number.isFinite(quotes.assetPriceTwap60)) {
+      windowState.assetPriceTwap60 = quotes.assetPriceTwap60;
+    }
     if (quotes.assetPriceTwap != null && Number.isFinite(quotes.assetPriceTwap)) {
       windowState.assetPriceTwap = quotes.assetPriceTwap;
     }

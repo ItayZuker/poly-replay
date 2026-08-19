@@ -19,17 +19,17 @@ Pick a series in the header (e.g. BTC/ETH 5m or 15m).
 
 ## 4. Preview
 
-Keep **Allow trade** off under Account → **User**. Create a **Trigger**, leave it on **Demo**, and watch the log / Demo stats. More: [Market](doc:market).
+Keep **Allow trade** off under Account → **Settings** → **Global**. Create a **Trigger**, leave it on **Demo**, and watch the log / Demo stats. More: [Market](doc:market).
 
 ## 5. Schedule and Replay
 
 Open **Schedule** — every UTC hour cell shows Trigger Trade stats for the latest day of that weekday×hour (other days stay until that slot plays again). The left column lists your Market Triggers. Details: [Schedule](doc:schedule).
 
-Open **Replay** to add local Replay Triggers, set Latency / Fill Success, and press **Run** to test over recordings.
+Open **Replay** to add local Replay Triggers and press **Run** to test over recordings. Set **Latency** / **Fill Success** under Account → **Settings** → **Replay**.
 
 ## 6. Go live
 
 1. Confirm credentials and balance
-2. Turn **Allow trade** on (Account → **User**)
+2. Turn **Allow trade** on (Account → **Settings** → **Global**)
 3. Set the trigger to **Trade**
 4. Start small; watch the log, positions, and Schedule hour cells
