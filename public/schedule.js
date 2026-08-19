@@ -4401,7 +4401,7 @@
       window.appendLogEntry?.({
         level: "warn",
         source: "client",
-        message: "Add and Activate at least one Replay Trigger before pressing Run",
+        message: "Set one Replay Trigger to Test before pressing Run",
       });
       return;
     }

@@ -464,7 +464,10 @@ export async function setTriggerLiveSell(
   });
 }
 
-function compareTriggerDisplayOrder(a: UserTriggerRecord, b: UserTriggerRecord): number {
+function compareTriggerDisplayOrder(
+  a: Pick<UserTriggerRecord, "id" | "sortOrder" | "updatedAt">,
+  b: Pick<UserTriggerRecord, "id" | "sortOrder" | "updatedAt">,
+): number {
   const ao = Number.isFinite(a.sortOrder) ? a.sortOrder : null;
   const bo = Number.isFinite(b.sortOrder) ? b.sortOrder : null;
   if (ao != null && bo != null && ao !== bo) return ao - bo;
@@ -476,6 +479,20 @@ function compareTriggerDisplayOrder(a: UserTriggerRecord, b: UserTriggerRecord):
   const bOk = Number.isFinite(bt);
   if (aOk && bOk && bt !== at) return bt - at;
   return String(a.id).localeCompare(String(b.id));
+}
+
+/** Highest Trade + Buy GTD card in the Triggers list (lowest sortOrder). */
+export function pickHighestTradeGtdTriggerId(
+  triggers: Array<
+    Pick<UserTriggerRecord, "id" | "runMode" | "buyOrderType" | "sortOrder" | "updatedAt">
+  >,
+): string | null {
+  const eligible = triggers.filter(
+    (t) => t.runMode === "trade" && t.buyOrderType === "GTD" && String(t.id || "").trim(),
+  );
+  if (eligible.length === 0) return null;
+  eligible.sort(compareTriggerDisplayOrder);
+  return String(eligible[0]!.id).trim();
 }
 
 function toClient(doc: UserTriggerDoc): UserTriggerRecord {

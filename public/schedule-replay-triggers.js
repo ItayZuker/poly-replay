@@ -60,7 +60,7 @@
       name: typeof raw.name === "string" ? raw.name : "Untitled trigger",
       takeProfitCents: exits.takeProfitCents,
       stopLossCents: exits.stopLossCents,
-      // Explicit true only — older cards without the field stay Test on Run.
+      // Explicit true only — older cards without the field stay Test (one at a time).
       paused: raw.paused === true,
       priceSide: "buy",
       gapMode: raw.gapMode === "relative" ? "relative" : "fixed",
@@ -125,6 +125,7 @@
       replayTriggers = Array.isArray(parsed)
         ? parsed.map(normalizeTrigger).filter(Boolean)
         : [];
+      if (enforceSingleTest()) save();
     } catch {
       replayTriggers = [];
     }
@@ -150,12 +151,39 @@
   }
 
   function listForRun() {
-    return replayTriggers
-      .filter((t) => t?.paused !== true)
-      .map((t) => {
-        const { replayStats, runMode, paused, demoStats, ...def } = t;
-        return def;
-      });
+    const t = replayTriggers.find((x) => x?.paused !== true);
+    if (!t) return [];
+    const { replayStats, runMode, paused, demoStats, ...def } = t;
+    return [def];
+  }
+
+  function pauseTriggerAt(idx) {
+    const t = replayTriggers[idx];
+    if (!t || t.paused === true) return;
+    const id = String(t.id);
+    let replayStats = normalizeStats(t.replayStats);
+    if (Object.prototype.hasOwnProperty.call(runStatsById, id)) {
+      replayStats = normalizeStats(runStatsById[id]);
+      delete runStatsById[id];
+    }
+    replayTriggers[idx] = normalizeTrigger({ ...t, paused: true, replayStats });
+  }
+
+  /** Only one card may be Test. Returns true if any card was paused. */
+  function enforceSingleTest() {
+    let kept = false;
+    let changed = false;
+    for (let i = 0; i < replayTriggers.length; i += 1) {
+      const t = replayTriggers[i];
+      if (!t || t.paused === true) continue;
+      if (!kept) {
+        kept = true;
+        continue;
+      }
+      pauseTriggerAt(i);
+      changed = true;
+    }
+    return changed;
   }
 
   function setPaused(triggerId, paused) {
@@ -164,6 +192,12 @@
     const idx = replayTriggers.findIndex((t) => String(t?.id) === id);
     if (idx < 0) return;
     const nextPaused = Boolean(paused);
+    if (!nextPaused) {
+      for (let i = 0; i < replayTriggers.length; i += 1) {
+        if (i === idx) continue;
+        pauseTriggerAt(i);
+      }
+    }
     // Pausing: lock in any current Run-buffer totals so a later Run cannot wipe them.
     let replayStats = normalizeStats(replayTriggers[idx].replayStats);
     if (nextPaused && Object.prototype.hasOwnProperty.call(runStatsById, id)) {

@@ -2,7 +2,10 @@
  * Executor-side Trigger Trade GTD: place/poll resting buys from Mongo
  * (no browser required). Survives dyno restart via persisted order ids.
  */
-import { listActiveTradeGtdTriggersForSeries } from "./db/user-trigger-repository.js";
+import {
+  listActiveTradeGtdTriggersForSeries,
+  pickHighestTradeGtdTriggerId,
+} from "./db/user-trigger-repository.js";
 import { liveTradingRegistry, type TriggerGtdDesire } from "./live-trading-service.js";
 import { isTradingExecutor } from "./trading-executor.js";
 import { normalizeReplayTriggerDef } from "./trigger-replay-sim.js";
@@ -106,15 +109,19 @@ export async function tickTriggerGtdEngine(
       continue;
     }
 
+    const mine = byUser.get(userId) ?? [];
+    const winnerId = pickHighestTradeGtdTriggerId(mine);
+    const winner = winnerId ? mine.find((t) => t.id === winnerId) : undefined;
     const desires: TriggerGtdDesire[] = [];
-    for (const t of byUser.get(userId) ?? []) {
-      const def = normalizeReplayTriggerDef(t);
-      if (!def || !isBuyGtdDef(def)) continue;
-      const cur = desireForTrigger(t, def, state, nowSec);
-      if (cur) desires.push(cur);
-      if (nxt) {
-        const nextDesire = desireForTrigger(t, def, nxt, nowSec);
-        if (nextDesire) desires.push(nextDesire);
+    if (winner) {
+      const def = normalizeReplayTriggerDef(winner);
+      if (def && isBuyGtdDef(def)) {
+        const cur = desireForTrigger(winner, def, state, nowSec);
+        if (cur) desires.push(cur);
+        if (nxt) {
+          const nextDesire = desireForTrigger(winner, def, nxt, nowSec);
+          if (nextDesire) desires.push(nextDesire);
+        }
       }
     }
     await engine.syncTriggerGtdBuys(state, desires).catch(() => {});

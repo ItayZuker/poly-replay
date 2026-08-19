@@ -1,6 +1,11 @@
 {
-    "current": "1.78.1",
+    "current": "1.79.0",
     "releases": [
+        {
+            "version": "1.79.0",
+            "releasedAt": "2026-08-19T08:09:29.655Z",
+            "notes": "Only the highest Trade GTD card in the Triggers list may rest a buy limit. Replay Run uses one Test card (switching Test pauses the previous). Replay latest-day slots need official Gamma; recorder light-retries Gamma after 20 minutes. Docs updated."
+        },
         {
             "version": "1.78.1",
             "releasedAt": "2026-08-17T13:36:57.255Z",

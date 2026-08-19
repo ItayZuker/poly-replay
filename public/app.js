@@ -7279,6 +7279,7 @@ async function persistTriggerOrder(orderedIds) {
     next.push({ ...t, sortOrder: next.length });
   }
   userTriggers = next;
+  resyncTriggerGtdAfterCardChange();
   try {
     const res = await fetch("/api/triggers/reorder", {
       method: "PUT",
@@ -7290,6 +7291,7 @@ async function persistTriggerOrder(orderedIds) {
     const body = await res.json().catch(() => ({}));
     if (Array.isArray(body?.triggers)) {
       userTriggers = body.triggers.map(normalizeTriggerRecord).filter(Boolean);
+      resyncTriggerGtdAfterCardChange();
     }
   } catch {
     /* keep local order */
@@ -12862,6 +12864,18 @@ function triggerUsesBuyGtd(trigger) {
   );
 }
 
+/** Highest Trade + Buy GTD card in the saved Triggers list (same order as FAK/FOK). */
+function highestTradeGtdTrigger() {
+  if (!Array.isArray(userTriggers)) return null;
+  for (const trigger of userTriggers) {
+    if (trigger?.runMode !== "trade") continue;
+    if (!triggerUsesBuyGtd(trigger)) continue;
+    const id = String(trigger?.id || "");
+    if (id) return trigger;
+  }
+  return null;
+}
+
 let triggerGtdSyncInFlight = false;
 /** @type {{ state: any, desires: any[] } | null} */
 let triggerGtdSyncPending = null;
@@ -12965,26 +12979,24 @@ function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
 function collectTradeGtdDesires(state) {
   const desires = [];
   if (!state || !Array.isArray(userTriggers)) return desires;
+  const trigger = highestTradeGtdTrigger();
+  if (!trigger) return desires;
+  const id = String(trigger.id || "");
+  if (!id) return desires;
   const nextState = nextMarketWindowState(state);
-  for (const trigger of userTriggers) {
-    const id = String(trigger?.id || "");
-    if (!id) continue;
-    if (trigger.runMode !== "trade") continue;
-    if (!triggerUsesBuyGtd(trigger)) continue;
-    const both = triggerBuySidesModeOf(trigger) === "both";
-    // Cross-card Trade race: other cards holding block new rests (except this
-    // card's both-sides path, which may still desire the free side).
-    if (!both && isTradeTriggerSlotBusy()) continue;
-    if (both && isTradeTriggerSlotBusy(id)) continue;
-    if (!both) {
-      const rt = getOrCreateTriggerRuntime(id);
-      if (rt.phase === "open" || rt.phase === "opening") continue;
-    } else if (triggerSideRuntimeIsOpen(id, "up") && triggerSideRuntimeIsOpen(id, "down")) {
-      continue;
-    }
-    pushTradeGtdDesireIfInPlaceWindow(desires, trigger, state);
-    if (nextState) pushTradeGtdDesireIfInPlaceWindow(desires, trigger, nextState);
+  const both = triggerBuySidesModeOf(trigger) === "both";
+  // Cross-card Trade race: other cards holding block new rests (except this
+  // card's both-sides path, which may still desire the free side).
+  if (!both && isTradeTriggerSlotBusy()) return desires;
+  if (both && isTradeTriggerSlotBusy(id)) return desires;
+  if (!both) {
+    const rt = getOrCreateTriggerRuntime(id);
+    if (rt.phase === "open" || rt.phase === "opening") return desires;
+  } else if (triggerSideRuntimeIsOpen(id, "up") && triggerSideRuntimeIsOpen(id, "down")) {
+    return desires;
   }
+  pushTradeGtdDesireIfInPlaceWindow(desires, trigger, state);
+  if (nextState) pushTradeGtdDesireIfInPlaceWindow(desires, trigger, nextState);
   return desires;
 }
 
@@ -13172,8 +13184,10 @@ function tickUserTriggers(state) {
     // Buy GTD desires once per trigger (side runtimes handle exits below).
     if (buyGtd) {
       hasTradeGtd = true;
+      const winner = highestTradeGtdTrigger();
+      const isGtdWinner = Boolean(winner && String(winner.id) === id);
       const slotBusy = isTradeTriggerSlotBusy(id);
-      if (isTriggerTradeArmed() && !slotBusy) {
+      if (isTriggerTradeArmed() && !slotBusy && isGtdWinner) {
         const area = normalizeTriggerWindowArea(
           trigger.windowArea?.start,
           trigger.windowArea?.end,
