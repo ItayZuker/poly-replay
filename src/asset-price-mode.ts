@@ -6,15 +6,26 @@ import {
 import { parseMarketSeries } from "./market-pair.js";
 import type { LiveWindowState } from "./types.js";
 
-export type AssetPriceMode = "raw" | "twap";
+export type AssetPriceMode = "raw" | "twap30" | "twap60";
 
-/** Default: match Polymarket’s 30s/60s Chainlink TWAP Current. */
-export const DEFAULT_ASSET_PRICE_MODE: AssetPriceMode = "twap";
+/** Default: last raw Chainlink tick on every market. */
+export const DEFAULT_ASSET_PRICE_MODE: AssetPriceMode = "raw";
 
 const modeByUser = new Map<string, AssetPriceMode>();
 
 export function normalizeAssetPriceMode(raw: unknown): AssetPriceMode {
-  return raw === "raw" ? "raw" : "twap";
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (value === "twap30" || value === "30" || value === "twap_30") return "twap30";
+  if (value === "twap60" || value === "60" || value === "twap_60") return "twap60";
+  // Legacy Match Polymarket (series-based 30s/60s) → keep an average; 30s is global.
+  if (value === "twap") return "twap30";
+  return "raw";
+}
+
+export function twapLookbackSecondsForMode(mode: AssetPriceMode): 30 | 60 | null {
+  if (mode === "twap30") return 30;
+  if (mode === "twap60") return 60;
+  return null;
 }
 
 export function rememberAssetPriceMode(userId: string, mode: AssetPriceMode): void {
@@ -146,25 +157,28 @@ export function applyTwapToPriceHistory(
   });
 }
 
+function twapValueForMode(state: LiveWindowState, lookback: 30 | 60): number | undefined {
+  if (lookback === 60) {
+    return state.assetPriceTwap60 ?? state.assetPriceTwap;
+  }
+  return state.assetPriceTwap30 ?? state.assetPriceTwap;
+}
+
 /** Shared live state stores raw Current; overlay TWAP for a user who selected it. */
 export function applyLiveStatePriceMode(
   state: LiveWindowState,
   mode: AssetPriceMode,
 ): LiveWindowState {
-  if (mode !== "twap") return state;
-  const twap = roundPolymarketAssetPriceMaybe(state.assetPriceTwap);
-  if (twap == null) return state;
-  const history =
-    state.priceHistoryTwap && state.priceHistoryTwap.length > 0
-      ? state.priceHistoryTwap
-      : applyTwapToPriceHistory(
-          state.priceHistory ?? [],
-          twapLookbackSecondsForSeries(state.series),
-        );
+  const lookback = twapLookbackSecondsForMode(mode);
+  if (lookback == null) return state;
+  const twap = roundPolymarketAssetPriceMaybe(twapValueForMode(state, lookback));
+  const history = applyTwapToPriceHistory(state.priceHistory ?? [], lookback);
+  const price = twap ?? history[history.length - 1]?.price;
+  if (price == null || !Number.isFinite(price)) return state;
   return {
     ...state,
-    assetPrice: twap,
-    assetGap: assetGapOrUnset(twap, state.prevCloseAsset),
+    assetPrice: price,
+    assetGap: assetGapOrUnset(price, state.prevCloseAsset),
     priceHistory: history,
   };
 }

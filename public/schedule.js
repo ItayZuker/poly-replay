@@ -4480,7 +4480,7 @@
           fillSuccessPct,
           prediction: null,
           triggers,
-          assetPriceMode: window.getUserAssetPriceMode?.() || "twap",
+          assetPriceMode: window.getUserAssetPriceMode?.() || "raw",
         }),
       });
       if (!res.ok || !res.body) {

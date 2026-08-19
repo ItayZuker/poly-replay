@@ -34,7 +34,7 @@ Server -> SSE -> Browser
 | Positions (open / pending) / markers / phases | SSE `trading` (~250ms coalesce) — settled Positions via REST + browser cache |
 | Settled Positions (last 24h) | `GET /api/trading/positions` → browser `localStorage`; refresh on `statsRevision` |
 | PTB | Live Market: first in-window Chainlink tick — **(Chainlink)** under the PTB label — then Polymarket crypto-price `openPrice` — **(REST)** under PTB (follow updates until they freeze it; never prior-window; never Gamma). Recordings append Chainlink → REST changes to `ptbHistory` and store Gamma `eventMetadata.priceToBeat` separately (`gammaPtb`). Open Replay scrubs that history, then Gamma on the last tick (**PTB (GAMMA)**) |
-| Asset price / Current | Live Market: [Account](doc:settings) → **Settings** — default **Match Polymarket** (official 30s/60s Chainlink TWAP) or **Raw Chainlink** RTDS tick. Recordings always store the raw tick. Replay rebuilds the TWAP line when Match Polymarket is selected. Not replaced by Gamma on the live page. Open Replay last tick: Gamma `eventMetadata.finalPrice` |
+| Asset price / Current | Live Market: [Account](doc:settings) → **Settings** → **Market** — default **Raw Chainlink** RTDS tick, or official **30s Avg** / **60s Avg** TWAP (same choice on every series). Recordings always store the raw tick. Replay rebuilds the selected TWAP line from those ticks. Not replaced by Gamma on the live page. Open Replay last tick: Gamma `eventMetadata.finalPrice` |
 | Gap / crossings | Server: Current − PTB — **no gap** (and gap-based triggers do not fire) until the first in-window Chainlink PTB is present |
 
 ## Trading

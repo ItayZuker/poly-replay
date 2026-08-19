@@ -23,7 +23,7 @@ import { logService } from "./log-service.js";
 import {
   applyTwapToReplayTicks,
   normalizeAssetPriceMode,
-  twapLookbackSecondsForSeries,
+  twapLookbackSecondsForMode,
 } from "./asset-price-mode.js";
 import { recordingPtbFields } from "./ptb-history.js";
 import { isFlatPriceFromTicks, isFlatPriceWindow } from "./window-dynamics.js";
@@ -150,7 +150,7 @@ export interface BacktestScheduleOptions {
   /** Replay Trigger cards applied on each simulated window. */
   triggers?: unknown[] | null;
   /** Apply 30s/60s TWAP to recorded raw ticks for Current / Gap / triggers. */
-  assetPriceMode?: "raw" | "twap";
+  assetPriceMode?: "raw" | "twap30" | "twap60";
 }
 
 type OutcomeBucket = "green" | "red" | "blue" | "none";
@@ -560,7 +560,7 @@ export async function simulateRecordedWindow(
   simResultCache?: Map<string, WindowSimCacheEntry>,
   predictionConfig?: PredictionDetectorConfig | null,
   triggerDefs?: ReturnType<typeof normalizeReplayTriggerDefs> | null,
-  assetPriceMode?: "raw" | "twap",
+  assetPriceMode?: "raw" | "twap30" | "twap60",
 ): Promise<RecordedWindowSimulation> {
   const windowEnd = window.windowEnd;
   const windowStart = window.windowStart;
@@ -616,8 +616,9 @@ export async function simulateRecordedWindow(
     tickCache?.set(window.windowStart, ticks);
   }
 
-  if (normalizeAssetPriceMode(assetPriceMode) === "twap") {
-    ticks = applyTwapToReplayTicks(ticks, twapLookbackSecondsForSeries(series));
+  const twapLookback = twapLookbackSecondsForMode(normalizeAssetPriceMode(assetPriceMode));
+  if (twapLookback != null) {
+    ticks = applyTwapToReplayTicks(ticks, twapLookback);
   }
 
   // Missing CLOB book or Chainlink → exclude from Replay (either side alone is unusable).
@@ -1607,7 +1608,7 @@ export interface BuildPlacementPlayOptions {
   /** Replay Prediction settings (same as Schedule Run). */
   prediction?: Partial<PredictionDetectorConfig> | null;
   /** Current / Gap / trigger price: raw recorded ticks or reconstructed TWAP. */
-  assetPriceMode?: "raw" | "twap";
+  assetPriceMode?: "raw" | "twap30" | "twap60";
   /** Replay Triggers (when present, replace Prediction; phase buys stay muted). */
   triggers?: unknown[] | null;
 }

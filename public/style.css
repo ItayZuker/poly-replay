@@ -2115,45 +2115,6 @@ body {
   box-sizing: border-box;
 }
 
-.schedule-replay-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  flex-shrink: 0;
-  min-width: 0;
-  box-sizing: border-box;
-}
-
-.schedule-replay-settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.schedule-replay-settings-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.schedule-replay-settings-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--bg) 88%, #000);
-  box-sizing: border-box;
-}
-
-.schedule-replay-settings-body > .schedule-replay-latency {
-  flex-shrink: 0;
-}
-
 .schedule-replay-latency {
   display: flex;
   align-items: center;
@@ -4063,9 +4024,9 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
 }
 
 .header-settings-btn.is-active {
-  color: var(--accent);
+  background: var(--accent);
+  color: #fff;
   border-color: var(--accent);
-  background: rgba(88, 166, 255, 0.14);
 }
 
 .app-page-settings {
@@ -4234,16 +4195,26 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   color: var(--muted);
 }
 
-.settings-allow-trade {
+.settings-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.settings-section + .settings-section {
   margin-top: 4px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
 
-.settings-allow-trade .settings-card-desc {
+.settings-section-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.settings-section .settings-card-desc {
   margin: 0;
 }
 
@@ -4278,15 +4249,12 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   padding: 4px 10px;
 }
 
-.settings-price-mode-toggle {
-  min-width: 0;
-}
-
-.settings-price-mode-toggle .trigger-run-mode-btn {
-  min-width: 0;
-  padding: 4px 8px;
-  font-size: 0.72rem;
-  white-space: nowrap;
+.settings-price-mode-select {
+  flex: 0 1 160px;
+  width: auto;
+  min-width: 132px;
+  max-width: 180px;
+  cursor: pointer;
 }
 
 .settings-user-session {
@@ -4482,7 +4450,8 @@ body.is-schedule-dragging .schedule-day-header.is-fill-drop-target::after {
   border-color: var(--accent);
 }
 
-.settings-field-input[readonly] {
+.settings-field-input[readonly],
+.settings-field-input:disabled {
   color: var(--muted);
   cursor: default;
 }

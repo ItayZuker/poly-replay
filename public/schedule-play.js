@@ -2143,11 +2143,10 @@
       history.push({ t: tick.tMs / 1000, price });
     }
     history.sort((a, b) => a.t - b.t);
-    if (window.getUserAssetPriceMode?.() === "twap") {
-      const series =
-        typeof currentSeries === "function" ? currentSeries() : "";
-      const lookback =
-        window.AssetPriceMode?.twapLookbackSecondsForSeries?.(series) || 30;
+    const lookback = window.AssetPriceMode?.twapLookbackSecondsForMode?.(
+      window.getUserAssetPriceMode?.(),
+    );
+    if (lookback != null) {
       return window.AssetPriceMode?.applyTwapToPriceHistory?.(history, lookback) || history;
     }
     return history;
@@ -3128,7 +3127,7 @@
             triggers: Array.isArray(options.triggers) ? options.triggers : undefined,
             live: options.live === true,
             recordingsOnly: options.recordingsOnly === true,
-            assetPriceMode: window.getUserAssetPriceMode?.() || "twap",
+            assetPriceMode: window.getUserAssetPriceMode?.() || "raw",
           }),
         },
       );
