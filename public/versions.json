@@ -1,6 +1,11 @@
 {
-    "current": "1.83.0",
+    "current": "1.83.1",
     "releases": [
+        {
+            "version": "1.83.1",
+            "releasedAt": "2026-08-20T12:46:45.881Z",
+            "notes": "Trade fills open a new Positions card after a full exit or on a later UTC window, instead of merging onto a sold or prior-window Open card. Docs updated."
+        },
         {
             "version": "1.83.0",
             "releasedAt": "2026-08-20T12:35:41.947Z",

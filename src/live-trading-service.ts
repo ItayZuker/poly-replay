@@ -4889,6 +4889,43 @@ export class LiveTradingService {
     }
   }
 
+  /**
+   * Same open Trade/auto position to add shares onto. Sold/settled cards never
+   * merge. Trigger fills do not attach to a Demo card, a different trigger, or
+   * a prior-window Open card (`windowKey` is aligned before this runs).
+   */
+  private findOpenBuyCardToMerge(params: {
+    existingCardId?: string;
+    windowKey: string;
+    side: "up" | "down";
+    tokenId?: string;
+    source: "manual" | "auto" | "trigger";
+    triggerId?: string;
+  }): TradingPositionCard | undefined {
+    const { existingCardId, windowKey, side, tokenId, source, triggerId } = params;
+    if (existingCardId) {
+      const byId = this.findCard(existingCardId);
+      if (byId && byId.status === "open" && byId.side === side) {
+        if (tokenId && byId.asset && byId.asset !== tokenId) return undefined;
+        return byId;
+      }
+    }
+    return this.positionCards.find((card) => {
+      if (card.status !== "open") return false;
+      if (card.windowKey !== windowKey || card.side !== side) return false;
+      if (tokenId && card.asset && card.asset !== tokenId) return false;
+      if (source === "trigger") {
+        if (isDemoPositionCard(card)) return false;
+        const cardTid = typeof card.triggerId === "string" ? card.triggerId.trim() : "";
+        const fillTid = triggerId?.trim() ?? "";
+        if (fillTid && cardTid && cardTid !== fillTid) return false;
+        if (fillTid && !cardTid) return false;
+      }
+      if (source === "auto" && isDemoPositionCard(card)) return false;
+      return true;
+    });
+  }
+
   private async recordBuyFill(
     state: LiveWindowState,
     side: "up" | "down",
@@ -4956,19 +4993,42 @@ export class LiveTradingService {
         `Buy fill windowKey aligned to slug (${sessionKey(attrState)}, was ${sessionKey(state)})`,
       );
     }
+    // Trigger FAK/FOK uses live REST state. If REST is still on the prior
+    // window and the fill slug does not pin a market, attribute to UTC clock
+    // so a new-window buy is not filed onto a leftover Open card.
+    if (source === "trigger" && slugWs == null) {
+      const series = String(attrState.series || this.boundSeries || "").trim();
+      const clock = clockUpDownWindow(series);
+      const attrWs = Number(attrState.windowStart);
+      if (clock && Number.isFinite(attrWs) && attrWs < clock.windowStart) {
+        const wasKey = sessionKey(attrState);
+        attrState = {
+          ...attrState,
+          windowStart: clock.windowStart,
+          windowEnd: clock.windowEnd,
+        };
+        logService.warn(
+          "trading",
+          `Buy fill windowKey aligned to UTC clock (${sessionKey(attrState)}, was ${wasKey})`,
+        );
+      }
+    }
     const windowKey = sessionKey(attrState);
     const setup = this.resolveAutoSimSetup(attrState);
     const phaseIdx =
       buyPhaseIdx ??
       (setup ? phaseIndexForState(attrState, setup.phaseSplit, nowSec) : 0);
 
-    const existing =
-      (existingCardId ? this.findCard(existingCardId) : undefined) ??
-      this.positionCards.find(
-        (card) => card.status === "open" && card.windowKey === windowKey && card.side === side,
-      );
+    const existing = this.findOpenBuyCardToMerge({
+      existingCardId,
+      windowKey,
+      side,
+      tokenId,
+      source,
+      triggerId: resolvedTriggerId,
+    });
 
-    if (existing && existing.status === "open") {
+    if (existing) {
       // Manual fills never inherit / keep a schedule placement id.
       if (source === "manual") {
         existing.source = "manual";
@@ -5028,22 +5088,6 @@ export class LiveTradingService {
         );
       }
     } else {
-      // Hard stop: never open a second card for the same window/side/market.
-      const dup = this.positionCards.find(
-        (card) =>
-          card.windowKey === windowKey &&
-          card.side === side &&
-          ((tokenId && card.asset === tokenId) ||
-            (conditionId && card.conditionId === conditionId)),
-      );
-      if (dup) {
-        logService.warn(
-          "trading",
-          `Skipped duplicate buy card for ${windowKey} ${side} (existing ${dup.id})`,
-        );
-        return;
-      }
-
       const cardId = newCardId();
       this.positions[side] = {
         shares: fillShares,
