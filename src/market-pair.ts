@@ -186,6 +186,20 @@ export function getUpDownDuration(timeframe: string): number {
   return duration;
 }
 
+/** True when `nowSec` is inside Apply (`area` is 0–1 of the market window). */
+export function inClockApplyWindow(
+  nowSec: number,
+  windowStart: number,
+  windowEnd: number,
+  area: { start: number; end: number },
+): boolean {
+  const duration = Math.max(1, windowEnd - windowStart);
+  const applyStart = windowStart + Number(area.start) * duration;
+  const applyEnd = windowStart + Number(area.end) * duration;
+  if (!Number.isFinite(applyStart) || !Number.isFinite(applyEnd)) return false;
+  return nowSec + 1e-9 >= applyStart && nowSec <= applyEnd + 1e-9;
+}
+
 /** Current 5m/15m UTC window from the clock — does not wait for Gamma/REST. */
 export function clockUpDownWindow(
   series: string,

@@ -12835,6 +12835,8 @@ function highestTradeGtdTrigger() {
 let triggerGtdSyncInFlight = false;
 /** @type {{ state: any, desires: any[] } | null} */
 let triggerGtdSyncPending = null;
+/** Last flushed Trade GTD sync had at least one desire (used to send [] only once at Apply end). */
+let triggerGtdLastSyncHadDesires = false;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let triggerGtdArmTimer = null;
 /** Window start this arming schedule is keyed to. */
@@ -13071,6 +13073,7 @@ async function openTriggerPositionFromFill(trigger, rt, state, side, fillPrice, 
 }
 
 async function flushTriggerGtdSync(state, desires) {
+  triggerGtdLastSyncHadDesires = Array.isArray(desires) && desires.length > 0;
   if (triggerGtdSyncInFlight) {
     triggerGtdSyncPending = { state, desires };
     return;
@@ -13304,7 +13307,13 @@ function tickUserTriggers(state) {
   }
 
   if (hasTradeGtd && isTriggerTradeArmed()) {
-    void flushTriggerGtdSync(state, gtdDesires);
+    // Reconcile while Apply is open. After Apply end, send [] once — do not
+    // keep "keep nothing" in flight across the next window's place.
+    if (gtdDesires.length > 0) {
+      void flushTriggerGtdSync(state, gtdDesires);
+    } else if (triggerGtdLastSyncHadDesires) {
+      void flushTriggerGtdSync(state, []);
+    }
   } else if (hasTradeGtd) {
     // Allow trade off — cancel any resting trigger GTDs.
     void flushTriggerGtdSync(state, []);
