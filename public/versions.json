@@ -1,6 +1,11 @@
 {
-    "current": "1.82.4",
+    "current": "1.83.0",
     "releases": [
+        {
+            "version": "1.83.0",
+            "releasedAt": "2026-08-20T12:35:41.947Z",
+            "notes": "Header stats dropdown is Market (since last reset), Schedule (live hour cells), and Replay (last Run). Opening Replay no longer overwrites Schedule totals. Docs updated."
+        },
         {
             "version": "1.82.4",
             "releasedAt": "2026-08-20T12:16:02.136Z",
