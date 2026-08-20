@@ -8,7 +8,7 @@ import {
 } from "./db/user-trigger-repository.js";
 import { liveTradingRegistry, type TriggerGtdDesire } from "./live-trading-service.js";
 import { isTradingExecutor } from "./trading-executor.js";
-import { clockUpDownWindow } from "./market-pair.js";
+import { clockUpDownWindow, inClockApplyWindow } from "./market-pair.js";
 import { normalizeReplayTriggerDef } from "./trigger-replay-sim.js";
 import type { LiveWindowState } from "./types.js";
 
@@ -27,18 +27,6 @@ function isBuyGtdDef(def: {
   return def.buyOrderType === "GTD" && def.durationMs === 0 && def.startMode === "price";
 }
 
-function inBuyGtdPlaceWindow(
-  nowSec: number,
-  windowStart: number,
-  windowEnd: number,
-  area: { start: number; end: number },
-): boolean {
-  const duration = Math.max(1, windowEnd - windowStart);
-  const applyStart = windowStart + area.start * duration;
-  const applyEnd = windowStart + area.end * duration;
-  return nowSec + 1e-9 >= applyStart && nowSec <= applyEnd + 1e-9;
-}
-
 function desireForTrigger(
   trigger: { id: string; name?: string },
   def: ReturnType<typeof normalizeReplayTriggerDef>,
@@ -49,7 +37,7 @@ function desireForTrigger(
   const ws = Number(stateForWindow.windowStart);
   const we = Number(stateForWindow.windowEnd);
   if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) return null;
-  if (!inBuyGtdPlaceWindow(nowSec, ws, we, def.windowArea)) {
+  if (!inClockApplyWindow(nowSec, ws, we, def.windowArea)) {
     return null;
   }
   return {

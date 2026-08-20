@@ -17,8 +17,10 @@ import {
   type MarketOrderType,
 } from "./order-service.js";
 import {
+  clockUpDownWindow,
   fetchCurrentUpDownMarket,
   fetchUpDownMarketAtWindow,
+  inClockApplyWindow,
   upDownSlugFromSeriesWindow,
 } from "./market-pair.js";
 import {
@@ -5316,6 +5318,28 @@ export class LiveTradingService {
     return reason;
   }
 
+  /**
+   * True when this rest's own UTC window is still inside its trigger Apply.
+   * Used so a leftover empty/mismatched sync cannot cancel a just-placed rest.
+   */
+  private triggerRestApplyStillOpen(
+    resting: TriggerRestingBuyOrder,
+    area: { start: number; end: number } | undefined,
+    nowSec: number,
+  ): boolean {
+    if (!area || !Number.isFinite(Number(area.start)) || !Number.isFinite(Number(area.end))) {
+      return false;
+    }
+    const restingWs = windowStartFromSessionKey(resting.sessionKey);
+    if (restingWs == null) return false;
+    const series = String(
+      this.boundSeries || resting.sessionKey.split(":")[0] || "",
+    ).trim();
+    const clock = clockUpDownWindow(series, restingWs);
+    if (!clock || clock.windowStart !== restingWs) return false;
+    return inClockApplyWindow(nowSec, clock.windowStart, clock.windowEnd, area);
+  }
+
   private releaseTriggerRestSlot(
     key: string,
     resting: TriggerRestingBuyOrder,
@@ -5554,9 +5578,14 @@ export class LiveTradingService {
     const listed = await listActiveTradeGtdTriggersForSeries(
       String(state.series || this.boundSeries || ""),
     );
-    const winnerId = pickHighestTradeGtdTriggerId(
-      listed.filter((t) => t.userId === this.userId),
-    );
+    const mineListed = listed.filter((t) => t.userId === this.userId);
+    const winnerId = pickHighestTradeGtdTriggerId(mineListed);
+    const applyAreaByTriggerId = new Map<string, { start: number; end: number }>();
+    for (const t of mineListed) {
+      const id = String(t.id || "").trim();
+      if (!id || !t.windowArea) continue;
+      applyAreaByTriggerId.set(id, t.windowArea);
+    }
     const allowedDesires = winnerId
       ? desires.filter((d) => String(d.triggerId || "").trim() === winnerId)
       : [];
@@ -5648,8 +5677,10 @@ export class LiveTradingService {
     }
 
     // Cancel rests that are no longer desired (left place window, delete/pause/Demo,
-    // or price/size change). Past windows always roll off; future pre-places cancel
-    // when the client stops desiring them.
+    // or price/size change). Past windows always roll off.
+    // Empty/mismatched desire lists (stale browser "keep nothing") must not cancel
+    // a rest whose own UTC Apply is still open — that was the early-cancel race.
+    const wallNowSec = Date.now() / 1000;
     for (const [rk, resting] of [...this.triggerRestingBuys.entries()]) {
       const want = desireByKey.get(rk);
       const limitPrice = want ? triggerGtdLimitPrice(want.priceCents) : NaN;
@@ -5667,6 +5698,18 @@ export class LiveTradingService {
         Boolean(want) &&
         (Math.abs(resting.limitPrice - limitPrice) > 1e-9 || resting.shares !== want!.shares);
       if (!want || priceSizeStale || resting.cancelPending) {
+        if (
+          !want &&
+          !priceSizeStale &&
+          !resting.cancelPending &&
+          this.triggerRestApplyStillOpen(
+            resting,
+            applyAreaByTriggerId.get(resting.triggerId),
+            wallNowSec,
+          )
+        ) {
+          continue;
+        }
         await this.cancelTriggerRestingBuy(
           rk,
           !want
