@@ -5310,6 +5310,12 @@ export class LiveTradingService {
     return this.classifyTriggerRestDisposition(snap, resting);
   }
 
+  private triggerGtdCancelLogReason(reason: string): string {
+    if (reason.startsWith("apply/window")) return "Apply end";
+    if (reason === "window roll") return "window end";
+    return reason;
+  }
+
   private releaseTriggerRestSlot(
     key: string,
     resting: TriggerRestingBuyOrder,
@@ -5338,6 +5344,12 @@ export class LiveTradingService {
     if (!resting) return;
     resting.cancelPending = true;
     resting.cancelAttempts = (resting.cancelAttempts ?? 0) + 1;
+    if (resting.cancelAttempts === 1) {
+      logService.info(
+        "trading",
+        `Trigger GTD cancel ${resting.side.toUpperCase()} ${resting.shares} sh @ ${(resting.limitPrice * 100).toFixed(1)}¢ (${this.triggerGtdCancelLogReason(reason)})`,
+      );
+    }
 
     // Harvest before / after cancel — a race fill must latch hold first.
     if (state) {
@@ -5865,6 +5877,10 @@ export class LiveTradingService {
             fillPrice: result.fillPrice!,
             fillShares: result.fillShares!,
           });
+          logService.info(
+            "trading",
+            `Trigger GTD place ${want.side.toUpperCase()} ${want.shares} sh @ ${(limitPrice * 100).toFixed(1)}¢ (filled)`,
+          );
           this.triggerRestingBuys.set(rk, {
             orderId: result.orderId,
             triggerId: want.triggerId,
@@ -5913,6 +5929,10 @@ export class LiveTradingService {
           slug: result.slug,
         });
         this.gtdPlaceBackoffUntil.delete(rk);
+        logService.info(
+          "trading",
+          `Trigger GTD place ${want.side.toUpperCase()} ${want.shares} sh @ ${(limitPrice * 100).toFixed(1)}¢`,
+        );
         this.notify();
       } finally {
         this.orderInFlight = false;
