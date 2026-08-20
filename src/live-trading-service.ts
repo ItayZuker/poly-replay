@@ -1063,8 +1063,9 @@ export class LiveTradingService {
    */
   private triggerGtdHoldSessionById = new Map<string, string>();
   /**
-   * After a Trigger GTD place is accepted this window (orderId returned), never
-   * place again for that triggerId+side until the window rolls.
+   * After a Trigger GTD place is accepted this UTC clock window (orderId returned),
+   * never place again for that triggerId+side until that clock window ends.
+   * REST live-market roll must not clear this (it is not a new GTD window).
    * No-gap GTD may accept one rest per side (UP + DOWN); first fill cancels the sibling.
    * Key: `${triggerId}:${side}` → sessionKey. Failed places do not latch (retry allowed).
    */
@@ -2855,7 +2856,9 @@ export class LiveTradingService {
     this.manualBuyOverrideWindowKey = null;
     this.predictionTradeHoldWindowKey = null;
     this.triggerGtdHoldSessionById.clear();
-    this.triggerGtdPlacedSessionById.clear();
+    // REST market roll is not a new GTD clock window — keep "already placed"
+    // for the current/future UTC window so Apply-end cancel cannot re-place.
+    this.pruneTriggerGtdPlacedLatches(state);
     this.buyBlockedWindowKey = null;
     this.pendingBuyConfirm = null;
     this.pendingBuyConfirmBackoffMs = 0;
@@ -4856,6 +4859,18 @@ export class LiveTradingService {
     this.triggerGtdPlacedSessionById.set(this.triggerGtdPlacedKey(id, side), session);
   }
 
+  /** Drop placed latches only for UTC windows that have already ended. */
+  private pruneTriggerGtdPlacedLatches(state?: LiveWindowState): void {
+    const series = String(state?.series || this.boundSeries || "").trim();
+    const clock = clockUpDownWindow(series);
+    const clockWs = clock?.windowStart;
+    for (const [key, session] of [...this.triggerGtdPlacedSessionById.entries()]) {
+      const ws = windowStartFromSessionKey(session);
+      if (clockWs != null && ws != null && ws >= clockWs) continue;
+      this.triggerGtdPlacedSessionById.delete(key);
+    }
+  }
+
   /** Trigger title for Positions cards — hint first, else Mongo name. */
   private async resolveTriggerDisplayName(
     triggerId: string | undefined,
@@ -5804,6 +5819,18 @@ export class LiveTradingService {
       if (Date.now() < backoffUntil) continue;
       if (this.isTriggerGtdHeld(want.triggerId, want.targetKey, want.side)) continue;
       if (this.isTriggerGtdPlaced(want.triggerId, want.side, want.targetKey)) continue;
+      const applyArea = applyAreaByTriggerId.get(want.triggerId);
+      if (
+        !applyArea ||
+        !inClockApplyWindow(
+          wallNowSec,
+          want.targetWindowStart,
+          want.targetWindowEnd,
+          applyArea,
+        )
+      ) {
+        continue;
+      }
       // Side already held in live positions — skip that side only.
       if (this.positions[want.side]) continue;
       // first-side / other cards: any open position or race hold blocks new places
