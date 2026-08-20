@@ -186,6 +186,21 @@ export function getUpDownDuration(timeframe: string): number {
   return duration;
 }
 
+/** Current 5m/15m UTC window from the clock — does not wait for Gamma/REST. */
+export function clockUpDownWindow(
+  series: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): { windowStart: number; windowEnd: number } | null {
+  try {
+    const { timeframe } = parseMarketSeries(series);
+    const duration = getUpDownDuration(timeframe);
+    const windowStart = getUpDownWindowStart(timeframe, nowSeconds);
+    return { windowStart, windowEnd: windowStart + duration };
+  } catch {
+    return null;
+  }
+}
+
 export function buildUpDownSlug(asset: string, timeframe: string, windowStart: number): string {
   return `${asset}-updown-${timeframe}-${windowStart}`;
 }

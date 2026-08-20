@@ -11560,6 +11560,27 @@ function isInManipulationArea(state, areaStart, areaEnd) {
   return frac >= areaStart && frac <= areaEnd;
 }
 
+function seriesDurationSec(series) {
+  const hay = String(series || selectedSeries || "").toLowerCase();
+  if (hay.includes("15m")) return 900;
+  if (hay.includes("5m")) return 300;
+  return 300;
+}
+
+/** Current 5m/15m UTC window from the clock — does not wait for live REST roll. */
+function clockUpDownWindow(series, nowSec = Date.now() / 1000) {
+  const dur = seriesDurationSec(series);
+  if (!(dur > 0) || !Number.isFinite(nowSec)) return null;
+  const ws = Math.floor(nowSec / dur) * dur;
+  return { windowStart: ws, windowEnd: ws + dur };
+}
+
+function gtdClockWindowState(state) {
+  const clock = clockUpDownWindow(state?.series || selectedSeries);
+  if (!clock) return state;
+  return { ...state, windowStart: clock.windowStart, windowEnd: clock.windowEnd };
+}
+
 /** Apply-window bounds in unix seconds for a trigger (wall-clock arming). */
 function triggerApplyBoundsSec(state, areaStart, areaEnd) {
   const ws = state?.windowStart;
@@ -11577,7 +11598,7 @@ function triggerApplyBoundsSec(state, areaStart, areaEnd) {
   };
 }
 
-/** Buy GTD place window: Apply start → Apply end. */
+/** Buy GTD place window: Apply start → Apply end (caller passes clock or next-clock state). */
 function triggerGtdPlaceBoundsSec(state, areaStart, areaEnd) {
   const bounds = triggerApplyBoundsSec(state, areaStart, areaEnd);
   if (!bounds) return null;
@@ -11603,7 +11624,7 @@ function isInTriggerApplyAreaNow(state, areaStart, areaEnd) {
  * True when wall clock is in the Buy GTD place window (Apply start → Apply end).
  */
 function isInTriggerGtdPlaceWindowNow(state, areaStart, areaEnd) {
-  const bounds = triggerGtdPlaceBoundsSec(state, areaStart, areaEnd);
+  const bounds = triggerGtdPlaceBoundsSec(gtdClockWindowState(state), areaStart, areaEnd);
   if (!bounds) return false;
   const nowSec = Date.now() / 1000;
   if (nowSec > bounds.endSec) return false;
@@ -12877,9 +12898,10 @@ function triggerSideRuntimeIsOpen(triggerId, side) {
 function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
   const id = String(trigger?.id || "");
   if (!id || !stateForWindow) return;
+  const clockState = gtdClockWindowState(stateForWindow);
   if (
     !isInTriggerGtdPlaceWindowNow(
-      stateForWindow,
+      clockState,
       trigger.windowArea?.start,
       trigger.windowArea?.end,
     )
@@ -12887,13 +12909,13 @@ function pushTradeGtdDesireIfInPlaceWindow(desires, trigger, stateForWindow) {
     return;
   }
   const both = triggerBuySidesModeOf(trigger) === "both";
-  let sides = triggerGtdDesiredSides(trigger, stateForWindow);
+  let sides = triggerGtdDesiredSides(trigger, clockState);
   if (both) {
     sides = sides.filter((s) => !triggerSideRuntimeIsOpen(id, s));
   }
   if (!sides.length) return;
-  const ws = Number(stateForWindow.windowStart);
-  const we = Number(stateForWindow.windowEnd);
+  const ws = Number(clockState.windowStart);
+  const we = Number(clockState.windowEnd);
   desires.push({
     triggerId: id,
     triggerName: String(trigger.name || "").trim() || "Untitled",
@@ -12941,7 +12963,8 @@ function scheduleTriggerGtdArming(state = windowState) {
   if (!state || !isPredictionTriggerHost()) return;
   if (!Array.isArray(userTriggers) || userTriggers.length === 0) return;
 
-  const ws = state.windowStart;
+  const clockState = gtdClockWindowState(state);
+  const ws = clockState?.windowStart;
   if (ws !== triggerGtdArmWindowStart) {
     triggerGtdArmWindowStart = ws ?? null;
     triggerGtdArmedApplyKeys.clear();
@@ -12951,6 +12974,16 @@ function scheduleTriggerGtdArming(state = windowState) {
   let earliestFutureMs = Infinity;
   let anyTradeGtd = false;
   const pendingArmKeys = [];
+  const clockDur =
+    Number(clockState?.windowEnd) - Number(clockState?.windowStart);
+  const nextClockState =
+    Number.isFinite(clockDur) && clockDur > 0 && clockState
+      ? {
+          ...clockState,
+          windowStart: clockState.windowEnd,
+          windowEnd: clockState.windowEnd + clockDur,
+        }
+      : null;
 
   for (const trigger of userTriggers) {
     if (trigger.runMode !== "trade") continue;
@@ -12958,19 +12991,22 @@ function scheduleTriggerGtdArming(state = windowState) {
     anyTradeGtd = true;
     const id = String(trigger.id || "");
     if (!id) continue;
-    const bounds = triggerGtdPlaceBoundsSec(
-      state,
-      trigger.windowArea?.start,
-      trigger.windowArea?.end,
-    );
-    if (!bounds) continue;
-    const startMs = bounds.placeSec * 1000;
-    const endMs = Math.min(bounds.endSec, bounds.windowEnd) * 1000;
-    const armKey = `${id}:${bounds.placeSec}:${bounds.windowStart}`;
-    if (nowMs >= startMs && nowMs <= endMs) {
-      if (!triggerGtdArmedApplyKeys.has(armKey)) pendingArmKeys.push(armKey);
-    } else if (nowMs < startMs) {
-      earliestFutureMs = Math.min(earliestFutureMs, startMs);
+    for (const win of [clockState, nextClockState]) {
+      if (!win) continue;
+      const bounds = triggerGtdPlaceBoundsSec(
+        win,
+        trigger.windowArea?.start,
+        trigger.windowArea?.end,
+      );
+      if (!bounds) continue;
+      const startMs = bounds.placeSec * 1000;
+      const endMs = Math.min(bounds.endSec, bounds.windowEnd) * 1000;
+      const armKey = `${id}:${bounds.placeSec}:${bounds.windowStart}`;
+      if (nowMs >= startMs && nowMs <= endMs) {
+        if (!triggerGtdArmedApplyKeys.has(armKey)) pendingArmKeys.push(armKey);
+      } else if (nowMs < startMs) {
+        earliestFutureMs = Math.min(earliestFutureMs, startMs);
+      }
     }
   }
 
@@ -13119,7 +13155,7 @@ function tickUserTriggers(state) {
         );
         const inArea = isInTriggerGtdPlaceWindowNow(state, area.start, area.end);
         if (inArea) {
-          pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, state);
+          pushTradeGtdDesireIfInPlaceWindow(gtdDesires, trigger, gtdClockWindowState(state));
         }
       }
     }
