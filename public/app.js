@@ -1762,7 +1762,18 @@ function isLogWindowKept(windowStart) {
     return logCurrentWindowStart == null;
   }
   if (logCurrentWindowStart == null) return true;
-  return windowStart === logCurrentWindowStart || windowStart === logPreviousWindowStart;
+  if (windowStart === logCurrentWindowStart || windowStart === logPreviousWindowStart) {
+    return true;
+  }
+  // REST window SSE lags the UTC clock; GTD lines are tagged when the server
+  // rolls and must still show before that snapshot arrives.
+  const clock = clockUpDownWindow(selectedSeries || windowState?.series);
+  if (!clock) return false;
+  const dur = clock.windowEnd - clock.windowStart;
+  return (
+    windowStart === clock.windowStart ||
+    (dur > 0 && windowStart === clock.windowStart - dur)
+  );
 }
 
 function onLogWindowChanged(windowStart) {
@@ -1771,6 +1782,18 @@ function onLogWindowChanged(windowStart) {
   logPreviousWindowStart = logCurrentWindowStart;
   logCurrentWindowStart = windowStart;
   pruneLogDomToTwoWindows();
+}
+
+/** Keep the log on the newest of UTC clock vs REST so place/cancel lines are not dropped. */
+function syncLogKeptWindows(state = windowState) {
+  const restWs = Number(state?.windowStart);
+  const clock = clockUpDownWindow(state?.series || selectedSeries);
+  const clockWs = Number(clock?.windowStart);
+  const newest = Math.max(
+    Number.isFinite(restWs) && restWs > 0 ? restWs : 0,
+    Number.isFinite(clockWs) && clockWs > 0 ? clockWs : 0,
+  );
+  if (newest > 0) onLogWindowChanged(newest);
 }
 
 function pruneLogDomToTwoWindows() {
@@ -5094,7 +5117,7 @@ function updateWindowUI(state) {
     Number.isFinite(state.windowStart) &&
     state.windowStart !== prevWindowStart
   ) {
-    onLogWindowChanged(state.windowStart);
+    syncLogKeptWindows(state);
     // Past-window open Demo cards: keep trying Gamma settle across rolls / sessions.
     scanAndResumeStuckDemoOpenCards();
     if (prevWindowStart != null && Number.isFinite(prevWindowStart)) {
@@ -5370,6 +5393,7 @@ function syncFillSuccessDisplay(trading) {
 }
 
 function updateCountdown(state) {
+  syncLogKeptWindows(state);
   if (!state?.windowEnd) return;
   const remaining = Math.max(0, state.windowEnd - Math.floor(Date.now() / 1000));
   const m = Math.floor(remaining / 60);
