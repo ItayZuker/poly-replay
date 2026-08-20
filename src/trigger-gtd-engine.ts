@@ -8,8 +8,16 @@ import {
 } from "./db/user-trigger-repository.js";
 import { liveTradingRegistry, type TriggerGtdDesire } from "./live-trading-service.js";
 import { isTradingExecutor } from "./trading-executor.js";
+import { clockUpDownWindow } from "./market-pair.js";
 import { normalizeReplayTriggerDef } from "./trigger-replay-sim.js";
 import type { LiveWindowState } from "./types.js";
+
+/** Apply/place against the UTC clock window so a late REST roll cannot skip Apply start. */
+function liveStateForGtdClock(state: LiveWindowState, nowSec: number): LiveWindowState {
+  const clock = clockUpDownWindow(String(state.series || ""), nowSec);
+  if (!clock) return state;
+  return { ...state, windowStart: clock.windowStart, windowEnd: clock.windowEnd };
+}
 
 function isBuyGtdDef(def: {
   buyOrderType: string;
@@ -104,7 +112,7 @@ export async function tickTriggerGtdEngine(
     if (winner) {
       const def = normalizeReplayTriggerDef(winner);
       if (def && isBuyGtdDef(def)) {
-        const cur = desireForTrigger(winner, def, state, nowSec);
+        const cur = desireForTrigger(winner, def, liveStateForGtdClock(state, nowSec), nowSec);
         if (cur) desires.push(cur);
       }
     }
