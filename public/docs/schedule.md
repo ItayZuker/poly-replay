@@ -26,7 +26,7 @@ Trading on this product is **Trigger-only**. Phase setups, placement cards, **Au
 - Each **day column header** shows the day title and, underneath, that day’s aggregated hour-cell stats (same dots + P/L; gray in Replay). The header’s bottom border is **green** when that day’s total P/L is positive and **red** when negative (default border when flat / no data). There is no per-day Clear control
 - Hover a **UTC hour** label to highlight that row across the week; click to pin/unpin (stays until clicked again). Hover a **day column header** to highlight that column; click to pin/unpin
 - Current UTC cell is highlighted
-- Header range (**Market** / **Live** / **Schedule**): **Market** = all-time confirmed totals for the series; **Live** = since last header reset; **Schedule** = sum of all hour cells. Manual quote-box buys are removed (legacy manual fills still count in Market/Live only — not on Schedule hour cells)
+- Header range (**Market** / **Schedule** / **Replay**): **Market** = confirmed totals since the last header reset (reset is on this option); **Schedule** = sum of **Live** hour cells (does not change when you open Replay); **Replay** = sum of Replay hour cells (last **Run**, or idle gray recording counts). Switching **Schedule** ↔ **Replay** pages does not switch this dropdown. Manual quote-box buys are removed (legacy manual fills still count in **Market** only — not on Schedule hour cells)
 
 Replay placements never send live orders. Live Trigger Trade requires **Allow trade** on (Account → **Settings** → **Global**) and a trigger on **Trade**. The Open Replay price line (and Replay Run trigger Gap / $ change) follows Account → **Settings** → **Market** Current price: raw recorded ticks, or a reconstructed **30s Avg** / **60s Avg** line when that option is selected (same window on every series).
 
@@ -68,7 +68,7 @@ Phase bands are not shown in either mode.
 | Held to settlement and market won that side | **Blue** |
 | Stop-loss / held loss / other loss | **Red** |
 
-Gray is Replay-only: before a **Run**, recorded window count for the slot; after a **Run**, windows that ran with ticks but never triggered a buy. In Replay, header totals and **Custom** also include gray when present. In Open Replay **Play**, the green / red / blue dots next to the play controls filter the window list (none selected = all windows, including gray; multiple selected = OR). On **Hits**, the same dots highlight the map and do not hide rows.
+Gray is Replay-only: before a **Run**, recorded window count for the slot; after a **Run**, windows that ran with ticks but never triggered a buy. The header **Replay** range and Replay **Custom** also include gray when present. In Open Replay **Play**, the green / red / blue dots next to the play controls filter the window list (none selected = all windows, including gray; multiple selected = OR). On **Hits**, the same dots highlight the map and do not hide rows.
 
 Replay Trigger definitions are saved per signed-in user in the browser and are separate from Market Triggers. While a run is in progress, the button switches to **Stop**; Account → **Settings** → **Replay** **Latency** / **Fill Success**, and Replay **+ New**, are disabled. Click **Stop** to cancel. Saving/deleting a Replay Trigger during a run also stops the run. Switching **Schedule** ↔ **Replay** (or to Market) does **not** stop a running job.
 

@@ -341,12 +341,13 @@
         liveSlotStats.set(slotKey(day, hour), normalizeSlot(raw, day, hour));
       }
     }
-    // Only repaint when Live is the visible workspace.
+    // Only repaint the grid when Live is the visible workspace.
     if (!isReplayWorkspace()) {
       paint();
       notifyDayHeaders();
-      window.SchedulePlacements?.syncHeaderSummaryControls?.();
     }
+    window.SchedulePlacements?.updateWeekHeaderSummary?.();
+    window.SchedulePlacements?.syncHeaderSummaryControls?.();
   }
 
   /**
@@ -518,8 +519,9 @@
       if (isReplayWorkspace()) {
         paint();
         notifyDayHeaders();
-        window.SchedulePlacements?.syncHeaderSummaryControls?.();
       }
+      window.SchedulePlacements?.updateWeekHeaderSummary?.();
+      window.SchedulePlacements?.syncHeaderSummaryControls?.();
     } catch {
       /* ignore */
     } finally {
@@ -527,17 +529,25 @@
     }
   }
 
-  function effectiveSlotForTotals(day, hour) {
-    const map = activeSlotStats();
+  function resolvedTotalsMode(mode) {
+    if (mode === "replay" || mode === "live") return mode;
+    return isReplayWorkspace() ? "replay" : "live";
+  }
+
+  function effectiveSlotForTotals(day, hour, mode) {
+    const replay = resolvedTotalsMode(mode) === "replay";
+    const map = replay ? replaySlotStats : liveSlotStats;
     const stats = map.get(slotKey(day, hour)) || emptySlot(day, hour);
-    if (!isReplayWorkspace() || replayRunning) return stats;
+    if (!replay || replayRunning) return stats;
     const display = displayStatsForSlot(day, hour, stats);
     if (display.kind === "no-recordings") return emptySlot(day, hour);
     return display.stats;
   }
 
-  function totals() {
-    ensureAllEmpty();
+  /** @param {"live" | "replay"} [mode] — omit to follow the visible Schedule/Replay page. */
+  function totals(mode) {
+    const resolved = resolvedTotalsMode(mode);
+    ensureMapFilled(resolved === "replay" ? replaySlotStats : liveSlotStats);
     let pnl = 0;
     let green = 0;
     let red = 0;
@@ -546,7 +556,7 @@
     let hasData = false;
     for (const day of DAYS) {
       for (let hour = 0; hour < 24; hour++) {
-        const stats = effectiveSlotForTotals(day, hour);
+        const stats = effectiveSlotForTotals(day, hour, resolved);
         if (!stats.hasData) continue;
         hasData = true;
         pnl += stats.pnl || 0;

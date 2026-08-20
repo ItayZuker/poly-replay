@@ -1142,9 +1142,11 @@
     btn.addEventListener("click", () => clearAllFramedPlacements());
   }
 
-  function weekTotals() {
+  const HEADER_SUMMARY_RANGES = new Set(["market", "schedule", "replay"]);
+
+  function weekTotals(mode) {
     if (typeof window.ScheduleHourSlots?.totals === "function") {
-      return window.ScheduleHourSlots.totals();
+      return window.ScheduleHourSlots.totals(mode);
     }
     return { hasData: false, pnl: 0, green: 0, red: 0, blue: 0, gray: 0 };
   }
@@ -1153,13 +1155,7 @@
   const DEMO_HITS_STORAGE_KEY = "poly-real:demo-hits";
 
   let headerSummaryRange = "schedule";
-  let headerSummaryFetchTimer = null;
-  /** In-flight Market totals fetch (coalesced — see fetchHeaderSummaryTotals). */
-  let headerMarketFetchPromise = null;
-  let headerMarketFetchSeries = null;
-  /** All-time Market totals per series from session-memory. */
-  let headerMarketTotals = {};
-  /** Full Live-range totals (every real outcome since reset), not just schedule cards. */
+  /** Market-range totals (every real outcome since last header reset), not just schedule cards. */
   let liveSessionTotals = { hasData: false, green: 0, red: 0, blue: 0, pnl: 0 };
   /** Local-only auto-engine hits (survive page refresh; cleared by reset). */
   let demoHitsStore = { byWindow: {}, totals: { hasData: false, green: 0, red: 0, blue: 0, pnl: 0 } };
@@ -1297,24 +1293,32 @@
   }
 
   function scheduleTotals() {
-    return weekTotals();
+    return weekTotals("live");
+  }
+
+  function replayTotals() {
+    return weekTotals("replay");
+  }
+
+  function paintHeaderFromRange() {
+    if (headerSummaryRange === "market") {
+      renderHeaderSummaryTotals(liveRangeTotals());
+    } else if (headerSummaryRange === "schedule") {
+      renderHeaderSummaryTotals(scheduleTotals());
+    } else if (headerSummaryRange === "replay") {
+      renderHeaderSummaryTotals(replayTotals());
+    }
   }
 
   function applyLiveSessionTotals(totals) {
     if (!totals) return;
     liveSessionTotals = normalizeSessionTotals(totals);
-    if (headerSummaryRange === "live") {
-      renderHeaderSummaryTotals(liveRangeTotals());
-    } else if (headerSummaryRange === "schedule") {
-      renderHeaderSummaryTotals(scheduleTotals());
-    } else if (headerSummaryRange === "market") {
-      scheduleHeaderSummaryRefresh();
-    }
+    paintHeaderFromRange();
   }
 
   function applyDemoLastWindow(lastWindow, trading) {
     const changed = ingestDemoLastWindow(lastWindow, trading);
-    if (changed && headerSummaryRange === "live") {
+    if (changed && headerSummaryRange === "market") {
       renderHeaderSummaryTotals(liveRangeTotals());
     }
   }
@@ -1371,7 +1375,6 @@
       void window.ScheduleHourSlots?.refreshLive?.();
       void scheduleStatsRefresh({ all: true, force: true, quiet: true });
       void fetchLiveSessionMemoryTotals();
-      if (headerSummaryRange === "market") scheduleHeaderSummaryRefresh();
     }, 450);
   }
 
@@ -1435,23 +1438,18 @@
       statsRevision: trading?.statsRevision,
       force: !Number.isFinite(Number(trading?.statsRevision)),
     });
-    if (isReplayWorkspace()) return;
-    if (headerSummaryRange === "live") {
-      renderHeaderSummaryTotals(liveRangeTotals());
-    } else if (headerSummaryRange === "schedule") {
-      renderHeaderSummaryTotals(weekTotals());
-    }
+    paintHeaderFromRange();
   }
 
   function loadHeaderSummaryPrefs() {
     try {
       const savedRange = localStorage.getItem(SUMMARY_RANGE_STORAGE_KEY);
-      if (savedRange === "demo" || savedRange === "all") {
-        headerSummaryRange = savedRange === "all" ? "market" : "live";
-      } else if (savedRange === "live" || savedRange === "market" || savedRange === "schedule") {
+      if (savedRange === "live" || savedRange === "demo" || savedRange === "all") {
+        // Former Live / all-time Market → Market (since last reset).
+        headerSummaryRange = "market";
+      } else if (HEADER_SUMMARY_RANGES.has(savedRange)) {
         headerSummaryRange = savedRange;
       } else if (savedRange === "week" || savedRange === "timeframe") {
-        // Legacy ranges removed from the dropdown — closest match is Schedule.
         headerSummaryRange = "schedule";
       }
     } catch {
@@ -1489,7 +1487,7 @@
       appendStatItem(dotsEl, "green", green, hasData);
       appendStatItem(dotsEl, "red", red, hasData);
       appendStatItem(dotsEl, "blue", blue, hasData);
-      if (isReplayWorkspace()) {
+      if (headerSummaryRange === "replay") {
         appendStatItem(dotsEl, "gray", gray, hasData);
       }
     }
@@ -1499,123 +1497,63 @@
       setPnlSignClass(pnlEl, pnl, hasData);
     }
 
-    // Money bag icon (non-Live ranges) tracks the P/L sign color.
+    // Money bag icon (non-Market ranges) tracks the P/L sign color.
     const resetBtn = document.getElementById("schedule-week-reset");
     if (resetBtn) setPnlSignClass(resetBtn, pnl, hasData);
   }
 
   /**
    * @param {{ paintImmediate?: boolean }} [options]
-   *   paintImmediate (default true): paint Live/Schedule/cached Market right away.
+   *   paintImmediate (default true): paint Market/Schedule/Replay right away.
    *   Use false while switching ranges so the header stays at zeros until ready.
    */
   async function fetchHeaderSummaryTotals(options = {}) {
     const paintImmediate = options.paintImmediate !== false;
     const mode = headerSummaryRange;
 
-    if (mode === "live") {
+    if (mode === "market") {
       if (paintImmediate) renderHeaderSummaryTotals(liveRangeTotals());
-      const fetched = await fetchLiveSessionMemoryTotals();
-      return fetched ? liveRangeTotals() : liveRangeTotals();
+      await fetchLiveSessionMemoryTotals();
+      return liveRangeTotals();
     }
     if (mode === "schedule") {
       const totals = scheduleTotals();
       renderHeaderSummaryTotals(totals);
       return totals;
     }
-
-    // Market (default / unknown → treat as market all-time for selected series).
-    const series = selectedSeries();
-    const cached = headerMarketTotals[series];
-    if (cached && paintImmediate) renderHeaderSummaryTotals(cached);
-
-    // Coalesce concurrent fetches: SSE-driven refreshes fire every ~1.5s while the
-    // browser's per-host connection pool is busy (SSE streams + polling), so requests
-    // can take seconds. Starting a new request per refresh starved the header forever —
-    // each retry invalidated the previous response before it could render.
-    if (headerMarketFetchPromise && headerMarketFetchSeries === series) {
-      return headerMarketFetchPromise;
+    if (mode === "replay") {
+      const totals = replayTotals();
+      renderHeaderSummaryTotals(totals);
+      return totals;
     }
-
-    const params = new URLSearchParams({ mode: "market", series });
-    headerMarketFetchSeries = series;
-    headerMarketFetchPromise = (async () => {
-      try {
-        const res = await fetch(`/api/trading/session-memory?${params}`);
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || `Session memory failed (${res.status})`);
-        }
-        const data = await res.json();
-        const totals = normalizeSessionTotals({
-          hasData: data.hasData === true,
-          green: data.green ?? 0,
-          red: data.red ?? 0,
-          blue: data.blue ?? 0,
-          pnl: data.pnl ?? 0,
-        });
-        headerMarketTotals[series] = totals;
-        // A late response is still the right data as long as the user is still
-        // looking at Market for this series.
-        if (headerSummaryRange === "market" && selectedSeries() === series) {
-          renderHeaderSummaryTotals(totals);
-        }
-        return totals;
-      } catch (err) {
-        console.warn("Header summary fetch failed:", err);
-        if (headerSummaryRange === "market" && selectedSeries() === series) {
-          renderHeaderSummaryTotals(headerMarketTotals[series] ?? emptyTotals());
-        }
-        return null;
-      } finally {
-        headerMarketFetchPromise = null;
-        headerMarketFetchSeries = null;
-      }
-    })();
-    return headerMarketFetchPromise;
-  }
-
-  function scheduleHeaderSummaryRefresh() {
-    if (headerSummaryRange !== "market") return;
-    if (headerSummaryFetchTimer != null) return;
-    headerSummaryFetchTimer = window.setTimeout(() => {
-      headerSummaryFetchTimer = null;
-      void fetchHeaderSummaryTotals();
-    }, 1500);
+    const totals = scheduleTotals();
+    renderHeaderSummaryTotals(totals);
+    return totals;
   }
 
   function updateWeekHeaderSummary() {
-    if (headerSummaryRange === "live") {
-      renderHeaderSummaryTotals(liveRangeTotals());
-      return;
-    }
-    if (headerSummaryRange === "schedule") {
-      renderHeaderSummaryTotals(scheduleTotals());
-      return;
-    }
-    const cached = headerMarketTotals[selectedSeries()];
-    if (cached) renderHeaderSummaryTotals(cached);
+    paintHeaderFromRange();
   }
 
-  /** Reset is a Live-only action; other ranges show a passive money bag icon. */
+  /** Reset is a Market-only action; other ranges show a passive money bag icon. */
   function syncHeaderSummaryResetButton() {
     const btn = document.getElementById("schedule-week-reset");
     if (!btn) return;
-    const isLive = headerSummaryRange === "live";
+    const isMarket = headerSummaryRange === "market";
     const loading = btn.classList.contains("is-loading");
-    btn.classList.toggle("is-money-mode", !isLive);
+    btn.classList.toggle("is-money-mode", !isMarket);
     // Prefer aria-disabled over the disabled attribute so P/L icon colors are not muted by UA styles.
     btn.disabled = false;
-    btn.setAttribute("aria-disabled", isLive && !loading ? "false" : "true");
-    btn.tabIndex = isLive && !loading ? 0 : -1;
+    btn.setAttribute("aria-disabled", isMarket && !loading ? "false" : "true");
+    btn.tabIndex = isMarket && !loading ? 0 : -1;
     if (loading) {
       btn.setAttribute("aria-label", "Loading totals");
       btn.title = "Loading totals";
       return;
     }
-    if (isLive) {
-      btn.setAttribute("aria-label", "Reset Live counts");
-      btn.title = "Reset Live counts (demo + real since last reset)";
+    if (isMarket) {
+      btn.setAttribute("aria-label", "Reset Market counts");
+      btn.title = "Reset Market counts (demo + real since last reset)";
     } else {
       btn.setAttribute("aria-label", "Stats totals");
       btn.title = "Totals";
@@ -1633,14 +1571,12 @@
   /** Paint zeros + spinner, then load totals for the selected header range. */
   async function refreshHeaderSummaryWithLoader() {
     setHeaderSummaryLoading(true);
-    // Clear previous range numbers immediately so Market/Live/Schedule never flash stale totals.
+    // Clear previous range numbers immediately so Market/Schedule/Replay never flash stale totals.
     renderHeaderSummaryTotals(emptyTotals());
-    // Two frames so the spinner + zeros paint before sync Live/Schedule work.
     await new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
     try {
-      // Do not paint cached Market mid-load — keep zeros until the fetch settles.
       await fetchHeaderSummaryTotals({ paintImmediate: false });
     } finally {
       setHeaderSummaryLoading(false);
@@ -1658,8 +1594,7 @@
     const select = document.getElementById("schedule-summary-range");
     if (!select) return;
 
-    const allowed = new Set(["live", "market", "schedule"]);
-    const next = allowed.has(range) ? range : headerSummaryRange;
+    const next = HEADER_SUMMARY_RANGES.has(range) ? range : headerSummaryRange;
 
     if (next === headerSummaryRange && select.value === next) return;
 
@@ -1672,8 +1607,6 @@
 
   function onSelectedSeriesChanged() {
     if (headerSummaryRange === "market") {
-      void refreshHeaderSummaryWithLoader();
-    } else if (headerSummaryRange === "live") {
       void fetchLiveSessionMemoryTotals();
     }
     if (replayRunning) return;
@@ -1715,16 +1648,10 @@
       return;
     }
 
-    // Header Live totals only — schedule placement cards keep collecting.
+    // Header Market totals only — schedule hour cells keep collecting.
     liveSessionTotals = emptyTotals();
     clearDemoHitsStore();
-    if (headerSummaryRange === "live") {
-      renderHeaderSummaryTotals(liveRangeTotals());
-    } else if (headerSummaryRange === "schedule") {
-      renderHeaderSummaryTotals(scheduleTotals());
-    } else {
-      void fetchHeaderSummaryTotals();
-    }
+    paintHeaderFromRange();
   }
 
   function bindWeekSummaryReset() {
@@ -1732,7 +1659,7 @@
     if (!btn || btn.dataset.bound === "1") return;
     btn.dataset.bound = "1";
     btn.addEventListener("click", () => {
-      if (headerSummaryRange !== "live") return;
+      if (headerSummaryRange !== "market") return;
       void resetWeekCounts();
     });
     syncHeaderSummaryResetButton();
@@ -1743,14 +1670,11 @@
     if (select && select.dataset.bound !== "1") {
       select.dataset.bound = "1";
       select.addEventListener("change", () => {
-        const allowed = new Set(["live", "market", "schedule"]);
-        headerSummaryRange = allowed.has(select.value) ? select.value : "schedule";
+        headerSummaryRange = HEADER_SUMMARY_RANGES.has(select.value)
+          ? select.value
+          : "schedule";
         select.value = headerSummaryRange;
         saveHeaderSummaryPrefs();
-        if (headerSummaryFetchTimer != null) {
-          window.clearTimeout(headerSummaryFetchTimer);
-          headerSummaryFetchTimer = null;
-        }
         syncHeaderSummaryControls();
         void refreshHeaderSummaryWithLoader();
       });
@@ -4738,6 +4662,7 @@
     applyLiveSessionTotals,
     applyDemoLastWindow,
     syncHeaderSummaryControls,
+    updateWeekHeaderSummary,
     updateDayHeaderPnls,
     setHeaderSummaryRange,
     syncReplayInputsFromLive,
